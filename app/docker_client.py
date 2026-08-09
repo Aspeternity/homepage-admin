@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -81,16 +82,28 @@ def sanitize_docker_container(item: dict[str, Any]) -> dict[str, Any]:
 class DockerDiscoveryClient:
     base_url: str
     timeout: float = 3.0
+    headers: dict[str, str] | None = None
+    verify: bool | str = True
+    cert: str | tuple[str, str] | None = None
 
     def enabled(self) -> bool:
         return bool(self.base_url.strip())
 
+    def _client(self) -> httpx.Client:
+        return httpx.Client(
+            base_url=self.base_url.rstrip("/"),
+            timeout=self.timeout,
+            headers=self.headers or {},
+            verify=self.verify,
+            cert=self.cert,
+            follow_redirects=True,
+        )
+
     def ping(self) -> bool:
         if not self.enabled():
             return False
-        base = self.base_url.rstrip("/")
         try:
-            with httpx.Client(base_url=base, timeout=self.timeout) as client:
+            with self._client() as client:
                 response = client.get("/_ping")
                 if response.status_code < 400:
                     return response.text.strip().upper() in {"OK", ""}
@@ -103,8 +116,7 @@ class DockerDiscoveryClient:
     def list_containers(self) -> list[dict[str, Any]]:
         if not self.enabled():
             return []
-        base = self.base_url.rstrip("/")
-        with httpx.Client(base_url=base, timeout=self.timeout) as client:
+        with self._client() as client:
             response = client.get("/containers/json", params={"all": "1"})
             if response.status_code == 404:
                 # Smooth upgrade path from the v0.2.0 custom sidecar.

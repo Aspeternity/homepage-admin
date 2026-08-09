@@ -1,6 +1,19 @@
-# Homepage Admin v0.3.9
+# Homepage Admin v0.4.0
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
+
+
+## v0.4.0：多 Docker 主机发现
+
+- Docker 发现不再绑定单一 `DOCKER_DISCOVERY_URL`；会自动读取 `docker.yaml` 中的多个远程 Docker Server。
+- 新增“Docker 主机管理”，可添加 Game-Server VM 等额外只读代理地址，并映射到 Homepage 的 `server`。
+- 支持“全部 Docker 主机”聚合视图，每张容器卡片显示来源主机和 `server`。
+- 同名容器按 `(server, container)` 匹配，避免跨主机误判。
+- 导入容器时自动写入来源主机对应的 `server`，并使用该主机的 Public Host 推断发布端口访问地址。
+- 自定义发现连接保存在 `/data/admin-settings.json`；可选同步创建 `docker.yaml` Server，但不会覆盖地址不同的既有 Server。
+- 连接测试、搜索、状态筛选、已添加/未添加筛选均支持多主机。
+
+详细升级和 Game-Server VM 只读代理示例见 `UPGRADE_V0.4.0_ZH.md`。
 
 
 ## v0.3.9 修复
@@ -135,27 +148,26 @@ v0.3.2 **不要求 MySQL**。当前项目的数据模型仍然适合保持文件
 
 ## Docker 安全架构
 
-延续 v0.2.1 之后的共享只读代理：
+主 Docker VM 继续沿用 v0.2.1 之后的共享只读代理；v0.4.0 只是把发现层扩展为多个主机：
 
 ```text
-/var/run/docker.sock
-        │
-        ▼
-homepage-docker-proxy
-  CONTAINERS=1
-  PING=1
-  SERVICES=1
-  TASKS=1
-  POST=0
-        │
-        ├─────────> Homepage
-        │           docker.yaml -> homepage-docker-proxy:2375
-        │
-        └─────────> Homepage Admin
-                    Docker 发现 / 导入向导
+Docker VM socket                    Game-Server VM socket
+      │                                      │
+      ▼                                      ▼
+homepage-docker-proxy                  game-docker-proxy
+POST=0 / read-only                      POST=0 / read-only
+      │                                      │
+      ├──────── Homepage Admin ──────────────┤
+      │              │                       │
+      │              └─ 多主机发现 / 导入 ──┘
+      │
+      └──────── Homepage
+               docker.yaml:
+                 local-docker: ...
+                 game-server: ...
 ```
 
-`homepage-docker-proxy` 不映射宿主机端口，只加入共享 `homepage-tools` 网络。
+主 Docker VM 的 `homepage-docker-proxy` 仍可只加入共享 `homepage-tools` 网络而不暴露宿主机端口。跨 VM 的代理如果必须通过局域网端口访问，应使用 VM 防火墙限制来源，只允许 Homepage / Admin 所在主机访问，并保持 `POST=0`。
 
 ## 其他现有功能
 

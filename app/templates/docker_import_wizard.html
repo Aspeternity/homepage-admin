@@ -16,7 +16,7 @@
   <span><b>4</b>完整编辑</span>
 </div>
 
-<form class="docker-import-wizard" method="get" action="/docker/import/{{ container.id[:12] }}/edit" data-import-wizard>
+<form class="docker-import-wizard" method="get" action="/docker/host/{{ docker_host.id }}/import/{{ container.id[:12] }}/edit" data-import-wizard>
   <section class="form-card wizard-container-card">
     <div class="section-title-row">
       <div>
@@ -32,6 +32,7 @@
     <div class="wizard-facts">
       <div><span>运行状态</span><strong>{{ container.status or container.state or 'unknown' }}</strong></div>
       <div><span>容器名称</span><code>{{ container.name }}</code></div>
+      <div><span>Docker 主机</span><strong>{{ docker_host.name }}</strong></div>
       <div><span>Docker Server</span><code>{{ values.server or '未配置' }}</code></div>
       <div><span>发布端口</span><strong>{% if container.published_ports %}{% for p in container.published_ports %}{{ p.public }}→{{ p.private }}/{{ p.type }}{% if not loop.last %} · {% endif %}{% endfor %}{% else %}无宿主机映射{% endif %}</strong></div>
     </div>

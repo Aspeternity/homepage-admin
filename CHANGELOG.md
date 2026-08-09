@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.0 - 2026-08-10
+
+- Docker 发现升级为多主机：支持全部主机/单主机切换，并自动读取 `docker.yaml` 中多个远程 Server。
+- 新增 Docker 主机管理：Admin 自定义发现 URL、映射 Homepage Server、连接测试、编辑、删除和安全同步到 `docker.yaml`。
+- 同名容器改为按 `(server, container)` 判断是否已添加，避免多主机误匹配。
+- Docker 导入向导携带来源主机并写入正确的 `server`，每个主机可独立配置 Public Host 用于发布端口 URL 推断。
+- Docker 发现页新增主机来源标签、搜索、运行状态筛选、已添加/未添加筛选与独立主机错误状态。
+- 保留 `DOCKER_DISCOVERY_URL` 作为兼容/回退连接；`docker.yaml` Socket 模式可通过 Admin 自定义只读代理覆盖发现。
+
 ## v0.3.9 - 2026-08-10
 
 - 修复 Proxmox 发现页已关联卡片中“编辑服务”和“取消关联”按钮尺寸不一致。

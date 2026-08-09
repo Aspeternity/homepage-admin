@@ -304,6 +304,87 @@
     syncWidgetSchema();
   }
 
+  // v0.4.0 Docker multi-host discovery controls.
+  const dockerHostFilter = $('[data-docker-host-filter]');
+  dockerHostFilter?.addEventListener('change', () => dockerHostFilter.form?.submit());
+
+  const dockerSearch = $('[data-docker-search]');
+  const dockerStateFilter = $('[data-docker-state-filter]');
+  const dockerAddedFilter = $('[data-docker-added-filter]');
+  if (dockerSearch || dockerStateFilter || dockerAddedFilter) {
+    const filterDockerCards = () => {
+      const query = (dockerSearch?.value || '').trim().toLowerCase();
+      const state = dockerStateFilter?.value || 'all';
+      const added = dockerAddedFilter?.value || 'all';
+      let shown = 0;
+      $$('[data-docker-card]').forEach((card) => {
+        const searchOk = !query || (card.dataset.search || '').includes(query);
+        const stateValue = card.dataset.state || '';
+        const stateOk = state === 'all' || (state === 'running' ? stateValue === 'running' : stateValue !== 'running');
+        const addedValue = card.dataset.added === '1';
+        const addedOk = added === 'all' || (added === 'added' ? addedValue : !addedValue);
+        card.hidden = !(searchOk && stateOk && addedOk);
+        if (!card.hidden) shown += 1;
+      });
+      const empty = $('[data-docker-filter-empty]');
+      if (empty) empty.hidden = shown !== 0;
+    };
+    dockerSearch?.addEventListener('input', filterDockerCards);
+    dockerStateFilter?.addEventListener('change', filterDockerCards);
+    dockerAddedFilter?.addEventListener('change', filterDockerCards);
+    filterDockerCards();
+  }
+
+  const renderDockerHostTest = (target, ok, message) => {
+    if (!target) return;
+    target.hidden = false;
+    target.classList.toggle('ok', Boolean(ok));
+    target.classList.toggle('error', !ok);
+    target.textContent = message;
+  };
+  const testDockerHost = async ({hostId = '', url = '', homepageServer = '', publicHost = '', button, result}) => {
+    const original = button?.textContent || '';
+    if (button) { button.disabled = true; button.textContent = '测试中…'; }
+    renderDockerHostTest(result, true, '正在连接 Docker API…');
+    try {
+      const body = new URLSearchParams({csrf: csrf()});
+      if (hostId) body.set('host_id', hostId);
+      else {
+        body.set('url', url);
+        body.set('homepage_server', homepageServer || 'test-server');
+        body.set('public_host', publicHost || '');
+      }
+      const response = await fetch('/api/docker/hosts/test', {method: 'POST', body});
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.message || '连接测试失败');
+      renderDockerHostTest(result, true, payload.message);
+    } catch (error) {
+      renderDockerHostTest(result, false, error.message || String(error));
+    } finally {
+      if (button) { button.disabled = false; button.textContent = original; }
+    }
+  };
+
+  $$('[data-docker-host-test]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const hostId = button.dataset.hostId || '';
+      const result = document.querySelector(`[data-host-test-result="${CSS.escape(hostId)}"]`);
+      testDockerHost({hostId, button, result});
+    });
+  });
+
+  const dockerHostForm = $('[data-docker-host-form]');
+  if (dockerHostForm) {
+    const button = $('[data-docker-host-form-test]', dockerHostForm);
+    button?.addEventListener('click', () => testDockerHost({
+      url: $('[data-docker-host-url]', dockerHostForm)?.value.trim() || '',
+      homepageServer: $('[data-docker-homepage-server]', dockerHostForm)?.value.trim() || '',
+      publicHost: $('[data-docker-public-host]', dockerHostForm)?.value.trim() || '',
+      button,
+      result: $('[data-docker-host-form-result]', dockerHostForm),
+    }));
+  }
+
   // Docker import group strategy. "auto" lets the wizard choose a group from the recognized service type.
   const importGroup = $('[data-docker-import-group]');
   if (importGroup) {

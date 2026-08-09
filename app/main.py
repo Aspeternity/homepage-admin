@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager, suppress
 import difflib
+import hashlib
 import json
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -267,8 +269,8 @@ def sync_layout_order(group_order: list[str], user: str) -> None:
     store.write_data("settings.yaml", settings_data, user, "layout reorder")
 
 
-def configured_docker_containers() -> dict[str, list[dict[str, str]]]:
-    configured: dict[str, list[dict[str, str]]] = {}
+def configured_docker_containers() -> dict[tuple[str, str], list[dict[str, str]]]:
+    configured: dict[tuple[str, str], list[dict[str, str]]] = {}
     try:
         data = store.load("services.yaml")
     except ConfigError:
@@ -286,54 +288,257 @@ def configured_docker_containers() -> dict[str, list[dict[str, str]]]:
             except ConfigError:
                 continue
             if isinstance(details, dict) and details.get("container"):
-                key = str(details.get("container")).casefold()
-                configured.setdefault(key, []).append({"group": group_name, "service": service_name})
+                server = str(details.get("server") or "").casefold()
+                container = str(details.get("container") or "").casefold()
+                configured.setdefault((server, container), []).append({"group": group_name, "service": service_name})
     return configured
+
+
+def homepage_docker_servers() -> dict[str, dict[str, Any]]:
+    try:
+        data = store.load("docker.yaml")
+    except ConfigError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for raw_name, raw_cfg in data.items():
+        name = str(raw_name)
+        if not isinstance(raw_cfg, dict):
+            continue
+        cfg = raw_cfg
+        info: dict[str, Any] = {
+            "name": name,
+            "mode": "none",
+            "host": "",
+            "port": "",
+            "protocol": "http",
+            "url": "",
+            "socket": "",
+            "has_headers": isinstance(cfg.get("headers"), dict) and bool(cfg.get("headers")),
+            "has_tls": isinstance(cfg.get("tls"), dict) and bool(cfg.get("tls")),
+            "raw": cfg,
+        }
+        if cfg.get("socket"):
+            info.update({"mode": "socket", "socket": str(cfg.get("socket"))})
+        elif cfg.get("host"):
+            host = str(cfg.get("host"))
+            protocol = str(cfg.get("protocol") or ("https" if info["has_tls"] else "http")).lower()
+            if protocol not in {"http", "https"}:
+                protocol = "http"
+            try:
+                port = int(cfg.get("port", 443 if protocol == "https" else 2375))
+            except (TypeError, ValueError):
+                port = 443 if protocol == "https" else 2375
+            display_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+            info.update({
+                "mode": "remote",
+                "host": host,
+                "port": port,
+                "protocol": protocol,
+                "url": f"{protocol}://{display_host}:{port}",
+            })
+        result[name] = info
+    return result
 
 
 def first_docker_server_name() -> str:
     if settings.docker_server_name:
         return settings.docker_server_name
-    try:
-        data = store.load("docker.yaml")
-    except ConfigError:
-        return ""
-    if isinstance(data, dict) and data:
-        return str(next(iter(data.keys())))
-    return ""
+    servers = homepage_docker_servers()
+    return next(iter(servers.keys()), "")
 
 
-def docker_server_info() -> dict[str, Any]:
-    name = first_docker_server_name()
+def docker_server_info(name: str | None = None) -> dict[str, Any]:
+    server_name = name or first_docker_server_name()
     info: dict[str, Any] = {
-        "name": name,
+        "name": server_name,
         "mode": "none",
         "host": "",
         "port": "",
         "socket": "",
         "recommended": False,
     }
-    if not name:
+    server = homepage_docker_servers().get(server_name)
+    if not server:
         return info
-    try:
-        data = store.load("docker.yaml")
-    except ConfigError:
-        return info
-    cfg = data.get(name) if isinstance(data, dict) else None
-    if not isinstance(cfg, dict):
-        return info
-    if cfg.get("socket"):
-        info.update({"mode": "socket", "socket": str(cfg.get("socket"))})
-        return info
-    if cfg.get("host"):
-        host = str(cfg.get("host"))
-        try:
-            port = int(cfg.get("port", 2375))
-        except (TypeError, ValueError):
-            port = 2375
-        recommended = host == settings.homepage_docker_proxy_host and port == settings.homepage_docker_proxy_port
-        info.update({"mode": "proxy" if recommended else "remote", "host": host, "port": port, "recommended": recommended})
+    info.update({k: v for k, v in server.items() if k != "raw"})
+    if server.get("mode") == "remote":
+        info["recommended"] = (
+            str(server.get("host")) == settings.homepage_docker_proxy_host
+            and int(server.get("port") or 0) == settings.homepage_docker_proxy_port
+        )
+        info["mode"] = "proxy" if info["recommended"] else "remote"
     return info
+
+
+def _docker_host_id(prefix: str, value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")[:28] or "docker"
+    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:7]
+    return f"{prefix}-{slug}-{digest}"
+
+
+def _docker_client_from_yaml(server: dict[str, Any]) -> DockerDiscoveryClient | None:
+    if server.get("mode") != "remote" or not server.get("url"):
+        return None
+    raw = server.get("raw") if isinstance(server.get("raw"), dict) else {}
+    headers = raw.get("headers") if isinstance(raw.get("headers"), dict) else {}
+    safe_headers = {str(k): str(v) for k, v in headers.items()}
+    verify: bool | str = True
+    cert: str | tuple[str, str] | None = None
+    tls = raw.get("tls") if isinstance(raw.get("tls"), dict) else {}
+    if tls:
+        ca = str(tls.get("caFile") or "").strip()
+        cert_file = str(tls.get("certFile") or "").strip()
+        key_file = str(tls.get("keyFile") or "").strip()
+        if ca:
+            verify = str((settings.config_dir / ca).resolve())
+        if cert_file and key_file:
+            cert = (str((settings.config_dir / cert_file).resolve()), str((settings.config_dir / key_file).resolve()))
+    return DockerDiscoveryClient(str(server.get("url")), headers=safe_headers, verify=verify, cert=cert)
+
+
+def docker_discovery_hosts() -> list[dict[str, Any]]:
+    """Merge docker.yaml servers, Admin custom endpoints and the legacy env endpoint.
+
+    A custom Admin endpoint mapped to the same Homepage server overrides the discovery URL
+    but never exposes docker.yaml headers/TLS details to the browser.
+    """
+    servers = homepage_docker_servers()
+    custom_rows = store.docker_discovery_hosts()
+    custom_by_server = {row["homepage_server"].casefold(): row for row in custom_rows}
+    used_custom: set[str] = set()
+    hosts: list[dict[str, Any]] = []
+    first_server = first_docker_server_name()
+
+    for server_name, server in servers.items():
+        custom = custom_by_server.get(server_name.casefold())
+        if custom:
+            used_custom.add(custom["id"])
+            host = {
+                **custom,
+                "source": "custom",
+                "source_label": "Admin 自定义 · 已映射 docker.yaml",
+                "editable": True,
+                "yaml_configured": True,
+                "yaml_mode": server.get("mode"),
+                "client": DockerDiscoveryClient(custom["url"]),
+            }
+        else:
+            url = str(server.get("url") or "")
+            public_host = settings.docker_public_host if server_name == first_server else str(server.get("host") or "")
+            host = {
+                "id": _docker_host_id("yaml", server_name),
+                "name": server_name,
+                "url": url,
+                "homepage_server": server_name,
+                "public_host": public_host,
+                "source": "docker.yaml",
+                "source_label": "docker.yaml 自动发现",
+                "editable": False,
+                "yaml_configured": True,
+                "yaml_mode": server.get("mode"),
+                "client": _docker_client_from_yaml(server),
+                "has_headers": bool(server.get("has_headers")),
+                "has_tls": bool(server.get("has_tls")),
+            }
+        hosts.append(host)
+
+    for custom in custom_rows:
+        if custom["id"] in used_custom:
+            continue
+        hosts.append({
+            **custom,
+            "source": "custom",
+            "source_label": "Admin 自定义 · docker.yaml 未配置",
+            "editable": True,
+            "yaml_configured": False,
+            "yaml_mode": "none",
+            "client": DockerDiscoveryClient(custom["url"]),
+        })
+
+    env_url = (settings.docker_discovery_url or docker_discovery.base_url).rstrip("/")
+    if env_url:
+        duplicate = any(str(host.get("url") or "").rstrip("/") == env_url for host in hosts)
+        if not duplicate:
+            server_name = first_server or settings.docker_server_name or "local-docker"
+            client = docker_discovery if env_url == docker_discovery.base_url.rstrip("/") else DockerDiscoveryClient(env_url)
+            socket_row = next((row for row in hosts if str(row.get("homepage_server")) == server_name and not row.get("client")), None)
+            if socket_row is not None:
+                socket_row.update({
+                    "url": env_url,
+                    "public_host": settings.docker_public_host,
+                    "source": "environment",
+                    "source_label": "DOCKER_DISCOVERY_URL · 覆盖 Socket 发现",
+                    "client": client,
+                })
+            else:
+                hosts.append({
+                    "id": "env-default",
+                    "name": f"{server_name}（环境默认）",
+                    "url": env_url,
+                    "homepage_server": server_name,
+                    "public_host": settings.docker_public_host,
+                    "source": "environment",
+                    "source_label": "DOCKER_DISCOVERY_URL",
+                    "editable": False,
+                    "yaml_configured": server_name in servers,
+                    "yaml_mode": servers.get(server_name, {}).get("mode", "none"),
+                    "client": client,
+                })
+    return hosts
+
+
+def docker_discovery_host(host_id: str | None = None) -> dict[str, Any] | None:
+    hosts = docker_discovery_hosts()
+    if host_id:
+        for host in hosts:
+            if str(host.get("id")) == host_id:
+                return host
+    return hosts[0] if hosts else None
+
+
+def docker_host_public_host(host: dict[str, Any]) -> str:
+    explicit = str(host.get("public_host") or "").strip()
+    if explicit:
+        return explicit
+    url_host = public_host_from_url(str(host.get("url") or ""))
+    if url_host and url_host not in {settings.homepage_docker_proxy_host, "localhost"}:
+        return url_host
+    return settings.docker_public_host or public_host_from_url(settings.homepage_url)
+
+
+def sync_custom_docker_host_to_homepage(host: dict[str, str], user: str) -> bool:
+    data = store.load("docker.yaml")
+    if not isinstance(data, dict):
+        raise ConfigError("docker.yaml 必须是对象映射。")
+    server_name = str(host.get("homepage_server") or "").strip()
+    parsed = urlparse(str(host.get("url") or ""))
+    if not server_name or not parsed.hostname or parsed.scheme not in {"http", "https"}:
+        raise ConfigError("Docker 主机配置不完整。")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    expected_protocol = "https" if parsed.scheme == "https" else "http"
+    existing = data.get(server_name)
+    if existing is not None:
+        if not isinstance(existing, dict):
+            raise ConfigError(f"docker.yaml 中的 {server_name} 不是有效映射。")
+        current_host = str(existing.get("host") or "")
+        try:
+            current_port = int(existing.get("port", 443 if str(existing.get("protocol") or "http") == "https" else 2375))
+        except (TypeError, ValueError):
+            current_port = -1
+        current_protocol = str(existing.get("protocol") or ("https" if existing.get("tls") else "http")).lower()
+        if current_host != parsed.hostname or current_port != port or current_protocol != expected_protocol:
+            raise ConfigError(
+                f"docker.yaml 已存在同名 Server“{server_name}”，但连接地址不同。为避免覆盖现有 TLS/Header 配置，请先在高级编辑中确认。"
+            )
+        return False
+    cfg = CommentedMap({"host": parsed.hostname, "port": port})
+    if expected_protocol == "https":
+        cfg["protocol"] = "https"
+    data[server_name] = cfg
+    store.write_data("docker.yaml", data, user, f"add docker server {server_name} from discovery host")
+    return True
 
 
 def recommended_import_group(names: list[str]) -> int:
@@ -1664,40 +1869,90 @@ async def proxmox_bind_service(request: Request, _: None = Depends(auth_guard)) 
         return redirect(f"/proxmox?server={quote(server)}" if server else "/proxmox", error=str(exc))
 
 
+def _docker_host_safe(host: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in host.items() if k != "client"}
+
+
+def _docker_host_snapshot(host: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    row = _docker_host_safe(host)
+    client = host.get("client")
+    if not isinstance(client, DockerDiscoveryClient):
+        row.update({"healthy": False, "error": "该连接无法由 Admin 直接发现容器。若 docker.yaml 使用 socket，请添加一个只读 Docker Proxy 自定义连接。", "container_count": 0})
+        return row, []
+    try:
+        if not client.ping():
+            raise RuntimeError("Docker API /_ping 不可达")
+        containers = client.list_containers()
+        row.update({"healthy": True, "error": "", "container_count": len(containers)})
+        return row, containers
+    except Exception as exc:
+        row.update({"healthy": False, "error": str(exc), "container_count": 0})
+        return row, []
+
+
+def _docker_custom_host_id(homepage_server: str, display_name: str) -> str:
+    source = homepage_server or display_name or "docker-host"
+    slug = re.sub(r"[^a-z0-9]+", "-", source.casefold()).strip("-")[:48] or "docker-host"
+    return slug
+
+
 @app.get("/docker", response_class=HTMLResponse)
 def docker_page(
     request: Request,
+    host: str = "all",
     show_internal: bool = False,
     _: None = Depends(auth_guard),
 ) -> HTMLResponse:
-    containers: list[dict[str, Any]] = []
     error = request.query_params.get("error")
     configured = configured_docker_containers()
-    proxy_healthy = False
-    hidden_internal_count = 0
-    if not docker_discovery.enabled():
-        error = error or "Docker 容器发现未启用。请使用当前 Compose（包含共享只读 Docker Proxy）。"
-    else:
-        proxy_healthy = docker_discovery.ping()
-        try:
-            containers = docker_discovery.list_containers()
-        except Exception as exc:
-            error = error or f"无法读取 Docker 容器：{exc}"
+    all_hosts = docker_discovery_hosts()
+    host_ids = {str(item.get("id")) for item in all_hosts}
+    if host != "all" and host not in host_ids:
+        error = error or "未找到指定的 Docker 主机，已切换到全部主机。"
+        host = "all"
+    selected_hosts = all_hosts if host == "all" else [item for item in all_hosts if str(item.get("id")) == host]
+
+    snapshots: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
+    if selected_hosts:
+        with ThreadPoolExecutor(max_workers=min(8, len(selected_hosts))) as pool:
+            futures = {pool.submit(_docker_host_snapshot, item): str(item.get("id")) for item in selected_hosts}
+            for future in as_completed(futures):
+                host_id = futures[future]
+                try:
+                    snapshots[host_id] = future.result()
+                except Exception as exc:
+                    base = next((x for x in selected_hosts if str(x.get("id")) == host_id), {"id": host_id, "name": host_id})
+                    snapshots[host_id] = ({**_docker_host_safe(base), "healthy": False, "error": str(exc), "container_count": 0}, [])
+
     visible: list[dict[str, Any]] = []
+    status_rows: list[dict[str, Any]] = []
+    hidden_internal_count = 0
     internal_names = {"homepage-docker-proxy", "homepage-admin-docker-proxy", "docker-proxy"}
-    for item in containers:
-        name = str(item.get("name", ""))
-        item["published_ports"] = [p for p in dedupe_ports(item.get("ports") or []) if p.get("public")]
-        labels = item.get("labels") or {}
-        item["homepage_labeled"] = any(str(k).startswith("homepage.") for k in labels)
-        matches = configured.get(name.casefold(), [])
-        item["configured"] = bool(matches)
-        item["configured_matches"] = matches
-        item["role"] = container_role(item)
-        if settings.hide_internal_containers and not show_internal and name.casefold() in internal_names:
-            hidden_internal_count += 1
-            continue
-        visible.append(item)
+    for selected in selected_hosts:
+        host_id = str(selected.get("id"))
+        status, containers = snapshots.get(host_id, (_docker_host_safe(selected), []))
+        status_rows.append(status)
+        server_name = str(selected.get("homepage_server") or "")
+        for raw in containers:
+            item = dict(raw)
+            name = str(item.get("name", ""))
+            item["published_ports"] = [p for p in dedupe_ports(item.get("ports") or []) if p.get("public")]
+            labels = item.get("labels") or {}
+            item["homepage_labeled"] = any(str(k).startswith("homepage.") for k in labels)
+            matches = configured.get((server_name.casefold(), name.casefold()), [])
+            item["configured"] = bool(matches)
+            item["configured_matches"] = matches
+            item["role"] = container_role(item)
+            item["discovery_host_id"] = host_id
+            item["discovery_host_name"] = str(selected.get("name") or host_id)
+            item["homepage_server"] = server_name
+            item["yaml_configured"] = bool(selected.get("yaml_configured"))
+            if settings.hide_internal_containers and not show_internal and name.casefold() in internal_names:
+                hidden_internal_count += 1
+                continue
+            visible.append(item)
+
+    visible.sort(key=lambda item: (str(item.get("discovery_host_name", "")).casefold(), item.get("state") != "running", str(item.get("name", "")).casefold()))
     groups = group_names("services.yaml")
     return templates.TemplateResponse(
         request,
@@ -1708,17 +1963,135 @@ def docker_page(
             containers=visible,
             error=error,
             ok=request.query_params.get("ok"),
-            docker_server=first_docker_server_name(),
-            docker_server_info=docker_server_info(),
-            proxy_healthy=proxy_healthy,
-            proxy_host=settings.homepage_docker_proxy_host,
-            proxy_port=settings.homepage_docker_proxy_port,
+            docker_hosts=[_docker_host_safe(item) for item in all_hosts],
+            selected_host=host,
+            host_statuses=status_rows,
             show_internal=show_internal,
             hidden_internal_count=hidden_internal_count,
             service_groups=groups,
             recommended_group_index=recommended_import_group(groups),
         ),
     )
+
+
+@app.get("/docker/hosts", response_class=HTMLResponse)
+def docker_hosts_page(
+    request: Request,
+    edit: str | None = None,
+    _: None = Depends(auth_guard),
+) -> HTMLResponse:
+    hosts = docker_discovery_hosts()
+    editable = next((item for item in hosts if str(item.get("id")) == str(edit or "") and item.get("editable")), None)
+    form_values = {
+        "id": "",
+        "name": "",
+        "url": "",
+        "homepage_server": "",
+        "public_host": "",
+    }
+    if editable:
+        form_values.update({key: str(editable.get(key) or "") for key in form_values})
+    return templates.TemplateResponse(
+        request,
+        "docker_hosts.html",
+        context(
+            request,
+            "docker",
+            hosts=[_docker_host_safe(item) for item in hosts],
+            docker_servers=list(homepage_docker_servers().keys()),
+            default_server_info=docker_server_info(),
+            edit_host=_docker_host_safe(editable) if editable else None,
+            form_values=form_values,
+            error=request.query_params.get("error"),
+            ok=request.query_params.get("ok"),
+        ),
+    )
+
+
+@app.post("/api/docker/hosts/test")
+async def docker_host_test(request: Request, _: None = Depends(auth_guard)) -> JSONResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        host_id = str(form.get("host_id", "")).strip()
+        if host_id:
+            target = docker_discovery_host(host_id)
+            if not target or not isinstance(target.get("client"), DockerDiscoveryClient):
+                raise ConfigError("该 Docker 主机没有可用的 Admin Discovery 连接。")
+            client = target["client"]
+            label = str(target.get("name") or host_id)
+        else:
+            raw_url = str(form.get("url", "")).strip()
+            validated = store._validate_docker_discovery_host_payload({
+                "id": "test-host",
+                "name": "Test",
+                "url": raw_url,
+                "homepage_server": str(form.get("homepage_server", "test-server") or "test-server"),
+                "public_host": str(form.get("public_host", "")),
+            })
+            client = DockerDiscoveryClient(validated["url"])
+            label = validated["url"]
+        if not client.ping():
+            raise ConfigError("Docker API /_ping 不可达。")
+        containers = client.list_containers()
+        running = sum(1 for item in containers if str(item.get("state")) == "running")
+        return JSONResponse({"ok": True, "message": f"{label} 连接成功：{len(containers)} 个容器，{running} 个运行中。", "containers": len(containers), "running": running})
+    except Exception as exc:
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=400)
+
+
+@app.post("/docker/hosts/save")
+async def docker_host_save(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    original_id = str(form.get("original_id", "")).strip().lower()
+    homepage_server = str(form.get("homepage_server", "")).strip()
+    host_id = str(form.get("id", "")).strip().lower() or _docker_custom_host_id(homepage_server, str(form.get("name", "")))
+    payload = {
+        "id": host_id,
+        "name": str(form.get("name", "")),
+        "url": str(form.get("url", "")),
+        "homepage_server": homepage_server,
+        "public_host": str(form.get("public_host", "")),
+    }
+    try:
+        saved = store.save_docker_discovery_host(payload, actor(request), original_id=original_id)
+        sync_note = ""
+        if str(form.get("sync_homepage", "")) == "1":
+            try:
+                created = sync_custom_docker_host_to_homepage(saved, actor(request))
+                sync_note = "；已创建 docker.yaml Server" if created else "；docker.yaml Server 已匹配"
+            except ConfigError as exc:
+                return redirect("/docker/hosts", error=f"Docker 主机已保存，但未同步 docker.yaml：{exc}")
+        return redirect("/docker/hosts", ok=f"已保存 Docker 主机“{saved['name']}”{sync_note}。")
+    except ConfigError as exc:
+        return redirect("/docker/hosts", error=str(exc))
+
+
+@app.post("/docker/hosts/delete")
+async def docker_host_delete(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        store.delete_docker_discovery_host(str(form.get("host_id", "")), actor(request))
+        return redirect("/docker/hosts", ok="已删除 Admin 自定义 Docker 发现连接；docker.yaml 未被删除。")
+    except ConfigError as exc:
+        return redirect("/docker/hosts", error=str(exc))
+
+
+@app.post("/docker/hosts/sync-homepage")
+async def docker_host_sync_homepage(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    host_id = str(form.get("host_id", "")).strip()
+    try:
+        host = docker_discovery_host(host_id)
+        if not host or host.get("source") != "custom":
+            raise ConfigError("只能同步 Admin 自定义 Docker 主机。")
+        created = sync_custom_docker_host_to_homepage({k: str(host.get(k) or "") for k in ("id", "name", "url", "homepage_server", "public_host")}, actor(request))
+        return redirect("/docker/hosts", ok="已创建 docker.yaml Server。" if created else "docker.yaml Server 已存在且连接一致。")
+    except ConfigError as exc:
+        return redirect("/docker/hosts", error=str(exc))
 
 
 @app.post("/docker/setup-homepage")
@@ -1730,7 +2103,7 @@ async def docker_setup_homepage(request: Request, _: None = Depends(auth_guard))
         if not isinstance(data, dict):
             raise ConfigError("docker.yaml 必须是对象映射。")
         if data:
-            return redirect("/docker", error="docker.yaml 已有配置。可使用“切换为只读代理”迁移当前 Docker server。")
+            return redirect("/docker", error="docker.yaml 已有配置。请在 Docker 主机管理中添加更多连接，或使用高级编辑调整现有 Server。")
         data["local-docker"] = CommentedMap(
             {"host": settings.homepage_docker_proxy_host, "port": settings.homepage_docker_proxy_port}
         )
@@ -1758,25 +2131,29 @@ async def docker_migrate_homepage_proxy(request: Request, _: None = Depends(auth
         cfg.pop("socket", None)
         cfg["host"] = settings.homepage_docker_proxy_host
         cfg["port"] = settings.homepage_docker_proxy_port
-        # Keep swarm and other compatible options, but a plain internal HTTP proxy does not use TLS/protocol overrides.
         cfg.pop("tls", None)
         cfg.pop("protocol", None)
         cfg.pop("headers", None)
         store.write_data("docker.yaml", data, actor(request), f"migrate docker server {name} to read-only proxy")
         return redirect(
             "/docker",
-            ok=f"已将 {name} 切换为只读代理。请确认 Homepage 也加入 homepage-tools Docker 网络，并移除直接 socket 挂载。",
+            ok=f"已将 {name} 切换为只读代理。请确认 Homepage 也能访问该代理，并移除直接 socket 挂载。",
         )
     except ConfigError as exc:
         return redirect("/docker", error=str(exc))
 
 
-def docker_import_values(container: dict[str, Any], names: list[str], requested_group: int | None = None) -> tuple[dict[str, Any], int, dict[str, str]]:
+def docker_import_values(
+    container: dict[str, Any],
+    names: list[str],
+    host: dict[str, Any],
+    requested_group: int | None = None,
+) -> tuple[dict[str, Any], int, dict[str, str]]:
     values = empty_service_values()
     sources: dict[str, str] = {}
     profile = infer_service_profile(container)
     label_values = homepage_labels_to_values(container)
-    for key in ["name", "icon", "href", "description", "siteMonitor", "ping", "server", "container"]:
+    for key in ["name", "icon", "href", "description", "siteMonitor", "ping", "container"]:
         if label_values.get(key):
             values[key] = label_values[key]
             sources[key] = "Homepage Label"
@@ -1787,9 +2164,12 @@ def docker_import_values(container: dict[str, Any], names: list[str], requested_
     if not values["container"]:
         values["container"] = str(container.get("name", ""))
         sources["container"] = "容器名称"
-    if not values["server"]:
-        values["server"] = first_docker_server_name()
-        sources["server"] = "docker.yaml"
+
+    homepage_server = str(host.get("homepage_server") or "")
+    if not homepage_server:
+        raise ConfigError("该 Docker 发现连接没有映射 Homepage Docker Server，无法安全导入。")
+    values["server"] = homepage_server
+    sources["server"] = f"Docker 主机 · {host.get('name') or homepage_server}"
 
     inferred_icon, inferred_widget = infer_icon_and_widget(container)
     if not values["icon"] and inferred_icon:
@@ -1818,9 +2198,9 @@ def docker_import_values(container: dict[str, Any], names: list[str], requested_
     if not values["href"]:
         port = first_published_port(container)
         if port:
-            host = settings.docker_public_host or public_host_from_url(settings.homepage_url)
-            values["href"] = f"http://{host}:{port}"
-            sources["href"] = "发布端口"
+            public_host = docker_host_public_host(host)
+            values["href"] = f"http://{public_host}:{port}"
+            sources["href"] = f"{host.get('name') or homepage_server} 发布端口"
     if values["widget_type"] and not values["widget_fields"].get("url") and values["href"]:
         values["widget_fields"]["url"] = values["href"]
         sources["widget_url"] = "访问地址"
@@ -1843,23 +2223,33 @@ def docker_import_values(container: dict[str, Any], names: list[str], requested_
     return values, group_index, sources
 
 
-@app.get("/docker/import/{container_id}", response_class=HTMLResponse)
-def docker_import_wizard(
+def _docker_import_context(host_id: str, container_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    host = docker_discovery_host(host_id)
+    if not host:
+        raise ConfigError("未找到 Docker 主机。")
+    client = host.get("client")
+    if not isinstance(client, DockerDiscoveryClient):
+        raise ConfigError("该 Docker 主机没有可用的 Admin Discovery 连接。")
+    container = client.get_container(container_id)
+    if not container:
+        raise ConfigError("未找到该 Docker 容器。")
+    return host, container
+
+
+@app.get("/docker/host/{host_id}/import/{container_id}", response_class=HTMLResponse)
+def docker_import_wizard_multi(
     request: Request,
+    host_id: str,
     container_id: str,
     group: int | None = None,
     _: None = Depends(auth_guard),
 ) -> HTMLResponse:
-    if not docker_discovery.enabled():
-        return redirect("/docker", error="Docker 容器发现未启用。")
     try:
-        container = docker_discovery.get_container(container_id)
-        if not container:
-            return redirect("/docker", error="未找到该 Docker 容器。")
+        host, container = _docker_import_context(host_id, container_id)
         names = group_names("services.yaml")
         if not names:
             return redirect("/services", error="请先创建一个服务分组。")
-        values, group_index, sources = docker_import_values(container, names, group)
+        values, group_index, sources = docker_import_values(container, names, host, group)
         container = dict(container)
         container["published_ports"] = [p for p in dedupe_ports(container.get("ports") or []) if p.get("public")]
         return templates.TemplateResponse(
@@ -1869,6 +2259,7 @@ def docker_import_wizard(
                 request,
                 "docker",
                 container=container,
+                docker_host=_docker_host_safe(host),
                 groups=names,
                 group_index=group_index,
                 values=values,
@@ -1878,12 +2269,13 @@ def docker_import_wizard(
             ),
         )
     except Exception as exc:
-        return redirect("/docker", error=f"导入容器失败：{exc}")
+        return redirect(f"/docker?host={quote(host_id)}", error=f"导入容器失败：{exc}")
 
 
-@app.get("/docker/import/{container_id}/edit", response_class=HTMLResponse)
-def docker_import_edit(
+@app.get("/docker/host/{host_id}/import/{container_id}/edit", response_class=HTMLResponse)
+def docker_import_edit_multi(
     request: Request,
+    host_id: str,
     container_id: str,
     group_index: int | None = None,
     name: str | None = None,
@@ -1896,16 +2288,12 @@ def docker_import_edit(
     widget_url: str | None = None,
     _: None = Depends(auth_guard),
 ) -> HTMLResponse:
-    if not docker_discovery.enabled():
-        return redirect("/docker", error="Docker 容器发现未启用。")
     try:
-        container = docker_discovery.get_container(container_id)
-        if not container:
-            return redirect("/docker", error="未找到该 Docker 容器。")
+        host, container = _docker_import_context(host_id, container_id)
         names = group_names("services.yaml")
         if not names:
             return redirect("/services", error="请先创建一个服务分组。")
-        values, resolved_group, _ = docker_import_values(container, names, group_index)
+        values, resolved_group, _ = docker_import_values(container, names, host, group_index)
         overrides = {
             "name": name,
             "href": href,
@@ -1929,10 +2317,43 @@ def docker_import_edit(
             item_index=None,
             groups=names,
             values=values,
-            docker_source=str(container.get("name", "")),
+            docker_source=f"{host.get('name') or host_id} / {container.get('name', '')}",
         )
     except Exception as exc:
-        return redirect("/docker", error=f"导入容器失败：{exc}")
+        return redirect(f"/docker?host={quote(host_id)}", error=f"导入容器失败：{exc}")
+
+
+# Compatibility routes for bookmarks/tests from pre-v0.4.0 links. They resolve the first available host.
+@app.get("/docker/import/{container_id}", response_class=HTMLResponse)
+def docker_import_wizard_legacy(
+    request: Request,
+    container_id: str,
+    group: int | None = None,
+    _: None = Depends(auth_guard),
+) -> HTMLResponse:
+    host = docker_discovery_host()
+    if not host:
+        return redirect("/docker", error="Docker 容器发现未启用。")
+    target = f"/docker/host/{quote(str(host['id']))}/import/{quote(container_id)}"
+    if group is not None:
+        target += f"?group={group}"
+    return RedirectResponse(target, status_code=307)
+
+
+@app.get("/docker/import/{container_id}/edit", response_class=HTMLResponse)
+def docker_import_edit_legacy(
+    request: Request,
+    container_id: str,
+    _: None = Depends(auth_guard),
+) -> RedirectResponse:
+    host = docker_discovery_host()
+    if not host:
+        return redirect("/docker", error="Docker 容器发现未启用。")
+    query = request.url.query
+    target = f"/docker/host/{quote(str(host['id']))}/import/{quote(container_id)}/edit"
+    if query:
+        target += "?" + query
+    return RedirectResponse(target, status_code=307)
 
 
 @app.get("/settings", response_class=HTMLResponse)

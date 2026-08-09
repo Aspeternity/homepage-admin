@@ -166,7 +166,7 @@ def test_docker_import_wizard_and_detailed_editor(monkeypatch) -> None:
     assert editor.status_code == 200
     assert 'value="qBittorrent Main"' in editor.text
     assert 'value="qbittorrent" list="widget-type-options"' in editor.text
-    assert 'value="http://homepage.local:18080"' in editor.text
+    assert 'http://homepage.local:18080' in editor.text
 
 
 def test_backup_is_created() -> None:
@@ -1762,3 +1762,135 @@ def test_v039_proxmox_bound_actions_have_identical_button_sizing() -> None:
     assert 'class="button danger-outline full"' in template
     assert '.proxmox-bound-actions form { margin: 0; display: flex; min-width: 0; }' in css
     assert '.proxmox-bound-actions form > .button { width: 100%; min-height: 44px; height: 100%; }' in css
+
+
+def test_v040_multi_docker_hosts_are_discovered_and_matched_by_server(monkeypatch) -> None:
+    from app import main as main_module
+    from app.docker_client import DockerDiscoveryClient
+
+    client = TestClient(app)
+    login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    services_path = settings.config_dir / "services.yaml"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_services = services_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text(
+            "---\ndocker-a:\n  host: docker-a-proxy\n  port: 2375\ndocker-b:\n  host: 10.10.1.13\n  port: 2375\n",
+            encoding="utf-8",
+        )
+        services_path.write_text(
+            "---\n- Core:\n    - App A:\n        server: docker-a\n        container: same-app\n",
+            encoding="utf-8",
+        )
+        sample = [{"id": "abc123def456", "name": "same-app", "image": "example/app:latest", "state": "running", "status": "Up", "ports": [], "labels": {}}]
+        monkeypatch.setattr(DockerDiscoveryClient, "ping", lambda self: True)
+        monkeypatch.setattr(DockerDiscoveryClient, "list_containers", lambda self: sample)
+        page = client.get("/docker?host=all")
+        assert page.status_code == 200
+        assert "全部 Docker 主机" in page.text
+        assert "docker-a" in page.text and "docker-b" in page.text
+        assert page.text.count('data-added="1"') == 1
+        assert page.text.count('data-added="0"') == 1
+        assert "server: docker-a" in page.text
+        assert "server: docker-b" in page.text
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        services_path.write_text(original_services, encoding="utf-8")
+
+
+def test_v040_import_uses_selected_docker_host_server(monkeypatch) -> None:
+    from app import main as main_module
+    from app.docker_client import DockerDiscoveryClient
+
+    client = TestClient(app)
+    login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    original = docker_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text(
+            "---\ndocker-main:\n  host: main-proxy\n  port: 2375\ngame-server:\n  host: 10.10.1.13\n  port: 2375\n",
+            encoding="utf-8",
+        )
+        sample = [{"id": "game123456789", "name": "minecraft", "image": "itzg/minecraft-server:latest", "state": "running", "status": "Up", "ports": [{"private": 25565, "public": 25565, "type": "tcp", "ip": "0.0.0.0"}], "labels": {}}]
+        monkeypatch.setattr(DockerDiscoveryClient, "ping", lambda self: True)
+        monkeypatch.setattr(DockerDiscoveryClient, "list_containers", lambda self: sample)
+        hosts = main_module.docker_discovery_hosts()
+        game = next(item for item in hosts if item["homepage_server"] == "game-server")
+        wizard = client.get(f"/docker/host/{game['id']}/import/game123456789")
+        assert wizard.status_code == 200
+        assert "game-server" in wizard.text
+        assert 'data-wizard-static="server"' in wizard.text
+        assert 'value="game-server"' in wizard.text
+        assert "10.10.1.13:25565" in wizard.text
+    finally:
+        docker_path.write_text(original, encoding="utf-8")
+
+
+def test_v040_custom_docker_host_can_save_test_and_sync_to_docker_yaml(monkeypatch) -> None:
+    from app.docker_client import DockerDiscoveryClient
+
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    prefs_path = settings.data_dir / "admin-settings.json"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
+    try:
+        docker_path.write_text("---\n", encoding="utf-8")
+        monkeypatch.setattr(DockerDiscoveryClient, "ping", lambda self: True)
+        monkeypatch.setattr(DockerDiscoveryClient, "list_containers", lambda self: [{"id": "1", "name": "minecraft", "image": "mc", "state": "running", "status": "Up", "ports": [], "labels": {}}])
+        tested = client.post(
+            "/api/docker/hosts/test",
+            data={"csrf": csrf, "url": "http://10.10.1.13:2375", "homepage_server": "game-server"},
+        )
+        assert tested.status_code == 200
+        assert tested.json()["containers"] == 1
+
+        saved = client.post(
+            "/docker/hosts/save",
+            data={
+                "csrf": csrf,
+                "id": "game-server",
+                "name": "Game-Server VM",
+                "url": "http://10.10.1.13:2375",
+                "homepage_server": "game-server",
+                "public_host": "10.10.1.13",
+                "sync_homepage": "1",
+            },
+            follow_redirects=False,
+        )
+        assert saved.status_code == 303
+        assert any(item["id"] == "game-server" for item in store.docker_discovery_hosts())
+        docker_data = YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
+        assert docker_data["game-server"]["host"] == "10.10.1.13"
+        assert docker_data["game-server"]["port"] == 2375
+        manager = client.get("/docker/hosts")
+        assert "Game-Server VM" in manager.text
+        assert "docker.yaml 已配置" in manager.text
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        if original_prefs is None:
+            prefs_path.unlink(missing_ok=True)
+        else:
+            prefs_path.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v040_docker_yaml_headers_are_not_exposed_in_host_manager() -> None:
+    client = TestClient(app)
+    login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    original = docker_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text(
+            "---\nsecure-docker:\n  host: docker.example.internal\n  port: 443\n  protocol: https\n  headers:\n    Authorization: Bearer top-secret-token\n",
+            encoding="utf-8",
+        )
+        page = client.get("/docker/hosts")
+        assert page.status_code == 200
+        assert "secure-docker" in page.text
+        assert "认证 Header" in page.text
+        assert "top-secret-token" not in page.text
+        assert "Bearer" not in page.text
+    finally:
+        docker_path.write_text(original, encoding="utf-8")

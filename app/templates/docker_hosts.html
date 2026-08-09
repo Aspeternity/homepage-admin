@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Docker 主机管理 · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <a class="back-link" href="/docker">← 返回 Docker 发现</a>
+    <h1>Docker 主机管理</h1>
+    <p>管理多个只读 Docker API 连接。<code>docker.yaml</code> 中的远程 Server 会自动出现；Admin 自定义连接保存在 <code>/data/admin-settings.json</code>。</p>
+  </div>
+  <div class="heading-actions"><a class="button secondary" href="/yaml/docker.yaml">高级编辑 docker.yaml</a></div>
+</section>
+
+{% if default_server_info.mode == 'socket' %}
+<section class="alert warning docker-host-migration-alert">
+  <div><strong>检测到默认 Docker Server 仍使用直接 Socket</strong><br><span>Homepage Admin 不直接读取宿主机 Socket。可以把默认 Server 切换到当前内置只读代理。</span></div>
+  <form method="post" action="/docker/migrate-homepage-proxy" data-confirm="这会把默认 docker.yaml Server 切换为内置只读代理。继续吗？">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="button primary" type="submit">切换为只读代理</button>
+  </form>
+</section>
+{% endif %}
+
+<div class="docker-host-manager-grid">
+  <section class="form-card docker-host-list-panel">
+    <div class="section-title-row"><div><h2>当前连接</h2><p class="section-help">同一个 Homepage Server 如果存在 Admin 自定义地址，会优先使用自定义地址进行发现。</p></div><span class="count-pill">{{ hosts|length }} 个</span></div>
+    {% if hosts %}
+    <div class="docker-host-list">
+      {% for h in hosts %}
+      <article class="docker-host-row">
+        <div class="docker-host-row-main">
+          <div class="docker-host-title-line">
+            <h3>{{ h.name }}</h3>
+            <span class="source-pill">{{ h.source_label }}</span>
+          </div>
+          <div class="docker-host-row-meta">
+            <span>Homepage Server：<code>{{ h.homepage_server }}</code></span>
+            <span>Discovery：<code>{{ h.url or '无 Admin HTTP API' }}</code></span>
+            {% if h.public_host %}<span>Public Host：<code>{{ h.public_host }}</code></span>{% endif %}
+          </div>
+          <div class="docker-badges">
+            <span class="role-pill {{ 'configured-pill' if h.yaml_configured else '' }}">{{ 'docker.yaml 已配置' if h.yaml_configured else 'docker.yaml 未配置' }}</span>
+            {% if h.yaml_mode == 'socket' %}<span class="role-pill">Socket 模式</span>{% endif %}
+            {% if h.has_tls %}<span class="role-pill">TLS</span>{% endif %}
+            {% if h.has_headers %}<span class="role-pill">认证 Header</span>{% endif %}
+          </div>
+        </div>
+        <div class="docker-host-row-actions">
+          <button type="button" class="button secondary" data-docker-host-test data-host-id="{{ h.id }}">测试连接</button>
+          {% if h.editable %}<a class="button secondary" href="/docker/hosts?edit={{ h.id|urlencode }}">编辑</a>{% endif %}
+          {% if h.editable and not h.yaml_configured %}
+          <form method="post" action="/docker/hosts/sync-homepage" data-confirm="这会在 docker.yaml 中创建名为 {{ h.homepage_server }} 的 Server。继续吗？">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="host_id" value="{{ h.id }}">
+            <button class="button primary" type="submit">同步到 docker.yaml</button>
+          </form>
+          {% endif %}
+          {% if h.editable %}
+          <form method="post" action="/docker/hosts/delete" data-confirm="只删除 Admin 自定义发现连接；不会删除 docker.yaml。确定吗？">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="host_id" value="{{ h.id }}">
+            <button class="button danger" type="submit">删除自定义</button>
+          </form>
+          {% endif %}
+        </div>
+        <div class="docker-host-test-result" data-host-test-result="{{ h.id }}" hidden></div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state compact-empty"><h3>还没有 Docker 主机</h3><p>先在右侧添加一个只读 Docker Proxy，或在 docker.yaml 添加远程 Server。</p></div>
+    {% endif %}
+  </section>
+
+  <section class="form-card docker-host-form-panel">
+    <div class="section-title-row">
+      <div><h2>{{ '编辑自定义连接' if edit_host else '添加 Docker 主机' }}</h2><p class="section-help">推荐连接 <code>docker-socket-proxy</code>，并保持 <code>POST=0</code>。</p></div>
+      {% if edit_host %}<a class="button secondary small" href="/docker/hosts">取消编辑</a>{% endif %}
+    </div>
+    <form method="post" action="/docker/hosts/save" class="docker-host-form" data-docker-host-form>
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="original_id" value="{{ edit_host.id if edit_host else '' }}">
+      <div class="form-grid two docker-host-form-grid">
+        <label>连接 ID
+          <input name="id" value="{{ form_values.id }}" placeholder="game-server" pattern="[a-z0-9][a-z0-9._-]{0,63}" {% if edit_host %}readonly{% endif %}>
+          <small>用于 Admin 内部路由；可留空自动按 Homepage Server 生成。</small>
+        </label>
+        <label>显示名称
+          <input name="name" value="{{ form_values.name }}" placeholder="Game-Server VM" required>
+          <small>显示在 Docker 发现卡片上的主机名称。</small>
+        </label>
+        <label class="span-2">Discovery URL
+          <input name="url" value="{{ form_values.url }}" placeholder="http://10.10.1.13:2375" required data-docker-host-url>
+          <small>只读 Docker HTTP API 根地址；不要带 <code>/containers/json</code> 等路径。</small>
+        </label>
+        <label>Homepage Docker Server
+          <input name="homepage_server" value="{{ form_values.homepage_server }}" list="docker-server-options" placeholder="game-server" required data-docker-homepage-server>
+          <datalist id="docker-server-options">{% for server in docker_servers %}<option value="{{ server }}"></option>{% endfor %}</datalist>
+          <small>导入服务时写入 <code>server:</code> 的值，必须对应 docker.yaml 键名。</small>
+        </label>
+        <label>Public Host
+          <input name="public_host" value="{{ form_values.public_host }}" placeholder="10.10.1.13" data-docker-public-host>
+          <small>用于根据发布端口生成访问地址；留空时尝试从 Discovery URL 推断。</small>
+        </label>
+      </div>
+      <label class="check-line docker-sync-homepage-option">
+        <input type="checkbox" name="sync_homepage" value="1" {% if not edit_host %}checked{% endif %}>
+        <span><strong>若 docker.yaml 没有同名 Server，则同时创建。</strong><small>若已存在同名但地址不同，为保护 TLS / Header 配置会拒绝覆盖。</small></span>
+      </label>
+      <div class="docker-host-form-actions">
+        <button class="button secondary" type="button" data-docker-host-form-test>先测试连接</button>
+        <button class="button primary" type="submit">{{ '保存修改' if edit_host else '添加 Docker 主机' }}</button>
+      </div>
+      <div class="docker-host-test-result" data-docker-host-form-result hidden></div>
+    </form>
+
+    <div class="alert info docker-host-security-note">
+      <strong>远程 VM 安全建议</strong><br>
+      在目标 VM 上运行只读 Docker Socket Proxy，并设置 <code>CONTAINERS=1</code>、<code>PING=1</code>、<code>SERVICES=1</code>、<code>TASKS=1</code>、<code>POST=0</code>。如果必须把 2375 暴露到局域网，请用防火墙只允许 Homepage / Admin 所在主机访问。
+    </div>
+  </section>
+</div>
+{% endblock %}

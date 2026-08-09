@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from filelock import FileLock
@@ -350,6 +351,113 @@ class HomepageStore:
                 self.preferences_path.unlink()
             self._audit(actor, "reset widget schema sync settings", "admin-settings.json", None)
         return self.widget_schema_sync_preferences()
+
+    def docker_discovery_hosts(self) -> list[dict[str, str]]:
+        prefs = self._read_preferences()
+        raw = prefs.get("docker_discovery_hosts")
+        if not isinstance(raw, list):
+            return []
+        hosts: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            host_id = str(item.get("id", "")).strip().lower()
+            name = str(item.get("name", "")).strip()
+            url = str(item.get("url", "")).strip().rstrip("/")
+            homepage_server = str(item.get("homepage_server", "")).strip()
+            public_host = str(item.get("public_host", "")).strip()
+            if not host_id or host_id in seen or not name or not url or not homepage_server:
+                continue
+            seen.add(host_id)
+            hosts.append({
+                "id": host_id,
+                "name": name,
+                "url": url,
+                "homepage_server": homepage_server,
+                "public_host": public_host,
+            })
+        return hosts
+
+    @staticmethod
+    def _validate_docker_discovery_host_payload(payload: dict[str, Any]) -> dict[str, str]:
+        host_id = str(payload.get("id", "")).strip().lower()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", host_id):
+            raise ConfigError("Docker 主机 ID 只能包含小写字母、数字、点、下划线和连字符，长度 1-64。")
+        name = str(payload.get("name", "")).strip()
+        if not name or len(name) > 80:
+            raise ConfigError("Docker 主机显示名称不能为空，且不能超过 80 个字符。")
+        raw_url = str(payload.get("url", "")).strip().rstrip("/")
+        parsed = urlparse(raw_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ConfigError("Docker Discovery URL 必须是 http:// 或 https:// 地址。")
+        if parsed.username or parsed.password:
+            raise ConfigError("Docker Discovery URL 不允许嵌入用户名或密码。")
+        if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+            raise ConfigError("Docker Discovery URL 必须指向 Docker API 根地址，不能包含路径、查询参数或锚点。")
+        try:
+            _ = parsed.port
+        except ValueError as exc:
+            raise ConfigError("Docker Discovery URL 端口无效。") from exc
+        homepage_server = str(payload.get("homepage_server", "")).strip()
+        if not homepage_server or len(homepage_server) > 120 or any(ch in homepage_server for ch in "\r\n"):
+            raise ConfigError("Homepage Docker Server 名称不能为空。")
+        public_host = str(payload.get("public_host", "")).strip()
+        if len(public_host) > 255 or any(ch.isspace() for ch in public_host):
+            raise ConfigError("Public Host 格式无效。")
+        return {
+            "id": host_id,
+            "name": name,
+            "url": raw_url,
+            "homepage_server": homepage_server,
+            "public_host": public_host,
+        }
+
+    def save_docker_discovery_host(self, payload: dict[str, Any], actor: str, *, original_id: str = "") -> dict[str, str]:
+        host = self._validate_docker_discovery_host_payload(payload)
+        original_id = str(original_id).strip().lower()
+        with self.locked():
+            prefs = self._read_preferences()
+            current = prefs.get("docker_discovery_hosts")
+            rows = current if isinstance(current, list) else []
+            cleaned = [dict(item) for item in rows if isinstance(item, dict)]
+            target_id = original_id or host["id"]
+            replaced = False
+            result: list[dict[str, Any]] = []
+            for item in cleaned:
+                item_id = str(item.get("id", "")).strip().lower()
+                if item_id == target_id:
+                    result.append(host)
+                    replaced = True
+                    continue
+                if item_id == host["id"]:
+                    raise ConfigError(f"Docker 主机 ID {host['id']} 已存在。")
+                result.append(item)
+            if not replaced:
+                result.append(host)
+            prefs["docker_discovery_hosts"] = result
+            self._atomic_write(self.preferences_path, json.dumps(prefs, ensure_ascii=False, indent=2) + "\n")
+            self._audit(actor, f"save docker discovery host:{host['id']}", "admin-settings.json", None)
+        return host
+
+    def delete_docker_discovery_host(self, host_id: str, actor: str) -> None:
+        host_id = str(host_id).strip().lower()
+        with self.locked():
+            prefs = self._read_preferences()
+            current = prefs.get("docker_discovery_hosts")
+            rows = current if isinstance(current, list) else []
+            result = [item for item in rows if not isinstance(item, dict) or str(item.get("id", "")).strip().lower() != host_id]
+            if len(result) == len(rows):
+                raise ConfigError("未找到要删除的自定义 Docker 主机。")
+            if result:
+                prefs["docker_discovery_hosts"] = result
+            else:
+                prefs.pop("docker_discovery_hosts", None)
+            if prefs:
+                self._atomic_write(self.preferences_path, json.dumps(prefs, ensure_ascii=False, indent=2) + "\n")
+            elif self.preferences_path.exists():
+                self.preferences_path.unlink()
+            self._audit(actor, f"delete docker discovery host:{host_id}", "admin-settings.json", None)
 
     def backup_limit(self) -> int:
         default = max(1, min(int(settings.backup_limit), 500))

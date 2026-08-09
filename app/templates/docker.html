@@ -4,69 +4,107 @@
 <section class="page-heading">
   <div>
     <h1>Docker 发现</h1>
-    <p>通过共享只读 Docker Proxy 读取容器元数据；不会提供停止、删除、重启或 Exec 接口。</p>
+    <p>同时发现多个 Docker 主机的容器，并在导入 Homepage 时自动使用正确的 <code>server</code>。发现连接只执行只读 API 请求。</p>
   </div>
   <div class="heading-actions">
-    {% if hidden_internal_count and not show_internal %}<a class="button secondary" href="/docker?show_internal=true">显示系统组件 ({{ hidden_internal_count }})</a>{% elif show_internal %}<a class="button secondary" href="/docker">隐藏系统组件</a>{% endif %}
-    <a class="button secondary" href="/docker{% if show_internal %}?show_internal=true{% endif %}">刷新列表</a>
+    <a class="button secondary" href="/docker/hosts">Docker 主机管理</a>
+    {% if hidden_internal_count and not show_internal %}
+      <a class="button secondary" href="/docker?host={{ selected_host|urlencode }}&show_internal=true">显示系统组件 ({{ hidden_internal_count }})</a>
+    {% elif show_internal %}
+      <a class="button secondary" href="/docker?host={{ selected_host|urlencode }}">隐藏系统组件</a>
+    {% endif %}
+    <a class="button secondary" href="/docker?host={{ selected_host|urlencode }}{% if show_internal %}&show_internal=true{% endif %}">刷新列表</a>
   </div>
 </section>
 
-<section class="form-card docker-status-card">
-  <div class="section-title-row">
-    <div>
-      <h2>Homepage Docker Server</h2>
-      {% if docker_server %}
-      <p class="section-help">当前检测到：<code>{{ docker_server }}</code>。</p>
-      {% else %}
-      <p class="section-help">当前 <code>docker.yaml</code> 没有 Docker server。容器发现仍可工作，但 Homepage 无法显示 Docker 状态。</p>
-      {% endif %}
-    </div>
-    <span class="status-pill {{ 'ok' if proxy_healthy else '' }}">{{ '只读代理可达' if proxy_healthy else '代理不可达' }}</span>
+{% if docker_hosts %}
+<section class="form-card docker-host-selector-card">
+  <div class="docker-host-selector-copy">
+    <h2>Docker 主机 / 连接</h2>
+    <p class="section-help"><code>docker.yaml</code> 中的远程 Server 会自动加入发现列表；也可以在“Docker 主机管理”中添加 Admin 专用的只读代理地址。</p>
   </div>
+  <form method="get" class="docker-host-filter-form">
+    <select name="host" aria-label="Docker 主机" data-docker-host-filter>
+      <option value="all" {% if selected_host == 'all' %}selected{% endif %}>全部 Docker 主机</option>
+      {% for h in docker_hosts %}
+      <option value="{{ h.id }}" {% if selected_host == h.id %}selected{% endif %}>{{ h.name }} · {{ h.homepage_server }}</option>
+      {% endfor %}
+    </select>
+    {% if show_internal %}<input type="hidden" name="show_internal" value="true">{% endif %}
+    <noscript><button class="button secondary" type="submit">切换</button></noscript>
+  </form>
+</section>
 
-  {% if docker_server_info.mode == 'socket' %}
-  <div class="alert warning">
-    当前仍是直接 Socket 模式：<code>{{ docker_server_info.socket }}</code>。当前版本推荐改为共享只读代理，之后可以把 Homepage 的 <code>PGID</code> 恢复为原值并移除 Docker Socket 挂载。
+{% if host_statuses %}
+<div class="docker-host-status-grid">
+  {% for h in host_statuses %}
+  <section class="form-card docker-host-status-card {% if h.healthy %}healthy{% else %}unhealthy{% endif %}">
+    <div class="section-title-row">
+      <div>
+        <div class="docker-host-title-line"><h3>{{ h.name }}</h3><span class="source-pill">{{ h.source_label }}</span></div>
+        <p class="section-help">Homepage Server：<code>{{ h.homepage_server }}</code></p>
+      </div>
+      <span class="status-pill {{ 'ok' if h.healthy else '' }}">{{ '可达' if h.healthy else '不可达' }}</span>
+    </div>
+    <div class="docker-host-status-facts">
+      <div><span>Discovery</span><code>{{ h.url or '无 Admin HTTP API' }}</code></div>
+      <div><span>容器</span><strong>{{ h.container_count }}</strong></div>
+      <div><span>Homepage</span><strong>{{ '已配置' if h.yaml_configured else '未配置 docker.yaml' }}</strong></div>
+    </div>
+    {% if h.error %}<div class="alert warning compact-alert">{{ h.error }}</div>{% endif %}
+    {% if not h.yaml_configured %}<div class="alert warning compact-alert">此连接尚未映射到 <code>docker.yaml</code>，导入按钮会暂时禁用。可在“Docker 主机管理”中同步。</div>{% endif %}
+  </section>
+  {% endfor %}
+</div>
+{% endif %}
+{% else %}
+<section class="form-card">
+  <div class="section-title-row">
+    <div><h2>还没有 Docker 发现连接</h2><p class="section-help">可以从现有 <code>docker.yaml</code> 自动发现，也可以添加远程 VM 的只读 Docker Proxy。</p></div>
+    <a class="button primary" href="/docker/hosts">添加 Docker 主机</a>
   </div>
-  <form method="post" action="/docker/migrate-homepage-proxy" data-confirm="切换 docker.yaml 后，请确保 Homepage 已加入 homepage-tools 网络。继续吗？">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="button primary" type="submit">切换为只读代理</button>
-  </form>
-  {% elif docker_server_info.mode == 'proxy' %}
-  <div class="proxy-summary"><span>模式</span><strong>共享只读代理</strong><span>地址</span><code>{{ docker_server_info.host }}:{{ docker_server_info.port }}</code></div>
-  {% elif docker_server_info.mode == 'remote' %}
-  <div class="alert info">当前 Docker server 指向 <code>{{ docker_server_info.host }}:{{ docker_server_info.port }}</code>。如这是你主动配置的远程 Docker，可继续使用；否则可迁移到内置只读代理。</div>
-  <form method="post" action="/docker/migrate-homepage-proxy" data-confirm="这会把当前 Docker server 地址改为内置只读代理。继续吗？">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="button secondary" type="submit">改用内置只读代理</button>
-  </form>
-  {% elif not docker_server %}
   <form method="post" action="/docker/setup-homepage">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="button primary" type="submit">创建 local-docker 只读代理配置</button>
+    <button class="button secondary" type="submit">创建 local-docker 默认配置</button>
   </form>
-  {% endif %}
-  <p class="form-help proxy-help">推荐配置：<code>host: {{ proxy_host }}</code>、<code>port: {{ proxy_port }}</code>。Homepage 与 Admin 需要同时加入 <code>homepage-tools</code> Docker 网络。</p>
 </section>
+{% endif %}
 
 {% if service_groups %}
-<section class="docker-toolbar form-card">
-  <div>
-    <strong>导入分组策略</strong>
-    <p class="form-help">默认按服务类型智能推荐；也可以在这里固定一个分组。<code>homepage.group</code> Label 始终拥有最高优先级。</p>
+<section class="docker-toolbar form-card docker-discovery-toolbar">
+  <div class="docker-toolbar-group">
+    <label>搜索容器
+      <input type="search" placeholder="容器名 / 镜像 / 主机…" data-docker-search>
+    </label>
+    <label>状态
+      <select data-docker-state-filter>
+        <option value="all">全部状态</option>
+        <option value="running">仅运行中</option>
+        <option value="stopped">仅非运行</option>
+      </select>
+    </label>
+    <label>Homepage
+      <select data-docker-added-filter>
+        <option value="all">全部容器</option>
+        <option value="unadded">仅未添加</option>
+        <option value="added">仅已添加</option>
+      </select>
+    </label>
   </div>
-  <select data-docker-import-group aria-label="导入分组策略">
-    <option value="auto" selected>智能推荐（按服务类型）</option>
-    {% for group in service_groups %}<option value="{{ loop.index0 }}">固定到：{{ group }}</option>{% endfor %}
-  </select>
+  <div class="docker-import-group-control">
+    <strong>导入分组策略</strong>
+    <select data-docker-import-group aria-label="导入分组策略">
+      <option value="auto" selected>智能推荐（按服务类型）</option>
+      {% for group in service_groups %}<option value="{{ loop.index0 }}">固定到：{{ group }}</option>{% endfor %}
+    </select>
+  </div>
 </section>
 {% endif %}
 
 {% if containers %}
-<div class="docker-grid">
+<div class="docker-grid" data-docker-grid>
   {% for c in containers %}
-  <article class="docker-card {% if c.configured %}configured{% endif %}">
+  <article class="docker-card {% if c.configured %}configured{% endif %}" data-docker-card data-search="{{ (c.name ~ ' ' ~ c.image ~ ' ' ~ c.discovery_host_name ~ ' ' ~ c.homepage_server)|lower }}" data-state="{{ c.state }}" data-added="{{ '1' if c.configured else '0' }}">
     <div class="docker-card-head">
       <div>
         <div class="docker-name-row">
@@ -77,6 +115,8 @@
       <span class="status-pill {{ 'ok' if c.state == 'running' else '' }}">{{ c.state or 'unknown' }}</span>
     </div>
     <div class="docker-badges">
+      <span class="role-pill host-pill">{{ c.discovery_host_name }}</span>
+      <span class="role-pill">server: {{ c.homepage_server }}</span>
       {% if c.role %}<span class="role-pill">{{ c.role }}</span>{% endif %}
       {% if c.homepage_labeled %}<span class="role-pill">Homepage Labels</span>{% endif %}
       {% if c.configured %}<span class="role-pill configured-pill">已添加</span>{% endif %}
@@ -101,18 +141,23 @@
       <span class="button secondary disabled">已在 services.yaml</span>
       {% elif c.role == 'Docker 只读代理' %}
       <span class="button secondary disabled">系统组件</span>
+      {% elif not c.yaml_configured %}
+      <span class="button secondary disabled">先同步 docker.yaml</span>
       {% else %}
-      <a class="button primary" data-docker-import-link data-import-base="/docker/import/{{ c.id[:12] }}" href="/docker/import/{{ c.id[:12] }}">添加到 Homepage</a>
+      <a class="button primary" data-docker-import-link data-import-base="/docker/host/{{ c.discovery_host_id }}/import/{{ c.id[:12] }}" href="/docker/host/{{ c.discovery_host_id }}/import/{{ c.id[:12] }}">添加到 Homepage</a>
       {% endif %}
     </div>
   </article>
   {% endfor %}
 </div>
+<section class="empty-state docker-filter-empty" data-docker-filter-empty hidden>
+  <div class="empty-icon">⌕</div><h2>没有符合当前筛选条件的容器</h2><p>可以清空搜索或切换状态 / Homepage 筛选。</p>
+</section>
 {% else %}
 <section class="empty-state">
   <div class="empty-icon">⬡</div>
   <h2>暂无可显示的容器</h2>
-  <p>如果 Docker 里确实有容器，请检查当前版本的 <code>homepage-docker-proxy</code>、<code>homepage-tools</code> 网络和 socket 挂载。</p>
+  <p>如果目标主机确实有容器，请检查只读 Docker Proxy、VM 防火墙以及 Docker VM 到目标 VM 的网络连通性。</p>
 </section>
 {% endif %}
 {% endblock %}
