@@ -4,10 +4,11 @@
 <section class="page-heading">
   <div>
     <h1>Docker 发现</h1>
-    <p>只读取容器元数据，用来快速预填 Homepage 服务；不会提供停止、删除或重启容器的接口。</p>
+    <p>通过共享只读 Docker Proxy 读取容器元数据；不会提供停止、删除、重启或 Exec 接口。</p>
   </div>
   <div class="heading-actions">
-    <a class="button secondary" href="/docker">刷新列表</a>
+    {% if hidden_internal_count and not show_internal %}<a class="button secondary" href="/docker?show_internal=true">显示内部容器 ({{ hidden_internal_count }})</a>{% elif show_internal %}<a class="button secondary" href="/docker">隐藏内部容器</a>{% endif %}
+    <a class="button secondary" href="/docker{% if show_internal %}?show_internal=true{% endif %}">刷新列表</a>
   </div>
 </section>
 
@@ -16,31 +17,68 @@
     <div>
       <h2>Homepage Docker Server</h2>
       {% if docker_server %}
-      <p class="section-help">当前检测到：<code>{{ docker_server }}</code>。导入服务时会自动预填 <code>server</code>。</p>
+      <p class="section-help">当前检测到：<code>{{ docker_server }}</code>。</p>
       {% else %}
-      <p class="section-help">当前 <code>docker.yaml</code> 没有 server。容器仍可发现和导入，但 Homepage 的容器状态/资源统计需要配置 Docker server。</p>
+      <p class="section-help">当前 <code>docker.yaml</code> 没有 Docker server。容器发现仍可工作，但 Homepage 无法显示 Docker 状态。</p>
       {% endif %}
     </div>
-    {% if not docker_server %}
-    <form method="post" action="/docker/setup-homepage">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button class="button primary" type="submit">创建 local-docker</button>
-    </form>
-    {% endif %}
+    <span class="status-pill {{ 'ok' if proxy_healthy else '' }}">{{ '只读代理可达' if proxy_healthy else '代理不可达' }}</span>
   </div>
-  <p class="form-help">此按钮会在空的 <code>docker.yaml</code> 中写入 <code>local-docker: socket: /var/run/docker.sock</code>。你的 Homepage 容器必须已经挂载这个 socket。</p>
+
+  {% if docker_server_info.mode == 'socket' %}
+  <div class="alert warning">
+    当前仍是直接 Socket 模式：<code>{{ docker_server_info.socket }}</code>。v0.2.1 推荐改为共享只读代理，之后可以把 Homepage 的 <code>PGID</code> 恢复为原值并移除 Docker Socket 挂载。
+  </div>
+  <form method="post" action="/docker/migrate-homepage-proxy" data-confirm="切换 docker.yaml 后，请确保 Homepage 已加入 homepage-tools 网络。继续吗？">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="button primary" type="submit">切换为只读代理</button>
+  </form>
+  {% elif docker_server_info.mode == 'proxy' %}
+  <div class="proxy-summary"><span>模式</span><strong>共享只读代理</strong><span>地址</span><code>{{ docker_server_info.host }}:{{ docker_server_info.port }}</code></div>
+  {% elif docker_server_info.mode == 'remote' %}
+  <div class="alert info">当前 Docker server 指向 <code>{{ docker_server_info.host }}:{{ docker_server_info.port }}</code>。如这是你主动配置的远程 Docker，可继续使用；否则可迁移到内置只读代理。</div>
+  <form method="post" action="/docker/migrate-homepage-proxy" data-confirm="这会把当前 Docker server 地址改为内置只读代理。继续吗？">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="button secondary" type="submit">改用内置只读代理</button>
+  </form>
+  {% elif not docker_server %}
+  <form method="post" action="/docker/setup-homepage">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="button primary" type="submit">创建 local-docker 只读代理配置</button>
+  </form>
+  {% endif %}
+  <p class="form-help proxy-help">推荐配置：<code>host: {{ proxy_host }}</code>、<code>port: {{ proxy_port }}</code>。Homepage 与 Admin 需要同时加入 <code>homepage-tools</code> Docker 网络。</p>
 </section>
+
+{% if service_groups %}
+<section class="docker-toolbar form-card">
+  <div>
+    <strong>默认导入分组</strong>
+    <p class="form-help">没有 <code>homepage.group</code> Label 时，新服务会预选这里。选择会保存在当前浏览器。</p>
+  </div>
+  <select data-docker-import-group aria-label="默认导入分组">
+    {% for group in service_groups %}<option value="{{ loop.index0 }}" {% if loop.index0 == recommended_group_index %}selected{% endif %}>{{ group }}</option>{% endfor %}
+  </select>
+</section>
+{% endif %}
 
 {% if containers %}
 <div class="docker-grid">
   {% for c in containers %}
-  <article class="docker-card">
+  <article class="docker-card {% if c.configured %}configured{% endif %}">
     <div class="docker-card-head">
       <div>
-        <div class="docker-name-row"><h3>{{ c.name }}</h3><span class="state-dot {{ 'online' if c.state == 'running' else 'offline' }}"></span></div>
+        <div class="docker-name-row">
+          <h3>{{ c.name }}</h3><span class="state-dot {{ 'online' if c.state == 'running' else 'offline' }}"></span>
+        </div>
         <p class="docker-image">{{ c.image }}</p>
       </div>
       <span class="status-pill {{ 'ok' if c.state == 'running' else '' }}">{{ c.state or 'unknown' }}</span>
+    </div>
+    <div class="docker-badges">
+      {% if c.role %}<span class="role-pill">{{ c.role }}</span>{% endif %}
+      {% if c.homepage_labeled %}<span class="role-pill">Homepage Labels</span>{% endif %}
+      {% if c.configured %}<span class="role-pill configured-pill">已添加</span>{% endif %}
     </div>
     <p class="docker-status-text">{{ c.status }}</p>
     <div class="docker-meta">
@@ -51,13 +89,19 @@
         </div>
       </div>
       {% else %}<div><strong>端口</strong><span class="muted">无宿主机映射</span></div>{% endif %}
-      <div><strong>Homepage Labels</strong><span>{{ '已发现' if c.homepage_labeled else '无' }}</span></div>
+      {% if c.configured %}
+      <div><strong>Homepage</strong><span class="configured-copy">{% for match in c.configured_matches %}{{ match.group }} / {{ match.service }}{% if not loop.last %}<br>{% endif %}{% endfor %}</span></div>
+      {% else %}
+      <div><strong>Homepage</strong><span>{{ '有 Labels，尚未写入 YAML' if c.homepage_labeled else '尚未添加' }}</span></div>
+      {% endif %}
     </div>
     <div class="docker-actions">
       {% if c.configured %}
       <span class="button secondary disabled">已在 services.yaml</span>
+      {% elif c.role == 'Docker 只读代理' %}
+      <span class="button secondary disabled">内部基础设施</span>
       {% else %}
-      <a class="button primary" href="/docker/import/{{ c.id[:12] }}">添加到 Homepage</a>
+      <a class="button primary" data-docker-import-link data-import-base="/docker/import/{{ c.id[:12] }}" href="/docker/import/{{ c.id[:12] }}?group={{ recommended_group_index }}">添加到 Homepage</a>
       {% endif %}
     </div>
   </article>
@@ -67,7 +111,7 @@
 <section class="empty-state">
   <div class="empty-icon">⬡</div>
   <h2>暂无可显示的容器</h2>
-  <p>如果 Docker 里确实有容器，请检查 v0.2.0 Compose 中的 <code>docker-proxy</code> 服务和 socket 挂载。</p>
+  <p>如果 Docker 里确实有容器，请检查 v0.2.1 的 <code>homepage-docker-proxy</code>、<code>homepage-tools</code> 网络和 socket 挂载。</p>
 </section>
 {% endif %}
 {% endblock %}

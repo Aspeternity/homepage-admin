@@ -1,9 +1,17 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
+  <script>
+    (() => {
+      try {
+        const saved = localStorage.getItem('homepage-admin-theme');
+        document.documentElement.dataset.theme = saved === 'light' ? 'light' : 'dark';
+      } catch (_) {}
+    })();
+  </script>
   <title>{% block title %}Homepage Admin{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
   <script defer src="{{ url_for('static', path='app.js') }}"></script>
@@ -25,6 +33,7 @@
         <a class="nav-item {% if active == 'backups' %}active{% endif %}" href="/backups"><span>↶</span>备份回滚</a>
       </nav>
       <div class="sidebar-footer">
+        <button class="button secondary full theme-toggle" type="button" data-theme-toggle aria-label="切换浅色主题"><span data-theme-icon>☀</span><span data-theme-label>切换浅色</span></button>
         <a class="button secondary full" href="{{ homepage_url }}" target="_blank" rel="noopener">打开 Homepage ↗</a>
         <div class="user-row">
           <span class="avatar">{{ username[:1]|upper }}</span>
@@ -42,6 +51,7 @@
       <header class="mobile-header">
         <button class="icon-button" type="button" data-sidebar-toggle>☰</button>
         <strong>Homepage Admin</strong>
+        <button class="icon-button mobile-theme-toggle" type="button" data-theme-toggle aria-label="切换主题"><span data-theme-icon>☀</span></button>
       </header>
       {% if ok %}<div class="alert success">{{ ok }}</div>{% endif %}
       {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}

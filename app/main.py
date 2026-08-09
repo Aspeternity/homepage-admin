@@ -17,6 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import __version__
 from .docker_client import (
     DockerDiscoveryClient,
+    dedupe_ports,
     first_published_port,
     homepage_labels_to_values,
     infer_icon_and_widget,
@@ -215,26 +216,27 @@ def sync_layout_order(group_order: list[str], user: str) -> None:
     store.write_data("settings.yaml", settings_data, user, "layout reorder")
 
 
-def configured_docker_containers() -> set[str]:
-    configured: set[str] = set()
+def configured_docker_containers() -> dict[str, list[dict[str, str]]]:
+    configured: dict[str, list[dict[str, str]]] = {}
     try:
         data = store.load("services.yaml")
     except ConfigError:
         return configured
     for group_entry in data:
         try:
-            _, items = first_pair(group_entry)
+            group_name, items = first_pair(group_entry)
         except ConfigError:
             continue
         if not isinstance(items, list):
             continue
         for entry in items:
             try:
-                _, details = first_pair(entry)
+                service_name, details = first_pair(entry)
             except ConfigError:
                 continue
             if isinstance(details, dict) and details.get("container"):
-                configured.add(str(details.get("container")))
+                key = str(details.get("container")).casefold()
+                configured.setdefault(key, []).append({"group": group_name, "service": service_name})
     return configured
 
 
@@ -247,6 +249,61 @@ def first_docker_server_name() -> str:
         return ""
     if isinstance(data, dict) and data:
         return str(next(iter(data.keys())))
+    return ""
+
+
+def docker_server_info() -> dict[str, Any]:
+    name = first_docker_server_name()
+    info: dict[str, Any] = {
+        "name": name,
+        "mode": "none",
+        "host": "",
+        "port": "",
+        "socket": "",
+        "recommended": False,
+    }
+    if not name:
+        return info
+    try:
+        data = store.load("docker.yaml")
+    except ConfigError:
+        return info
+    cfg = data.get(name) if isinstance(data, dict) else None
+    if not isinstance(cfg, dict):
+        return info
+    if cfg.get("socket"):
+        info.update({"mode": "socket", "socket": str(cfg.get("socket"))})
+        return info
+    if cfg.get("host"):
+        host = str(cfg.get("host"))
+        try:
+            port = int(cfg.get("port", 2375))
+        except (TypeError, ValueError):
+            port = 2375
+        recommended = host == settings.homepage_docker_proxy_host and port == settings.homepage_docker_proxy_port
+        info.update({"mode": "proxy" if recommended else "remote", "host": host, "port": port, "recommended": recommended})
+    return info
+
+
+def recommended_import_group(names: list[str]) -> int:
+    if not names:
+        return 0
+    less_useful = {"widgets", "widget", "状态面板", "status"}
+    for index, name in enumerate(names):
+        if name.strip().casefold() not in less_useful:
+            return index
+    return 0
+
+
+def container_role(container: dict[str, Any]) -> str:
+    name = str(container.get("name", "")).casefold()
+    image = str(container.get("image", "")).casefold()
+    if name == "homepage-admin":
+        return "当前管理后台"
+    if "gethomepage/homepage" in image or name == "homepage":
+        return "Homepage 本体"
+    if name in {"homepage-docker-proxy", "homepage-admin-docker-proxy", "docker-proxy"}:
+        return "Docker 只读代理"
     return ""
 
 
@@ -937,32 +994,58 @@ async def reorder_group(kind: str, request: Request, _: None = Depends(auth_guar
 
 
 @app.get("/docker", response_class=HTMLResponse)
-def docker_page(request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
+def docker_page(
+    request: Request,
+    show_internal: bool = False,
+    _: None = Depends(auth_guard),
+) -> HTMLResponse:
     containers: list[dict[str, Any]] = []
     error = request.query_params.get("error")
     configured = configured_docker_containers()
+    proxy_healthy = False
+    hidden_internal_count = 0
     if not docker_discovery.enabled():
-        error = error or "Docker 容器发现未启用。请使用 v0.2.0 的 Compose（包含只读发现代理）。"
+        error = error or "Docker 容器发现未启用。请使用 v0.2.1 的 Compose（包含共享只读 Docker Proxy）。"
     else:
+        proxy_healthy = docker_discovery.ping()
         try:
             containers = docker_discovery.list_containers()
         except Exception as exc:
             error = error or f"无法读取 Docker 容器：{exc}"
+    visible: list[dict[str, Any]] = []
+    internal_names = {"homepage-docker-proxy", "homepage-admin-docker-proxy", "docker-proxy"}
     for item in containers:
-        item["configured"] = str(item.get("name", "")) in configured
-        item["published_ports"] = [p for p in item.get("ports", []) if p.get("public")]
+        name = str(item.get("name", ""))
+        item["published_ports"] = [p for p in dedupe_ports(item.get("ports") or []) if p.get("public")]
         labels = item.get("labels") or {}
         item["homepage_labeled"] = any(str(k).startswith("homepage.") for k in labels)
+        matches = configured.get(name.casefold(), [])
+        item["configured"] = bool(matches)
+        item["configured_matches"] = matches
+        item["role"] = container_role(item)
+        if settings.hide_internal_containers and not show_internal and name.casefold() in internal_names:
+            hidden_internal_count += 1
+            continue
+        visible.append(item)
+    groups = group_names("services.yaml")
     return templates.TemplateResponse(
         request,
         "docker.html",
         context(
             request,
             "docker",
-            containers=containers,
+            containers=visible,
             error=error,
             ok=request.query_params.get("ok"),
             docker_server=first_docker_server_name(),
+            docker_server_info=docker_server_info(),
+            proxy_healthy=proxy_healthy,
+            proxy_host=settings.homepage_docker_proxy_host,
+            proxy_port=settings.homepage_docker_proxy_port,
+            show_internal=show_internal,
+            hidden_internal_count=hidden_internal_count,
+            service_groups=groups,
+            recommended_group_index=recommended_import_group(groups),
         ),
     )
 
@@ -976,16 +1059,54 @@ async def docker_setup_homepage(request: Request, _: None = Depends(auth_guard))
         if not isinstance(data, dict):
             raise ConfigError("docker.yaml 必须是对象映射。")
         if data:
-            return redirect("/docker", error="docker.yaml 已有配置，为避免覆盖请使用高级编辑器调整。")
-        data["local-docker"] = CommentedMap({"socket": "/var/run/docker.sock"})
-        store.write_data("docker.yaml", data, actor(request), "setup local docker server")
-        return redirect("/docker", ok="已在 docker.yaml 创建 local-docker。Homepage 必须已挂载 /var/run/docker.sock。")
+            return redirect("/docker", error="docker.yaml 已有配置。可使用“切换为只读代理”迁移当前 Docker server。")
+        data["local-docker"] = CommentedMap(
+            {"host": settings.homepage_docker_proxy_host, "port": settings.homepage_docker_proxy_port}
+        )
+        store.write_data("docker.yaml", data, actor(request), "setup local docker proxy server")
+        return redirect(
+            "/docker",
+            ok=f"已创建 local-docker，只读代理地址为 {settings.homepage_docker_proxy_host}:{settings.homepage_docker_proxy_port}。",
+        )
+    except ConfigError as exc:
+        return redirect("/docker", error=str(exc))
+
+
+@app.post("/docker/migrate-homepage-proxy")
+async def docker_migrate_homepage_proxy(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        data = store.load("docker.yaml")
+        if not isinstance(data, dict) or not data:
+            raise ConfigError("docker.yaml 中没有可迁移的 Docker server。")
+        name = first_docker_server_name()
+        if not name or name not in data or not isinstance(data[name], dict):
+            raise ConfigError("无法确定需要迁移的 Docker server。")
+        cfg = data[name]
+        cfg.pop("socket", None)
+        cfg["host"] = settings.homepage_docker_proxy_host
+        cfg["port"] = settings.homepage_docker_proxy_port
+        # Keep swarm and other compatible options, but a plain internal HTTP proxy does not use TLS/protocol overrides.
+        cfg.pop("tls", None)
+        cfg.pop("protocol", None)
+        cfg.pop("headers", None)
+        store.write_data("docker.yaml", data, actor(request), f"migrate docker server {name} to read-only proxy")
+        return redirect(
+            "/docker",
+            ok=f"已将 {name} 切换为只读代理。请确认 Homepage 也加入 homepage-tools Docker 网络，并移除直接 socket 挂载。",
+        )
     except ConfigError as exc:
         return redirect("/docker", error=str(exc))
 
 
 @app.get("/docker/import/{container_id}", response_class=HTMLResponse)
-def docker_import(request: Request, container_id: str, _: None = Depends(auth_guard)) -> HTMLResponse:
+def docker_import(
+    request: Request,
+    container_id: str,
+    group: int | None = None,
+    _: None = Depends(auth_guard),
+) -> HTMLResponse:
     if not docker_discovery.enabled():
         return redirect("/docker", error="Docker 容器发现未启用。")
     try:
@@ -1011,7 +1132,6 @@ def docker_import(request: Request, container_id: str, _: None = Depends(auth_gu
             if key == "type":
                 continue
             if key in catalog_secret_names(values["widget_type"]):
-                # Docker labels may contain a secret; never echo it into HTML. It can still be entered manually.
                 continue
             values["widget_fields"][key] = value
         if not values["href"]:
@@ -1022,7 +1142,12 @@ def docker_import(request: Request, container_id: str, _: None = Depends(auth_gu
         if values["widget_type"] and not values["widget_fields"].get("url") and values["href"]:
             values["widget_fields"]["url"] = values["href"]
         desired_group = str(label_values.get("group", ""))
-        group_index = names.index(desired_group) if desired_group in names else 0
+        if desired_group in names:
+            group_index = names.index(desired_group)
+        elif group is not None and 0 <= group < len(names):
+            group_index = group
+        else:
+            group_index = recommended_import_group(names)
         return render_service_form(
             request,
             mode="new",

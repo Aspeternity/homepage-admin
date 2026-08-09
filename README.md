@@ -1,138 +1,108 @@
-# Homepage Admin v0.2.0
+# Homepage Admin v0.2.1
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是和 Homepage 挂载同一个配置目录，直接读写官方 YAML 文件。
 
-> 项目目标：保留 Homepage 的完整配置能力，同时把日常增删改、排序、Widget 配置、备份和 Docker 服务发现变成图形化操作。
+> v0.2.1 的重点是：**黑/白主题切换、Docker 发现体验优化，以及把 Homepage 和 Admin 统一到一个只读 Docker Socket Proxy**。
 
-## v0.2.0 重点
+## v0.2.1 新增 / 修复
 
-- 服务 / 书签卡片跨分组拖动
-- 服务 / 书签分组拖动排序
-- 顶部组件拖动排序
+- 新增 **深色 / 浅色主题切换**，主题偏好保存在浏览器 `localStorage`，刷新后保持。
+- 登录页、桌面侧栏、移动端顶部都可以切换主题。
+- Docker 端口映射去重：IPv4 / IPv6 返回的相同 `hostPort -> containerPort` 只显示一次。
+- Docker 发现使用容器名大小写不敏感匹配，已经写入 `services.yaml` 的容器会明确显示“已添加”。
+- 已添加容器会显示对应的 Homepage 分组 / 服务名。
+- 默认隐藏 `homepage-docker-proxy` 等内部基础设施容器，可手动显示。
+- `homepage-admin` 和 Homepage 本体会显示角色标签。
+- Docker 导入页增加“默认导入分组”选择，并在当前浏览器记住选择，避免总是落到第一个 `Widgets` 分组。
+- Docker 页显示只读代理健康状态。
+- `docker.yaml` 为空时，新建的 `local-docker` 默认使用只读代理：
+
+  ```yaml
+  local-docker:
+    host: homepage-docker-proxy
+    port: 2375
+  ```
+
+- 如果当前仍是 `socket: /var/run/docker.sock`，Docker 页提供“一键切换为只读代理”。
+- v0.2.1 的 Compose 改用 Homepage 官方文档推荐的 `ghcr.io/tecnativa/docker-socket-proxy:latest`，`POST=0`，不向宿主机 / 局域网暴露 2375。
+- 保留 v0.2.0 自定义发现代理代码作为兼容路径，但新部署不再使用它。
+
+## Docker 安全架构
+
+v0.2.1 推荐结构：
+
+```text
+/var/run/docker.sock
+        │
+        ▼
+homepage-docker-proxy
+  CONTAINERS=1
+  PING=1
+  SERVICES=1
+  TASKS=1
+  POST=0
+        │
+        ├─────────> Homepage
+        │           docker.yaml -> host: homepage-docker-proxy / port: 2375
+        │
+        └─────────> Homepage Admin
+                    Docker 发现
+```
+
+`homepage-docker-proxy` 不映射宿主机端口，只加入共享的 `homepage-tools` Docker 网络。
+
+Homepage 官方文档同样推荐 Docker Socket Proxy，而不是直接把 `/var/run/docker.sock` 交给 Homepage。
+
+## 仍然支持的核心功能
+
+- 服务 / 书签 / 分组拖拽排序
+- 顶部组件拖拽排序
 - Jellyfin、qBittorrent、Transmission、Minecraft、Home Assistant、Portainer、Proxmox 专属 Widget 表单
-- Widget API Key / Password 不回显，留空自动保留
-- 高级 YAML 默认隐藏敏感字段，并能安全保存占位符
-- Docker 容器发现与一键预填服务
-- 专用 Docker 发现 sidecar，主后台不直接接触 Docker socket
+- API Key / Token / Password 遮挡与保留
+- 高级 YAML 敏感值安全占位符
+- Docker 容器发现与一键预填
 - 自动备份、回滚、YAML 校验、原子写入、审计日志
 - GitHub Actions 自动测试并发布 `amd64` / `arm64` GHCR 镜像
 
-## 对应 Homepage 官方配置
+## 你的当前部署参数
 
-Homepage Admin 仍以 Homepage 官方文件作为唯一数据源：
+项目中的 `docker-compose.ghcr.yml` / `docker-compose.portainer.yml` 已按当前环境预设：
 
-- `services.yaml`：服务、状态监控、Docker 关联、Service Widget
-- `bookmarks.yaml`：书签
-- `settings.yaml`：页面设置、背景和 layout
-- `widgets.yaml`：顶部 Information Widgets
-- `docker.yaml`：Homepage Docker server
-- `proxmox.yaml`、`kubernetes.yaml`、`custom.css`、`custom.js`：高级编辑
+```text
+镜像: ghcr.io/aspeternity/homepage-admin:latest
+Homepage 配置: /opt/docker/HomePage/data/config
+Admin 数据: /opt/docker/homepage-admin/data
+Admin 端口: 3001
+Docker VM: 10.10.1.11
+Admin UID:GID: 1000:1000
+共享 Docker 网络: homepage-tools
+```
+
+从 v0.2.0 升级到 v0.2.1 请优先阅读：
+
+```text
+UPGRADE_V0.2.1_ZH.md
+```
+
+## 官方 Homepage 对应配置
+
+Homepage Admin 仍以官方 YAML 作为唯一数据源：
+
+- `services.yaml`
+- `bookmarks.yaml`
+- `settings.yaml`
+- `widgets.yaml`
+- `docker.yaml`
+- `proxmox.yaml`
+- `kubernetes.yaml`
+- `custom.css`
+- `custom.js`
 
 官方文档：
 
 - https://gethomepage.dev/configs/
-- https://gethomepage.dev/configs/services/
 - https://gethomepage.dev/configs/docker/
 - https://gethomepage.dev/widgets/services/
-
-## v0.2.0 Docker 发现架构
-
-```text
-Docker Engine
-    │
-    │ /var/run/docker.sock
-    ▼
-homepage-admin-docker-proxy
-    │ 仅暴露 GET /api/containers
-    ▼
-homepage-admin
-    │
-    ├── /config -> Homepage 的真实配置目录
-    └── /data   -> Admin 备份与审计数据
-```
-
-主 `homepage-admin` 容器不挂载 Docker socket。`docker-proxy` sidecar 只返回容器列表所需的有限元数据，并过滤常见敏感 Label。
-
-注意：任何能访问 Docker socket 的进程都属于高权限组件。sidecar 通过最小接口缩小暴露面，但仍应只运行在可信主机上，并且不要给它映射宿主机端口。
-
-## 你的 Portainer / Docker VM 部署
-
-项目内的 `docker-compose.ghcr.yml` 已按当前环境预设：
-
-```text
-GHCR: ghcr.io/aspeternity/homepage-admin:latest
-Homepage config: /opt/docker/HomePage/data/config
-Admin data: /opt/docker/homepage-admin/data
-Admin port: 3001
-Docker public host: 10.10.1.11
-UID:GID: 1000:1000
-```
-
-首次升级 v0.2.0 时，需要把原来只有一个 service 的 Stack 替换成 v0.2.0 的两 service Compose：
-
-- `homepage-admin`
-- `docker-proxy`
-
-### 必填环境变量
-
-```env
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=你的后台密码
-SESSION_SECRET=至少32位随机字符串
-HOMEPAGE_URL=http://10.10.1.11:3000
-```
-
-推荐后续把 `ADMIN_PASSWORD` 改成 `ADMIN_PASSWORD_HASH`。
-
-## Docker 发现如何使用
-
-1. 左侧打开“Docker 发现”。
-2. 如果 `docker.yaml` 还是空的，可以点击“创建 local-docker”。
-3. 确认 Homepage 本体已经挂载 `/var/run/docker.sock`。你的当前 Homepage 部署已满足这一点。
-4. 找到容器，点击“添加到 Homepage”。
-5. 后台会尝试预填容器名、图标、端口 URL、Homepage Labels 和可识别的 Widget 类型。
-6. 检查域名 / URL 和凭据后保存。
-
-Homepage Admin 不会自动猜测你的反向代理域名，因此发现出的 `http://10.10.1.11:端口` 只是建议值，可改成实际域名。
-
-## Widget 专属表单
-
-v0.2.0 首批覆盖：
-
-- Jellyfin
-- qBittorrent
-- Transmission
-- Minecraft
-- Home Assistant
-- Portainer
-- Proxmox
-
-未覆盖的 Widget 仍然可以填写 Widget 类型，并使用“Widget 其他配置（YAML 映射）”。已有未知字段会被保留。
-
-## 敏感字段保护
-
-普通 Widget 表单不会把已保存的 key/password/token 回显到 HTML。编辑时留空会保留原值。服务额外 YAML、顶部组件 YAML、settings.yaml 的额外字段（包括 `providers`）也会自动遮挡已识别的敏感值。
-
-高级 YAML 编辑器默认把敏感值替换成每个值独立的不可逆占位符，例如：
-
-```text
-__HOMEPAGE_ADMIN_SECRET_1a2b3c4d5e6f7890__
-```
-
-保存时会从原文件恢复占位符对应的真实值。占位符可随条目排序一起移动，但不能被复制到普通非敏感字段；检测到异常位置或无法对应原值时会拒绝保存。需要真正修改凭据时，可点击“临时显示敏感值”，或者优先使用 Widget 专属表单。
-
-## 备份与写入
-
-每次写入前：
-
-1. 获取文件锁
-2. 备份旧文件
-3. 校验 YAML
-4. 写入临时文件
-5. 原子替换正式文件
-6. 写审计日志
-
-备份目录：`/data/backups`
 
 ## 本地开发
 
@@ -141,21 +111,9 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-运行测试：
+测试：
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q
+python -m pytest -q
 ```
-
-## 更新
-
-GitHub `main` 分支有新提交后，Actions 会自动测试并构建：
-
-```text
-ghcr.io/aspeternity/homepage-admin:latest
-```
-
-Portainer 中重新拉取镜像并 Recreate / Update Stack 即可。
-
-发布 Git Tag（例如 `v0.2.0`）后，工作流还会生成对应的语义版本镜像标签。

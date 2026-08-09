@@ -142,7 +142,7 @@ def test_docker_import_prefills_service_form(monkeypatch) -> None:
     }
     monkeypatch.setattr(main_module.docker_discovery, "base_url", "http://docker-proxy:9100")
     monkeypatch.setattr(main_module.docker_discovery, "get_container", lambda _id: sample)
-    response = client.get("/docker/import/abc123def456")
+    response = client.get("/docker/import/abc123def456?group=0")
     assert response.status_code == 200
     assert 'value="qbittorrent"' in response.text
     assert 'value="sh-qbittorrent"' in response.text
@@ -219,7 +219,8 @@ def test_create_local_docker_server_when_docker_yaml_empty() -> None:
         )
         assert response.status_code == 303
         data = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
-        assert data["local-docker"]["socket"] == "/var/run/docker.sock"
+        assert data["local-docker"]["host"] == "homepage-docker-proxy"
+        assert data["local-docker"]["port"] == 2375
     finally:
         path.write_text(original, encoding="utf-8")
 
@@ -338,3 +339,76 @@ def test_unknown_service_widget_extra_secret_is_masked_and_preserved() -> None:
         assert saved[0]["Core"][0]["Custom"]["widget"]["token"] == "custom-widget-secret"
     finally:
         path.write_text(original, encoding="utf-8")
+
+
+def test_theme_toggle_assets_are_present() -> None:
+    client = TestClient(app)
+    login(client)
+    page = client.get("/services")
+    assert 'data-theme-toggle' in page.text
+    root = __import__("pathlib").Path(__file__).resolve().parents[1]
+    assert 'html[data-theme="light"]' in (root / "app/static/app.css").read_text(encoding="utf-8")
+    assert "homepage-admin-theme" in (root / "app/static/app.js").read_text(encoding="utf-8")
+
+
+def test_dedupe_ipv4_ipv6_port_bindings() -> None:
+    from app.docker_client import dedupe_ports
+
+    ports = dedupe_ports([
+        {"PrivatePort": 8089, "PublicPort": 8089, "IP": "0.0.0.0", "Type": "tcp"},
+        {"PrivatePort": 8089, "PublicPort": 8089, "IP": "::", "Type": "tcp"},
+        {"PrivatePort": 9000, "PublicPort": 19000, "IP": "0.0.0.0", "Type": "tcp"},
+    ])
+    assert len(ports) == 2
+    assert ports[0]["public"] == 8089
+
+
+def test_migrate_socket_server_to_read_only_proxy() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "docker.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        path.write_text("---\nlocal-docker:\n  socket: /var/run/docker.sock\n", encoding="utf-8")
+        response = client.post(
+            "/docker/migrate-homepage-proxy",
+            data={"csrf": csrf},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        assert "socket" not in data["local-docker"]
+        assert data["local-docker"]["host"] == "homepage-docker-proxy"
+        assert data["local-docker"]["port"] == 2375
+    finally:
+        path.write_text(original, encoding="utf-8")
+
+
+def test_docker_page_hides_internal_proxy_and_marks_existing_case_insensitive(monkeypatch) -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    login(client)
+    services_path = settings.config_dir / "services.yaml"
+    original = services_path.read_text(encoding="utf-8")
+    try:
+        services_path.write_text(
+            "---\n- Core:\n    - Lsky:\n        server: local-docker\n        container: LSKY-PRO\n",
+            encoding="utf-8",
+        )
+        sample = [
+            {"id": "1", "name": "lsky-pro", "image": "lsky", "state": "running", "status": "Up", "ports": [], "labels": {}},
+            {"id": "2", "name": "homepage-admin-docker-proxy", "image": "proxy", "state": "running", "status": "Up", "ports": [], "labels": {}},
+        ]
+        monkeypatch.setattr(main_module.docker_discovery, "base_url", "http://proxy")
+        monkeypatch.setattr(main_module.docker_discovery, "ping", lambda: True)
+        monkeypatch.setattr(main_module.docker_discovery, "list_containers", lambda: sample)
+        page = client.get("/docker")
+        assert page.status_code == 200
+        assert "lsky-pro" in page.text
+        assert "已在 services.yaml" in page.text
+        assert "homepage-admin-docker-proxy" not in page.text
+        shown = client.get("/docker?show_internal=true")
+        assert "homepage-admin-docker-proxy" in shown.text
+    finally:
+        services_path.write_text(original, encoding="utf-8")

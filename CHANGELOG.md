@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.2.1 - 2026-08-09
+
+### 新功能
+
+- 新增深色 / 浅色主题切换；登录页、桌面侧栏、移动端均可切换，并用浏览器 localStorage 记住偏好。
+- Docker 发现页增加默认导入分组选择，避免无 Label 容器总是落到第一个 Widgets 分组。
+- Docker 发现页增加共享只读代理状态、Socket 模式提示和一键迁移按钮。
+- 已配置容器显示对应 Homepage 分组与服务名，并使用大小写不敏感的容器名匹配。
+- Homepage 本体、Homepage Admin、Docker Proxy 增加角色标签；内部 Proxy 默认隐藏，可手动显示。
+
+### 修复与体验
+
+- 去重 Docker IPv4 / IPv6 导致的重复端口映射。
+- 新增 Lsky-Pro / MkDocs 图标推断。
+- 新建 docker.yaml 不再默认写入直接 socket，而是写入 `homepage-docker-proxy:2375`。
+
+### 安全改进
+
+- 新 Compose 改用 Homepage 官方文档推荐的 `ghcr.io/tecnativa/docker-socket-proxy:latest`。
+- `CONTAINERS=1`、`PING=1`、`SERVICES=1`、`TASKS=1`、`POST=0`，不映射宿主机 2375 端口。
+- Homepage 和 Homepage Admin 通过外部 `homepage-tools` 网络共享代理，Homepage 可移除直接 Docker Socket 挂载并恢复原 PGID。
+- Admin 对原始 Docker API 返回的 Labels 继续进行敏感字段过滤后才进入页面数据。
+
 ## v0.2.0 - 2026-08-09
 
 ### 新功能

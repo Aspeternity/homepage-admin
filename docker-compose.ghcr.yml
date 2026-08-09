@@ -18,15 +18,20 @@ services:
       HOMEPAGE_CONFIG_DIR: /config
       ADMIN_DATA_DIR: /data
       BACKUP_LIMIT: ${BACKUP_LIMIT:-50}
-      DOCKER_DISCOVERY_URL: http://docker-proxy:9100
+      DOCKER_DISCOVERY_URL: http://homepage-docker-proxy:2375
       DOCKER_PUBLIC_HOST: ${DOCKER_PUBLIC_HOST:-10.10.1.11}
       DOCKER_SERVER_NAME: ${DOCKER_SERVER_NAME:-}
+      HOMEPAGE_DOCKER_PROXY_HOST: ${HOMEPAGE_DOCKER_PROXY_HOST:-homepage-docker-proxy}
+      HOMEPAGE_DOCKER_PROXY_PORT: ${HOMEPAGE_DOCKER_PROXY_PORT:-2375}
+      DOCKER_HIDE_INTERNAL: ${DOCKER_HIDE_INTERNAL:-true}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - /opt/docker/HomePage/data/config:/config
       - /opt/docker/homepage-admin/data:/data
     depends_on:
       - docker-proxy
+    networks:
+      - homepage-tools
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -35,27 +40,26 @@ services:
     tmpfs:
       - /tmp:size=64m,mode=1777
 
-  # Purpose-built read-only discovery sidecar. It mounts the Docker socket,
-  # but exposes only GET /healthz and GET /api/containers to homepage-admin.
+  # Shared Docker API proxy used by both Homepage and Homepage Admin.
+  # It is not published to the host/LAN. POST=0 makes the exposed API read-only.
   docker-proxy:
-    image: ghcr.io/aspeternity/homepage-admin:latest
+    image: ghcr.io/tecnativa/docker-socket-proxy:latest
     pull_policy: always
-    container_name: homepage-admin-docker-proxy
+    container_name: homepage-docker-proxy
     restart: unless-stopped
-    user: "0:0"
-    command: ["uvicorn", "app.docker_proxy:app", "--host", "0.0.0.0", "--port", "9100"]
+    environment:
+      CONTAINERS: "1"
+      PING: "1"
+      SERVICES: "1"
+      TASKS: "1"
+      POST: "0"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp:size=32m,mode=1777
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9100/healthz', timeout=3)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
+    networks:
+      homepage-tools:
+        aliases:
+          - homepage-docker-proxy
+
+networks:
+  homepage-tools:
+    external: true

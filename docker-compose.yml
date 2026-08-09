@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: homepage-admin:0.2.0
+    image: homepage-admin:0.2.1
     container_name: homepage-admin
     restart: unless-stopped
     user: "${PUID:-1000}:${PGID:-1000}"
@@ -12,12 +12,16 @@ services:
     env_file:
       - .env
     environment:
-      DOCKER_DISCOVERY_URL: http://docker-proxy:9100
+      DOCKER_DISCOVERY_URL: http://homepage-docker-proxy:2375
+      HOMEPAGE_DOCKER_PROXY_HOST: homepage-docker-proxy
+      HOMEPAGE_DOCKER_PROXY_PORT: "2375"
     volumes:
       - ${HOMEPAGE_HOST_CONFIG_DIR:-/opt/docker/HomePage/data/config}:/config
       - ${HOMEPAGE_ADMIN_DATA_DIR:-/opt/docker/homepage-admin/data}:/data
     depends_on:
       - docker-proxy
+    networks:
+      - homepage-tools
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -27,23 +31,22 @@ services:
       - /tmp:size=64m,mode=1777
 
   docker-proxy:
-    image: homepage-admin:0.2.0
-    container_name: homepage-admin-docker-proxy
+    image: ghcr.io/tecnativa/docker-socket-proxy:latest
+    container_name: homepage-docker-proxy
     restart: unless-stopped
-    user: "0:0"
-    command: ["uvicorn", "app.docker_proxy:app", "--host", "0.0.0.0", "--port", "9100"]
+    environment:
+      CONTAINERS: "1"
+      PING: "1"
+      SERVICES: "1"
+      TASKS: "1"
+      POST: "0"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp:size=32m,mode=1777
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9100/healthz', timeout=3)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
+    networks:
+      homepage-tools:
+        aliases:
+          - homepage-docker-proxy
+
+networks:
+  homepage-tools:
+    name: homepage-tools-dev

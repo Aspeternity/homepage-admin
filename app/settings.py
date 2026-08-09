@@ -23,6 +23,9 @@ class AppSettings:
     docker_discovery_url: str = os.getenv("DOCKER_DISCOVERY_URL", "").strip()
     docker_public_host: str = os.getenv("DOCKER_PUBLIC_HOST", "").strip()
     docker_server_name: str = os.getenv("DOCKER_SERVER_NAME", "").strip()
+    homepage_docker_proxy_host: str = os.getenv("HOMEPAGE_DOCKER_PROXY_HOST", "homepage-docker-proxy").strip()
+    homepage_docker_proxy_port: int = int(os.getenv("HOMEPAGE_DOCKER_PROXY_PORT", "2375"))
+    hide_internal_containers: bool = _bool("DOCKER_HIDE_INTERNAL", True)
     allowed_hosts: tuple[str, ...] = tuple(
         x.strip() for x in os.getenv("ADMIN_ALLOWED_HOSTS", "*").split(",") if x.strip()
     )

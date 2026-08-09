@@ -6,6 +6,8 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException
 
+from .docker_client import dedupe_ports, safe_labels
+
 app = FastAPI(title="Homepage Admin Docker Discovery Proxy", docs_url=None, redoc_url=None, openapi_url=None)
 DOCKER_SOCKET = os.getenv("DOCKER_SOCKET", "/var/run/docker.sock")
 
@@ -22,35 +24,14 @@ def _docker_get(path: str) -> Any:
 
 
 def _safe_labels(labels: dict[str, str] | None) -> dict[str, str]:
-    if not labels:
-        return {}
-    allowed_prefixes = ("homepage.", "com.docker.compose.")
-    secret_markers = ("password", "passwd", "secret", "token", "authorization", ".key")
-    safe: dict[str, str] = {}
-    for key, value in labels.items():
-        key_text = str(key)
-        lowered = key_text.lower()
-        if not key_text.startswith(allowed_prefixes):
-            continue
-        if any(marker in lowered for marker in secret_markers):
-            continue
-        safe[key_text] = str(value)
-    return safe
+    # Backwards-compatible export kept for v0.2.0 tests/users.
+    return safe_labels(labels)
 
 
 def _sanitize_container(item: dict[str, Any]) -> dict[str, Any]:
     names = item.get("Names") or []
     name = str(names[0]).lstrip("/") if names else str(item.get("Id", ""))[:12]
-    ports = []
-    for port in item.get("Ports") or []:
-        ports.append(
-            {
-                "private": port.get("PrivatePort"),
-                "public": port.get("PublicPort"),
-                "ip": port.get("IP"),
-                "type": port.get("Type", "tcp"),
-            }
-        )
+    ports = dedupe_ports(item.get("Ports") or [])
     return {
         "id": str(item.get("Id", "")),
         "name": name,

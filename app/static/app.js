@@ -3,6 +3,28 @@
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const csrf = () => document.body.dataset.csrf || '';
 
+  const applyTheme = (theme) => {
+    const next = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('homepage-admin-theme', next); } catch (_) {}
+    $$('[data-theme-toggle]').forEach((button) => {
+      const icon = $('[data-theme-icon]', button);
+      const label = $('[data-theme-label]', button);
+      const isLight = next === 'light';
+      if (icon) icon.textContent = isLight ? '☾' : '☀';
+      if (label) label.textContent = isLight ? '切换深色' : '切换浅色';
+      button.setAttribute('aria-label', isLight ? '切换深色主题' : '切换浅色主题');
+      button.title = isLight ? '切换深色主题' : '切换浅色主题';
+    });
+  };
+
+  applyTheme(document.documentElement.dataset.theme);
+  $$('[data-theme-toggle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+    });
+  });
+
   $('[data-sidebar-toggle]')?.addEventListener('click', () => {
     document.body.classList.toggle('sidebar-open');
   });
@@ -224,5 +246,26 @@
     widgetTypeInput.addEventListener('input', syncWidgetSchema);
     widgetTypeInput.addEventListener('change', syncWidgetSchema);
     syncWidgetSchema();
+  }
+
+  // Docker import group preference. Homepage labels still take precedence server-side.
+  const importGroup = $('[data-docker-import-group]');
+  if (importGroup) {
+    const storageKey = 'homepage-admin-docker-import-group';
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved !== null && [...importGroup.options].some((option) => option.value === saved)) importGroup.value = saved;
+    } catch (_) {}
+    const syncImportLinks = () => {
+      $$('[data-docker-import-link]').forEach((link) => {
+        const base = link.dataset.importBase || link.getAttribute('href').split('?')[0];
+        link.href = `${base}?group=${encodeURIComponent(importGroup.value)}`;
+      });
+    };
+    importGroup.addEventListener('change', () => {
+      try { localStorage.setItem(storageKey, importGroup.value); } catch (_) {}
+      syncImportLinks();
+    });
+    syncImportLinks();
   }
 })();
