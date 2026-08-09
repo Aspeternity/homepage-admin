@@ -1,7 +1,13 @@
-# Homepage Admin v0.3.7
+# Homepage Admin v0.3.8
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
+
+## v0.3.8 修复
+
+- Proxmox VM / LXC 集成三列字段统一行高，帮助文字不再导致输入框错位。
+- Proxmox 发现页已关联卡片同时提供“编辑服务”和“取消关联”。
+- 取消关联只移除 `proxmoxNode` / `proxmoxVMID` / `proxmoxType`，不会删除服务、Widget 或其他配置，并在写入前校验当前关联未发生变化。
 
 ## v0.3.7 修复
 

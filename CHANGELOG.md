@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.8 - 2026-08-10
+
+- 修复服务编辑器 Proxmox VM/LXC 三列字段因帮助文字导致的纵向错位。
+- Proxmox 发现页的已关联服务新增“取消关联”，与“编辑服务”并排显示。
+- 新增 `/proxmox/unbind` 安全解绑：仅移除 Proxmox 映射，保留服务与 Widget，并校验绑定状态避免误解绑。
+
 ## v0.3.7 - 2026-08-10
 
 - 修复 Proxmox 发现可成功但 Homepage per-VM 状态失败的配置差异：检测并一键移除 Proxmox URL 末尾 `/`。

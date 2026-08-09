@@ -1591,6 +1591,45 @@ async def proxmox_clear_docker_binding(request: Request, _: None = Depends(auth_
         return redirect(f"/proxmox?server={quote(server)}" if server else "/proxmox", error=str(exc))
 
 
+@app.post("/proxmox/unbind")
+async def proxmox_unbind_service(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    selected_server = str(form.get("server", "")).strip()
+    expected_node = str(form.get("node", "")).strip()
+    expected_type = str(form.get("type", "qemu")).strip() or "qemu"
+    try:
+        gi = int(str(form.get("group_index", "-1")))
+        ii = int(str(form.get("item_index", "-1")))
+        expected_vmid = int(str(form.get("vmid", "0")))
+        data = store.load("services.yaml")
+        _, items = first_pair(data[gi])
+        service_name, details = first_pair(items[ii])
+        if not isinstance(details, dict):
+            raise ConfigError("目标服务格式无效。")
+
+        current_node = str(details.get("proxmoxNode") or "").strip()
+        current_type = str(details.get("proxmoxType") or "qemu").strip() or "qemu"
+        try:
+            current_vmid = int(details.get("proxmoxVMID"))
+        except (TypeError, ValueError) as exc:
+            raise ConfigError("该服务当前没有有效的 Proxmox VM/LXC 关联。") from exc
+
+        if (current_node, current_vmid, current_type) != (expected_node, expected_vmid, expected_type):
+            raise ConfigError("该服务的 Proxmox 关联已发生变化，请刷新页面后再操作。")
+
+        details.pop("proxmoxNode", None)
+        details.pop("proxmoxVMID", None)
+        details.pop("proxmoxType", None)
+        store.write_data("services.yaml", data, actor(request), f"unbind service {service_name} from proxmox {expected_node}/{expected_vmid}")
+        return redirect(
+            f"/proxmox?server={quote(selected_server)}" if selected_server else "/proxmox",
+            ok=f"已取消“{service_name}”与 {expected_type.upper()} {expected_vmid} 的关联；服务本身未删除。",
+        )
+    except (ConfigError, IndexError, ValueError) as exc:
+        return redirect(f"/proxmox?server={quote(selected_server)}" if selected_server else "/proxmox", error=str(exc))
+
+
 @app.post("/proxmox/bind")
 async def proxmox_bind_service(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
     form = await request.form()

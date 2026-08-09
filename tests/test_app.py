@@ -1641,3 +1641,113 @@ def test_v037_service_editor_warns_when_docker_and_proxmox_are_both_configured()
         assert "local-docker / jellyfin" in page.text
     finally:
         services_path.write_text(original, encoding="utf-8")
+
+
+def test_v038_proxmox_service_editor_fields_are_row_aligned() -> None:
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "app/templates/service_form.html").read_text(encoding="utf-8")
+    css = (root / "app/static/app.css").read_text(encoding="utf-8")
+    assert 'class="form-grid three proxmox-service-grid"' in template
+    assert template.count('class="proxmox-service-field"') == 3
+    assert template.count('class="field-help empty"') >= 2
+    assert ".proxmox-service-grid > .proxmox-service-field" in css
+    assert "grid-template-rows: auto 42px minmax(16px, auto)" in css
+
+
+def test_v038_proxmox_page_shows_edit_and_unbind_for_bound_service(monkeypatch) -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    login(client)
+    services_path = settings.config_dir / "services.yaml"
+    proxmox_path = settings.config_dir / "proxmox.yaml"
+    services_original = services_path.read_text(encoding="utf-8")
+    proxmox_original = proxmox_path.read_text(encoding="utf-8")
+    try:
+        services_path.write_text(
+            """---
+- Widgets:
+    - Home Assistant:
+        proxmoxNode: asp-pve
+        proxmoxVMID: 100
+""",
+            encoding="utf-8",
+        )
+        proxmox_path.write_text(
+            """---
+asp-pve:
+  url: https://pve.example
+  token: homepage@pve!homepage
+  secret: token-secret
+""",
+            encoding="utf-8",
+        )
+
+        async def fake_discover(connection):
+            return [{
+                "vmid": 100,
+                "name": "HomeAssistant",
+                "type": "qemu",
+                "node": "asp-pve",
+                "status": "running",
+                "cpu_percent": 1.2,
+                "memory_percent": 91.9,
+            }]
+
+        monkeypatch.setattr(main_module.proxmox_discovery, "discover", fake_discover)
+        page = client.get("/proxmox?server=asp-pve")
+        assert page.status_code == 200
+        assert "编辑服务" in page.text
+        assert "取消关联" in page.text
+        assert 'action="/proxmox/unbind"' in page.text
+        assert "服务本身不会删除" in page.text
+    finally:
+        services_path.write_text(services_original, encoding="utf-8")
+        proxmox_path.write_text(proxmox_original, encoding="utf-8")
+
+
+def test_v038_proxmox_unbind_removes_only_proxmox_mapping() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    services_path = settings.config_dir / "services.yaml"
+    original = services_path.read_text(encoding="utf-8")
+    try:
+        services_path.write_text(
+            """---
+- Widgets:
+    - Home Assistant:
+        href: https://home.example
+        description: Home Assistant 智能家居
+        proxmoxNode: asp-pve
+        proxmoxVMID: 100
+        widget:
+          type: homeassistant
+          url: https://home.example
+          key: secret
+""",
+            encoding="utf-8",
+        )
+        response = client.post(
+            "/proxmox/unbind",
+            data={
+                "csrf": csrf,
+                "server": "asp-pve",
+                "node": "asp-pve",
+                "vmid": "100",
+                "type": "qemu",
+                "group_index": "0",
+                "item_index": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(services_path.read_text(encoding="utf-8"))
+        details = data[0]["Widgets"][0]["Home Assistant"]
+        assert "proxmoxNode" not in details
+        assert "proxmoxVMID" not in details
+        assert "proxmoxType" not in details
+        assert details["href"] == "https://home.example"
+        assert details["widget"]["type"] == "homeassistant"
+        assert details["widget"]["key"] == "secret"
+    finally:
+        services_path.write_text(original, encoding="utf-8")

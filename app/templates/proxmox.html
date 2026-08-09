@@ -57,7 +57,19 @@
         <button class="button danger-outline full" type="submit">清除该服务的 Docker 集成</button>
       </form>
       {% endif %}
-      <a class="button secondary full" href="/services/item/{{ vm.binding.group_index }}/{{ vm.binding.item_index }}/edit">编辑服务</a>
+      <div class="proxmox-bound-actions">
+        <a class="button secondary full" href="/services/item/{{ vm.binding.group_index }}/{{ vm.binding.item_index }}/edit">编辑服务</a>
+        <form method="post" action="/proxmox/unbind" data-confirm="确认取消“{{ vm.binding.name }}”与 {{ vm.type|upper }} {{ vm.vmid }} 的 Proxmox 关联？服务本身不会删除。">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="server" value="{{ selected }}">
+          <input type="hidden" name="node" value="{{ vm.bind_node }}">
+          <input type="hidden" name="vmid" value="{{ vm.vmid }}">
+          <input type="hidden" name="type" value="{{ vm.type }}">
+          <input type="hidden" name="group_index" value="{{ vm.binding.group_index }}">
+          <input type="hidden" name="item_index" value="{{ vm.binding.item_index }}">
+          <button class="button danger-outline full" type="submit">取消关联</button>
+        </form>
+      </div>
     {% elif vm.connection_available %}
       <form method="post" action="/proxmox/bind" class="proxmox-bind-form" data-proxmox-bind-form>
         <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="server" value="{{ vm.bind_node }}"><input type="hidden" name="vmid" value="{{ vm.vmid }}"><input type="hidden" name="type" value="{{ vm.type }}">
