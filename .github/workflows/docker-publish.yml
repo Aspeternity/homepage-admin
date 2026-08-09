@@ -46,7 +46,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -58,11 +57,9 @@ jobs:
           cache: pip
 
       - name: Generate bundled Homepage Widget Schema
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pip install -r requirements.txt
-          python scripts/sync_widget_schema.py --ref master --output app/bundled_widget_schema.json
+          python scripts/sync_widget_schema.py --ref dev --output app/bundled_widget_schema.json
 
       - name: Normalize GHCR image name
         id: image
