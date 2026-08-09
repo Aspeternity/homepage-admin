@@ -352,32 +352,195 @@ class HomepageStore:
             self._audit(actor, "reset widget schema sync settings", "admin-settings.json", None)
         return self.widget_schema_sync_preferences()
 
-    def docker_discovery_hosts(self) -> list[dict[str, str]]:
+    def _docker_yaml_remote_url(self, server_name: str) -> str:
+        try:
+            data = self.load("docker.yaml")
+        except ConfigError:
+            return ""
+        cfg = data.get(server_name) if isinstance(data, dict) else None
+        if not isinstance(cfg, dict) or not cfg.get("host"):
+            return ""
+        host = str(cfg.get("host") or "").strip()
+        protocol = str(cfg.get("protocol") or ("https" if cfg.get("tls") else "http")).strip().lower()
+        if protocol not in {"http", "https"}:
+            protocol = "http"
+        try:
+            port = int(cfg.get("port", 443 if protocol == "https" else 2375))
+        except (TypeError, ValueError):
+            port = 443 if protocol == "https" else 2375
+        display_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+        return f"{protocol}://{display_host}:{port}"
+
+    @staticmethod
+    def _validate_docker_host_metadata(server_name: str, payload: dict[str, Any]) -> dict[str, str]:
+        server_name = str(server_name or "").strip()
+        if not server_name or len(server_name) > 120 or any(ch in server_name for ch in "\r\n"):
+            raise ConfigError("Homepage Docker Server 名称不能为空。")
+        display_name = str(payload.get("display_name", payload.get("name", "")) or "").strip()
+        if len(display_name) > 80:
+            raise ConfigError("Docker 主机显示名称不能超过 80 个字符。")
+        public_host = str(payload.get("public_host", "") or "").strip()
+        if len(public_host) > 255 or any(ch.isspace() for ch in public_host):
+            raise ConfigError("Public Host 格式无效。")
+        override = str(payload.get("discovery_override", "") or "").strip().rstrip("/")
+        if override:
+            parsed = urlparse(override)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ConfigError("Admin Discovery Override 必须是 http:// 或 https:// 地址。")
+            if parsed.username or parsed.password:
+                raise ConfigError("Admin Discovery Override 不允许嵌入用户名或密码。")
+            if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+                raise ConfigError("Admin Discovery Override 必须指向 Docker API 根地址，不能包含路径、查询参数或锚点。")
+            try:
+                _ = parsed.port
+            except ValueError as exc:
+                raise ConfigError("Admin Discovery Override 端口无效。") from exc
+        return {
+            "display_name": display_name,
+            "public_host": public_host,
+            "discovery_override": override,
+        }
+
+    def docker_host_metadata(self) -> dict[str, dict[str, str]]:
         prefs = self._read_preferences()
-        raw = prefs.get("docker_discovery_hosts")
-        if not isinstance(raw, list):
-            return []
-        hosts: list[dict[str, str]] = []
-        seen: set[str] = set()
-        for item in raw:
+        raw = prefs.get("docker_host_metadata")
+        if not isinstance(raw, dict):
+            return {}
+        result: dict[str, dict[str, str]] = {}
+        for raw_server, raw_meta in raw.items():
+            if not isinstance(raw_meta, dict):
+                continue
+            server_name = str(raw_server or "").strip()
+            if not server_name:
+                continue
+            try:
+                meta = self._validate_docker_host_metadata(server_name, raw_meta)
+            except ConfigError:
+                continue
+            cleaned = {key: value for key, value in meta.items() if value}
+            if cleaned:
+                result[server_name] = cleaned
+        return result
+
+    def migrate_legacy_docker_host_preferences(self, actor: str = "system") -> bool:
+        """Migrate v0.4.0-v0.4.2 duplicated Docker host rows into metadata-only settings.
+
+        docker.yaml remains the single source of truth for the Docker connection.
+        A legacy URL is retained only when it differs from docker.yaml, in which case it
+        becomes an explicit Admin discovery override.
+        """
+        prefs = self._read_preferences()
+        legacy = prefs.get("docker_discovery_hosts")
+        if not isinstance(legacy, list):
+            return False
+        existing = prefs.get("docker_host_metadata")
+        metadata = dict(existing) if isinstance(existing, dict) else {}
+        changed = False
+        for item in legacy:
             if not isinstance(item, dict):
                 continue
-            host_id = str(item.get("id", "")).strip().lower()
-            name = str(item.get("name", "")).strip()
-            url = str(item.get("url", "")).strip().rstrip("/")
-            homepage_server = str(item.get("homepage_server", "")).strip()
-            public_host = str(item.get("public_host", "")).strip()
-            if not host_id or host_id in seen or not name or not url or not homepage_server:
+            server_name = str(item.get("homepage_server", "") or "").strip()
+            if not server_name:
                 continue
-            seen.add(host_id)
-            hosts.append({
-                "id": host_id,
-                "name": name,
+            current = dict(metadata.get(server_name) or {})
+            name = str(item.get("name", "") or "").strip()
+            public_host = str(item.get("public_host", "") or "").strip()
+            legacy_url = str(item.get("url", "") or "").strip().rstrip("/")
+            yaml_url = self._docker_yaml_remote_url(server_name).rstrip("/")
+            if name and name != server_name:
+                current["display_name"] = name
+            if public_host:
+                current["public_host"] = public_host
+            if legacy_url and legacy_url != yaml_url:
+                current["discovery_override"] = legacy_url
+            elif current.get("discovery_override") == legacy_url:
+                current.pop("discovery_override", None)
+            current = {k: v for k, v in current.items() if v}
+            if current:
+                metadata[server_name] = current
+            changed = True
+        if not changed:
+            return False
+        with self.locked():
+            prefs = self._read_preferences()
+            prefs.pop("docker_discovery_hosts", None)
+            if metadata:
+                prefs["docker_host_metadata"] = metadata
+            else:
+                prefs.pop("docker_host_metadata", None)
+            if prefs:
+                self._atomic_write(self.preferences_path, json.dumps(prefs, ensure_ascii=False, indent=2) + "\n")
+            elif self.preferences_path.exists():
+                self.preferences_path.unlink()
+            self._audit(actor, "migrate legacy docker host settings to metadata-only model", "admin-settings.json", None)
+        return True
+
+    def save_docker_host_metadata(self, server_name: str, payload: dict[str, Any], actor: str) -> dict[str, str]:
+        metadata = self._validate_docker_host_metadata(server_name, payload)
+        cleaned = {key: value for key, value in metadata.items() if value}
+        with self.locked():
+            prefs = self._read_preferences()
+            raw = prefs.get("docker_host_metadata")
+            rows = dict(raw) if isinstance(raw, dict) else {}
+            if cleaned:
+                rows[server_name] = cleaned
+            else:
+                rows.pop(server_name, None)
+            if rows:
+                prefs["docker_host_metadata"] = rows
+            else:
+                prefs.pop("docker_host_metadata", None)
+            prefs.pop("docker_discovery_hosts", None)
+            if prefs:
+                self._atomic_write(self.preferences_path, json.dumps(prefs, ensure_ascii=False, indent=2) + "\n")
+            elif self.preferences_path.exists():
+                self.preferences_path.unlink()
+            self._audit(actor, f"save docker host metadata:{server_name}", "admin-settings.json", None)
+        return cleaned
+
+    def delete_docker_host_metadata(self, server_name: str, actor: str) -> None:
+        server_name = str(server_name or "").strip()
+        with self.locked():
+            prefs = self._read_preferences()
+            raw = prefs.get("docker_host_metadata")
+            rows = dict(raw) if isinstance(raw, dict) else {}
+            rows.pop(server_name, None)
+            if rows:
+                prefs["docker_host_metadata"] = rows
+            else:
+                prefs.pop("docker_host_metadata", None)
+            prefs.pop("docker_discovery_hosts", None)
+            if prefs:
+                self._atomic_write(self.preferences_path, json.dumps(prefs, ensure_ascii=False, indent=2) + "\n")
+            elif self.preferences_path.exists():
+                self.preferences_path.unlink()
+            self._audit(actor, f"delete docker host metadata:{server_name}", "admin-settings.json", None)
+
+    # Compatibility helpers for v0.4.0-v0.4.2 callers. They no longer persist
+    # duplicate Docker connection data; they synthesize the legacy shape from
+    # docker.yaml plus Admin-only metadata.
+    def docker_discovery_hosts(self) -> list[dict[str, str]]:
+        """Legacy compatibility view of Admin metadata rows only.
+
+        v0.4.3 discovery itself no longer consumes this method; docker.yaml is
+        authoritative. Older callers still receive the former row shape.
+        """
+        self.migrate_legacy_docker_host_preferences()
+        metadata = self.docker_host_metadata()
+        result: list[dict[str, str]] = []
+        for server_name, meta in metadata.items():
+            yaml_url = self._docker_yaml_remote_url(server_name)
+            url = str(meta.get("discovery_override") or yaml_url)
+            if not url:
+                continue
+            result.append({
+                "id": server_name.casefold(),
+                "name": str(meta.get("display_name") or server_name),
                 "url": url,
-                "homepage_server": homepage_server,
-                "public_host": public_host,
+                "homepage_server": server_name,
+                "public_host": str(meta.get("public_host") or ""),
             })
-        return hosts
+        return result
 
     @staticmethod
     def _validate_docker_discovery_host_payload(payload: dict[str, Any]) -> dict[str, str]:
@@ -415,49 +578,22 @@ class HomepageStore:
 
     def save_docker_discovery_host(self, payload: dict[str, Any], actor: str, *, original_id: str = "") -> dict[str, str]:
         host = self._validate_docker_discovery_host_payload(payload)
-        original_id = str(original_id).strip().lower()
-        with self.locked():
-            prefs = self._read_preferences()
-            current = prefs.get("docker_discovery_hosts")
-            rows = current if isinstance(current, list) else []
-            cleaned = [dict(item) for item in rows if isinstance(item, dict)]
-            target_id = original_id or host["id"]
-            replaced = False
-            result: list[dict[str, Any]] = []
-            for item in cleaned:
-                item_id = str(item.get("id", "")).strip().lower()
-                if item_id == target_id:
-                    result.append(host)
-                    replaced = True
-                    continue
-                if item_id == host["id"]:
-                    raise ConfigError(f"Docker 主机 ID {host['id']} 已存在。")
-                result.append(item)
-            if not replaced:
-                result.append(host)
-            prefs["docker_discovery_hosts"] = result
-            self._atomic_write(self.preferences_path, json.dumps(prefs, ensure_ascii=False, indent=2) + "\n")
-            self._audit(actor, f"save docker discovery host:{host['id']}", "admin-settings.json", None)
+        yaml_url = self._docker_yaml_remote_url(host["homepage_server"]).rstrip("/")
+        override = host["url"] if host["url"].rstrip("/") != yaml_url else ""
+        self.save_docker_host_metadata(host["homepage_server"], {
+            "display_name": host["name"],
+            "public_host": host["public_host"],
+            "discovery_override": override,
+        }, actor)
         return host
 
     def delete_docker_discovery_host(self, host_id: str, actor: str) -> None:
-        host_id = str(host_id).strip().lower()
-        with self.locked():
-            prefs = self._read_preferences()
-            current = prefs.get("docker_discovery_hosts")
-            rows = current if isinstance(current, list) else []
-            result = [item for item in rows if not isinstance(item, dict) or str(item.get("id", "")).strip().lower() != host_id]
-            if len(result) == len(rows):
-                raise ConfigError("未找到要删除的自定义 Docker 主机。")
-            if result:
-                prefs["docker_discovery_hosts"] = result
-            else:
-                prefs.pop("docker_discovery_hosts", None)
-            if prefs:
-                self._atomic_write(self.preferences_path, json.dumps(prefs, ensure_ascii=False, indent=2) + "\n")
-            elif self.preferences_path.exists():
-                self.preferences_path.unlink()
-            self._audit(actor, f"delete docker discovery host:{host_id}", "admin-settings.json", None)
+        host_id = str(host_id or "").strip().casefold()
+        metadata = self.docker_host_metadata()
+        server_name = next((name for name in metadata if name.casefold() == host_id), "")
+        if not server_name:
+            raise ConfigError("未找到要删除的 Docker 主机元数据。")
+        self.delete_docker_host_metadata(server_name, actor)
 
     def backup_limit(self) -> int:
         default = max(1, min(int(settings.backup_limit), 500))

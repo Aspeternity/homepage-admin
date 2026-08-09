@@ -5,14 +5,14 @@
   <div>
     <a class="back-link" href="/docker">← 返回 Docker 发现</a>
     <h1>Docker 主机管理</h1>
-    <p>统一配置 Docker 发现连接与 Homepage <code>docker.yaml</code> Server。新增和编辑都使用同一套表单。</p>
+    <p><code>docker.yaml</code> 是 Docker 连接的唯一配置源；Admin 只保存显示名称、Public Host 和可选的 Discovery Override。</p>
   </div>
   <div class="heading-actions"><a class="button secondary" href="/yaml/docker.yaml">高级编辑 docker.yaml</a></div>
 </section>
 
 {% if default_server_info.mode == 'socket' %}
 <section class="alert warning docker-host-migration-alert">
-  <div><strong>检测到默认 Docker Server 仍使用直接 Socket</strong><br><span>Homepage Admin 的发现功能使用只读 HTTP API。建议切换到当前内置 Docker Socket Proxy。</span></div>
+  <div><strong>检测到默认 Docker Server 仍使用直接 Socket</strong><br><span>Homepage Admin 的发现功能需要可访问的 HTTP API。建议切换到内置只读 Docker Socket Proxy，或在该主机的高级选项中设置 Discovery Override。</span></div>
   <form method="post" action="/docker/migrate-homepage-proxy" data-confirm="这会把默认 docker.yaml Server 切换为内置只读代理。继续吗？">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button class="button primary" type="submit">切换为只读代理</button>
@@ -24,8 +24,8 @@
   <section class="form-card docker-host-list-panel">
     <div class="section-title-row">
       <div>
-        <h2>当前连接</h2>
-        <p class="section-help">每台 Docker 主机都按同一种方式管理；保存时会同时维护 Admin 发现设置和对应的 <code>docker.yaml</code> Server。</p>
+        <h2>当前 Docker 主机</h2>
+        <p class="section-help">每台主机都来自 <code>docker.yaml</code>。服务中的 <code>server:</code> 直接引用这里的 Server 名称。</p>
       </div>
       <span class="count-pill">{{ hosts|length }} 个</span>
     </div>
@@ -37,11 +37,14 @@
           <div class="docker-host-title-line"><h3>{{ h.name }}</h3></div>
           <div class="docker-host-row-meta">
             <span>Homepage Server：<code>{{ h.homepage_server }}</code></span>
-            <span>Discovery：<code>{{ h.url or '无可用 HTTP Discovery 地址' }}</code></span>
+            <span>Docker API：<code>{{ h.core_url or ('Socket · ' ~ (h.socket or '')) }}</code></span>
+            {% if h.discovery_override %}<span>Admin Discovery Override：<code>{{ h.discovery_override }}</code></span>{% endif %}
             {% if h.public_host %}<span>Public Host：<code>{{ h.public_host }}</code></span>{% endif %}
           </div>
           <div class="docker-badges">
-            <span class="role-pill {{ 'configured-pill' if h.yaml_configured else '' }}">{{ 'Homepage 已配置' if h.yaml_configured else '待写入 docker.yaml' }}</span>
+            <span class="role-pill configured-pill">Homepage 已配置 · docker.yaml</span>
+            {% if h.discovery_override %}<span class="role-pill">Discovery Override</span>{% endif %}
+            {% if h.discovery_via_env %}<span class="role-pill">环境回退</span>{% endif %}
             {% if h.yaml_mode == 'socket' %}<span class="role-pill">Socket 模式</span>{% endif %}
             {% if h.has_tls %}<span class="role-pill">TLS</span>{% endif %}
             {% if h.has_headers %}<span class="role-pill">认证 Header</span>{% endif %}
@@ -64,7 +67,7 @@
       {% endfor %}
     </div>
     {% else %}
-    <div class="empty-state compact-empty"><h3>还没有 Docker 主机</h3><p>在右侧填写一台只读 Docker Proxy；保存后会同时创建 Homepage Docker Server。</p></div>
+    <div class="empty-state compact-empty"><h3>还没有 Docker 主机</h3><p>在右侧添加一台只读 Docker API；保存后只写入 <code>docker.yaml</code> 的连接配置。</p></div>
     {% endif %}
   </section>
 
@@ -72,7 +75,7 @@
     <div class="section-title-row">
       <div>
         <h2>{{ '编辑 Docker 主机' if edit_host else '添加 Docker 主机' }}</h2>
-        <p class="section-help">推荐连接 <code>docker-socket-proxy</code> 并保持 <code>POST=0</code>；所有主机都使用相同配置流程。</p>
+        <p class="section-help">推荐连接 <code>docker-socket-proxy</code> 并保持 <code>POST=0</code>。核心连接只维护在 <code>docker.yaml</code>。</p>
       </div>
       {% if edit_host %}<a class="button secondary small" href="/docker/hosts">取消编辑</a>{% endif %}
     </div>
@@ -84,25 +87,36 @@
       <div class="form-grid two docker-host-form-grid">
         <label>显示名称
           <input name="name" value="{{ form_values.name }}" placeholder="Game-Server VM" required>
-          <small>只影响 Homepage Admin 中的显示名称。</small>
+          <small>仅保存到 Admin 元数据；不写入 <code>docker.yaml</code>。</small>
         </label>
         <label>Homepage Docker Server
           <input name="homepage_server" value="{{ form_values.homepage_server }}" placeholder="game-server" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,119}" required data-docker-homepage-server {% if edit_host %}readonly{% endif %}>
-          <small>{% if edit_host %}已有服务可能引用该 Server，编辑时锁定名称以避免断开关联。{% else %}保存后会作为 <code>docker.yaml</code> 的 Server 键名和服务中的 <code>server:</code> 值。{% endif %}</small>
+          <small>{% if edit_host %}服务可能引用该 Server，编辑时锁定名称避免断开关联。{% else %}这是 <code>docker.yaml</code> 键名，也是服务中的 <code>server:</code> 值。{% endif %}</small>
         </label>
-        <label class="span-2">Discovery URL
+        <label class="span-2">Docker API URL
           <input name="url" value="{{ form_values.url }}" placeholder="http://10.10.1.13:2375" required data-docker-host-url>
-          <small>只读 Docker HTTP API 根地址，例如 <code>http://10.10.1.13:2375</code>；不要带 <code>/containers/json</code>。</small>
+          <small>核心连接地址，保存到 <code>docker.yaml</code> 的 host / port / protocol；不要带 <code>/containers/json</code>。</small>
         </label>
         <label>Public Host
           <input name="public_host" value="{{ form_values.public_host }}" placeholder="10.10.1.13" data-docker-public-host>
-          <small>用于根据容器发布端口生成访问地址；留空时从 Discovery URL 自动推断。</small>
+          <small>仅用于 Admin 根据容器端口生成访问地址；留空时自动推断。</small>
         </label>
         <div class="docker-host-sync-summary" role="note">
-          <strong>保存行为</strong>
-          <span>同时保存发现设置，并创建或更新同名 <code>docker.yaml</code> Server。</span>
+          <strong>单一配置源</strong>
+          <span>连接信息只写 <code>docker.yaml</code>；Admin 设置中不再复制 Server、Host、Port 或协议。</span>
         </div>
       </div>
+
+      <details class="docker-host-override-panel">
+        <summary>Admin Discovery Override（可选）</summary>
+        <div class="docker-host-override-body">
+          <label>独立发现地址
+            <input name="discovery_override" value="{{ form_values.discovery_override }}" placeholder="http://10.10.1.11:2375" data-docker-discovery-override>
+            <small>默认留空，Admin 直接使用上面的 Docker API URL。仅当 Admin 无法解析/访问 <code>docker.yaml</code> 地址（例如 Socket 或容器内 DNS 差异）时填写；该值只保存在 <code>/data/admin-settings.json</code>。</small>
+          </label>
+        </div>
+      </details>
+
       {% if edit_host and (edit_host.has_headers or edit_host.has_tls) %}
       <div class="alert info compact-alert">当前 Server 含{% if edit_host.has_tls %} TLS{% endif %}{% if edit_host.has_headers %} Header{% endif %} 高级配置；这些值不会回显到表单，保存连接地址时会原样保留。</div>
       {% endif %}

@@ -780,3 +780,11 @@ html[data-theme="light"] .back-to-top { background: rgba(255,255,255,.92); }
 }
 .docker-host-sync-summary strong { font-size: 11px; }
 .docker-host-sync-summary span { color: var(--muted); font-size: 10px; line-height: 1.4; }
+
+
+/* v0.4.3 Docker host single-source model */
+.docker-host-override-panel { margin-top: 12px; border: 1px solid var(--border); border-radius: 12px; background: rgba(148, 163, 184, .025); }
+.docker-host-override-panel > summary { cursor: pointer; padding: 11px 12px; font-weight: 700; font-size: 11px; }
+.docker-host-override-body { padding: 0 12px 12px; }
+.docker-host-override-body > label { display: grid; gap: 6px; }
+.docker-host-override-body small { color: var(--muted); font-size: 10px; line-height: 1.5; }

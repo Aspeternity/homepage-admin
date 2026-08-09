@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -2177,7 +2178,7 @@ def test_v042_add_host_always_creates_homepage_server_without_checkbox() -> None
         assert page.status_code == 200
         assert 'name="sync_homepage"' not in page.text
         assert "若 docker.yaml 没有同名 Server，则同时创建" not in page.text
-        assert "同时保存发现设置，并创建或更新同名" in page.text
+        assert "连接信息只写" in page.text
 
         response = client.post(
             "/docker/hosts/save",
@@ -2275,3 +2276,217 @@ def test_v042_unified_metadata_keeps_yaml_headers_for_discovery_client() -> None
             prefs_path.unlink(missing_ok=True)
         else:
             prefs_path.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v043_legacy_docker_rows_migrate_to_metadata_without_duplicate_connection() -> None:
+    docker_path = settings.config_dir / "docker.yaml"
+    prefs_path = settings.data_dir / "admin-settings.json"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
+    try:
+        docker_path.write_text(
+            "---\nlocal-docker:\n  host: homepage-docker-proxy\n  port: 2375\ngame-server:\n  host: 10.10.1.12\n  port: 2375\n",
+            encoding="utf-8",
+        )
+        prefs_path.write_text(
+            json.dumps(
+                {
+                    "docker_discovery_hosts": [
+                        {
+                            "id": "local-docker",
+                            "name": "Docker VM",
+                            "url": "http://homepage-docker-proxy:2375",
+                            "homepage_server": "local-docker",
+                            "public_host": "10.10.1.11",
+                        },
+                        {
+                            "id": "game-server",
+                            "name": "Game-Server VM",
+                            "url": "http://10.10.1.12:2375",
+                            "homepage_server": "game-server",
+                            "public_host": "10.10.1.12",
+                        },
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        assert store.migrate_legacy_docker_host_preferences("test") is True
+        prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
+        assert "docker_discovery_hosts" not in prefs
+        metadata = prefs["docker_host_metadata"]
+        assert metadata["local-docker"] == {"display_name": "Docker VM", "public_host": "10.10.1.11"}
+        assert metadata["game-server"] == {"display_name": "Game-Server VM", "public_host": "10.10.1.12"}
+        serialized = json.dumps(prefs, ensure_ascii=False)
+        assert "homepage-docker-proxy:2375" not in serialized
+        assert "10.10.1.12:2375" not in serialized
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        if original_prefs is None:
+            prefs_path.unlink(missing_ok=True)
+        else:
+            prefs_path.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v043_legacy_different_discovery_url_becomes_explicit_override() -> None:
+    docker_path = settings.config_dir / "docker.yaml"
+    prefs_path = settings.data_dir / "admin-settings.json"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
+    try:
+        docker_path.write_text("---\nlocal-docker:\n  socket: /var/run/docker.sock\n", encoding="utf-8")
+        prefs_path.write_text(
+            json.dumps(
+                {
+                    "docker_discovery_hosts": [
+                        {
+                            "id": "local-docker",
+                            "name": "Docker VM",
+                            "url": "http://homepage-docker-proxy:2375",
+                            "homepage_server": "local-docker",
+                            "public_host": "10.10.1.11",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        store.migrate_legacy_docker_host_preferences("test")
+        metadata = store.docker_host_metadata()["local-docker"]
+        assert metadata["discovery_override"] == "http://homepage-docker-proxy:2375"
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        if original_prefs is None:
+            prefs_path.unlink(missing_ok=True)
+        else:
+            prefs_path.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v043_add_host_writes_connection_only_to_docker_yaml() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    prefs_path = settings.data_dir / "admin-settings.json"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
+    try:
+        docker_path.write_text("---\n", encoding="utf-8")
+        prefs_path.unlink(missing_ok=True)
+        response = client.post(
+            "/docker/hosts/save",
+            data={
+                "csrf": csrf,
+                "name": "Game-Server VM",
+                "url": "http://10.10.1.12:2375",
+                "homepage_server": "game-server",
+                "public_host": "10.10.1.12",
+                "discovery_override": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        docker_data = YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
+        assert docker_data["game-server"]["host"] == "10.10.1.12"
+        assert docker_data["game-server"]["port"] == 2375
+        prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
+        assert "docker_discovery_hosts" not in prefs
+        metadata = prefs["docker_host_metadata"]["game-server"]
+        assert metadata == {"display_name": "Game-Server VM", "public_host": "10.10.1.12"}
+        assert "url" not in metadata
+        assert "homepage_server" not in metadata
+        assert "host" not in metadata
+        assert "port" not in metadata
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        if original_prefs is None:
+            prefs_path.unlink(missing_ok=True)
+        else:
+            prefs_path.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v043_discovery_reads_core_connection_from_docker_yaml_and_optional_override() -> None:
+    from app import main as main_module
+
+    docker_path = settings.config_dir / "docker.yaml"
+    prefs_path = settings.data_dir / "admin-settings.json"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
+    try:
+        docker_path.write_text("---\ngame-server:\n  host: 10.10.1.12\n  port: 2375\n", encoding="utf-8")
+        prefs_path.write_text(
+            json.dumps(
+                {
+                    "docker_host_metadata": {
+                        "game-server": {
+                            "display_name": "Game VM",
+                            "public_host": "10.10.1.12",
+                            "discovery_override": "http://10.10.1.99:2375",
+                        }
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "game-server")
+        assert host["core_url"] == "http://10.10.1.12:2375"
+        assert host["url"] == "http://10.10.1.99:2375"
+        assert host["discovery_override"] == "http://10.10.1.99:2375"
+        assert host["name"] == "Game VM"
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        if original_prefs is None:
+            prefs_path.unlink(missing_ok=True)
+        else:
+            prefs_path.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v043_delete_host_removes_yaml_and_metadata_together() -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    prefs_path = settings.data_dir / "admin-settings.json"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
+    try:
+        docker_path.write_text("---\ngame-server:\n  host: 10.10.1.12\n  port: 2375\n", encoding="utf-8")
+        store.save_docker_host_metadata("game-server", {"display_name": "Game VM", "public_host": "10.10.1.12"}, "test")
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "game-server")
+        page = client.get(f'/docker/hosts/delete/{host["id"]}')
+        assert page.status_code == 200
+        assert 'name="remove_yaml" value="1"' in page.text
+        assert 'name="remove_custom"' not in page.text
+        response = client.post(
+            "/docker/hosts/delete-confirm",
+            data={
+                "csrf": csrf,
+                "host_id": host["id"],
+                "homepage_server": "game-server",
+                "remove_yaml": "1",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert "game-server" not in (YAML(typ="safe").load(docker_path.read_text(encoding="utf-8")) or {})
+        assert "game-server" not in store.docker_host_metadata()
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        if original_prefs is None:
+            prefs_path.unlink(missing_ok=True)
+        else:
+            prefs_path.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v043_host_manager_explains_single_source_and_optional_override() -> None:
+    client = TestClient(app)
+    login(client)
+    page = client.get("/docker/hosts")
+    assert page.status_code == 200
+    assert "docker.yaml" in page.text
+    assert "唯一配置源" in page.text
+    assert "Admin Discovery Override（可选）" in page.text
+    assert "Admin 设置中不再复制 Server、Host、Port 或协议" in page.text

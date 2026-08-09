@@ -1,8 +1,19 @@
-# Homepage Admin v0.4.2
+# Homepage Admin v0.4.3
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
 
+
+## v0.4.3：Docker 主机 Single Source of Truth
+
+- `docker.yaml` 现在是 Docker 主机连接的唯一事实来源：Server、Host、Port、Protocol、Socket、TLS、Header 只维护一份。
+- `/data/admin-settings.json` 不再复制 Docker 连接，只保留 Admin 专属元数据：显示名称、Public Host，以及必要时的 Discovery Override。
+- v0.4.0-v0.4.2 的 `docker_discovery_hosts` 旧数据启动时自动迁移；若旧 Discovery URL 与 `docker.yaml` 一致，会直接丢弃重复 URL；只有地址确实不同时才保留为显式 Override。
+- 新增/编辑 Docker 主机时，连接地址只写入 `docker.yaml`，Admin 元数据独立保存；默认发现直接使用 `docker.yaml`。
+- Docker 主机删除时直接删除 `docker.yaml` Server，并自动清理该 Server 的 Admin 元数据；服务引用保护继续保留。
+- 主机编辑页新增“Admin Discovery Override（可选）”，仅用于 Socket / 容器 DNS 等 Admin 无法直接访问 `docker.yaml` 地址的特殊部署。
+
+详细说明见 `UPGRADE_V0.4.3_ZH.md`。
 
 ## v0.4.2 Docker 主机管理统一化
 

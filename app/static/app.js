@@ -342,7 +342,7 @@
     target.classList.toggle('error', !ok);
     target.textContent = message;
   };
-  const testDockerHost = async ({hostId = '', url = '', homepageServer = '', publicHost = '', button, result}) => {
+  const testDockerHost = async ({hostId = '', url = '', discoveryOverride = '', homepageServer = '', publicHost = '', button, result}) => {
     const original = button?.textContent || '';
     if (button) { button.disabled = true; button.textContent = '测试中…'; }
     renderDockerHostTest(result, true, '正在连接 Docker API…');
@@ -351,6 +351,7 @@
       if (hostId) body.set('host_id', hostId);
       else {
         body.set('url', url);
+        body.set('discovery_override', discoveryOverride || '');
         body.set('homepage_server', homepageServer || 'test-server');
         body.set('public_host', publicHost || '');
       }
@@ -378,6 +379,7 @@
     const button = $('[data-docker-host-form-test]', dockerHostForm);
     button?.addEventListener('click', () => testDockerHost({
       url: $('[data-docker-host-url]', dockerHostForm)?.value.trim() || '',
+      discoveryOverride: $('[data-docker-discovery-override]', dockerHostForm)?.value.trim() || '',
       homepageServer: $('[data-docker-homepage-server]', dockerHostForm)?.value.trim() || '',
       publicHost: $('[data-docker-public-host]', dockerHostForm)?.value.trim() || '',
       button,

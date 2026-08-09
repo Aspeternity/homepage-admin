@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.3 - 2026-08-10
+
+- Docker 主机连接改为 Single Source of Truth：`docker.yaml` 唯一保存 Server / Host / Port / Protocol / Socket / TLS / Header。
+- `admin-settings.json` 的 Docker 数据缩减为显示名称、Public Host 和可选 Discovery Override，不再复制连接 URL / Server。
+- 自动迁移 v0.4.0-v0.4.2 的 `docker_discovery_hosts`；与 `docker.yaml` 相同的旧 URL 会去重，仅不同地址保留为 Override。
+- Docker 发现默认直接读取 `docker.yaml`；新增 / 编辑主机只更新该文件的连接字段，并单独保存 Admin 元数据。
+- 删除 Docker Server 时自动清理孤立 Admin 元数据，同时继续提供服务引用检查与可选清理。
+- Docker 主机编辑器增加可折叠的 Admin Discovery Override 高级项。
+
 ## v0.4.2 - 2026-08-10
 
 - Docker 发现主页移除重复的 Docker 主机状态卡。

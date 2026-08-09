@@ -63,6 +63,13 @@ BASE_DIR = Path(__file__).resolve().parent
 
 @asynccontextmanager
 async def app_lifespan(_: FastAPI):
+    # v0.4.3 migrates the old duplicated Docker discovery rows into metadata-only
+    # settings. docker.yaml remains the sole connection source of truth.
+    try:
+        await asyncio.to_thread(store.migrate_legacy_docker_host_preferences, "system")
+    except Exception:
+        pass
+
     async def runner() -> None:
         while True:
             try:
@@ -466,113 +473,102 @@ def _docker_client_from_yaml(server: dict[str, Any]) -> DockerDiscoveryClient | 
 
 
 def docker_discovery_hosts() -> list[dict[str, Any]]:
-    """Merge docker.yaml servers, Admin custom endpoints and the legacy env endpoint.
+    """Build Docker discovery hosts from docker.yaml plus Admin-only metadata.
 
-    A custom Admin endpoint mapped to the same Homepage server overrides the discovery URL
-    but never exposes docker.yaml headers/TLS details to the browser.
+    docker.yaml is the single source of truth for server/host/port/socket/TLS/headers.
+    admin-settings.json stores only display_name, public_host and an optional
+    discovery_override used when Admin cannot reach docker.yaml's endpoint directly.
     """
+    store.migrate_legacy_docker_host_preferences("system")
     servers = homepage_docker_servers()
-    custom_rows = store.docker_discovery_hosts()
-    custom_by_server = {row["homepage_server"].casefold(): row for row in custom_rows}
-    used_custom: set[str] = set()
+    metadata = store.docker_host_metadata()
+    metadata_by_server = {name.casefold(): value for name, value in metadata.items()}
     hosts: list[dict[str, Any]] = []
     first_server = first_docker_server_name()
+    env_url = (settings.docker_discovery_url or docker_discovery.base_url).rstrip("/")
 
     for server_name, server in servers.items():
-        custom = custom_by_server.get(server_name.casefold())
-        if custom:
-            used_custom.add(custom["id"])
-            host = {
-                **custom,
-                "source": "custom",
-                "source_label": "Admin 自定义 · 已映射 docker.yaml",
-                "editable": True,
-                "manageable": True,
-                "edit_kind": "custom",
-                "has_custom": True,
-                "custom_id": custom["id"],
-                "has_yaml": True,
-                "yaml_configured": True,
-                "yaml_mode": server.get("mode"),
-                "client": _docker_client_from_url_and_yaml(custom["url"], server),
-            }
-        else:
-            url = str(server.get("url") or "")
-            public_host = settings.docker_public_host if server_name == first_server else str(server.get("host") or "")
-            host = {
-                "id": _docker_host_id("yaml", server_name),
-                "name": server_name,
-                "url": url,
-                "homepage_server": server_name,
-                "public_host": public_host,
-                "source": "docker.yaml",
-                "source_label": "docker.yaml 自动发现",
-                "editable": True,
-                "manageable": True,
-                "edit_kind": "yaml",
-                "has_custom": False,
-                "custom_id": "",
-                "has_yaml": True,
-                "yaml_configured": True,
-                "yaml_mode": server.get("mode"),
-                "client": _docker_client_from_yaml(server),
-                "has_headers": bool(server.get("has_headers")),
-                "has_tls": bool(server.get("has_tls")),
-            }
-        hosts.append(host)
+        meta = metadata_by_server.get(server_name.casefold(), {})
+        override = str(meta.get("discovery_override") or "").strip().rstrip("/")
+        yaml_url = str(server.get("url") or "").strip().rstrip("/")
+        discovery_url = override or yaml_url
+        discovery_via_env = False
 
-    for custom in custom_rows:
-        if custom["id"] in used_custom:
-            continue
+        # Compatibility for a socket-only first server: the deployment-level
+        # DOCKER_DISCOVERY_URL can still provide a read-only proxy without being
+        # copied into Admin settings. New deployments should prefer a remote
+        # docker.yaml server or an explicit discovery_override metadata field.
+        if not discovery_url and server_name == first_server and env_url:
+            discovery_url = env_url
+            discovery_via_env = True
+
+        client: DockerDiscoveryClient | None = None
+        if discovery_url:
+            if discovery_via_env and discovery_url == docker_discovery.base_url.rstrip("/"):
+                client = docker_discovery
+            elif override and server.get("mode") == "socket":
+                client = DockerDiscoveryClient(discovery_url)
+            else:
+                client = _docker_client_from_url_and_yaml(discovery_url, server)
+
+        public_host = str(meta.get("public_host") or "").strip()
+        if not public_host:
+            if server_name == first_server and settings.docker_public_host:
+                public_host = settings.docker_public_host
+            elif server.get("host"):
+                public_host = str(server.get("host") or "")
+
         hosts.append({
-            **custom,
-            "source": "custom",
-            "source_label": "Admin 自定义 · docker.yaml 未配置",
+            "id": _docker_host_id("yaml", server_name),
+            "name": str(meta.get("display_name") or server_name),
+            "url": discovery_url,
+            "core_url": yaml_url,
+            "discovery_override": override,
+            "homepage_server": server_name,
+            "public_host": public_host,
+            "source": "docker.yaml",
+            "source_label": "docker.yaml",
             "editable": True,
             "manageable": True,
-            "edit_kind": "custom",
-            "has_custom": True,
-            "custom_id": custom["id"],
+            "has_metadata": bool(meta),
+            "has_custom": bool(meta),  # compatibility with older delete tests/routes
+            "custom_id": server_name if meta else "",
+            "has_yaml": True,
+            "yaml_configured": True,
+            "yaml_mode": server.get("mode"),
+            "socket": str(server.get("socket") or ""),
+            "client": client,
+            "has_headers": bool(server.get("has_headers")),
+            "has_tls": bool(server.get("has_tls")),
+            "discovery_via_env": discovery_via_env,
+        })
+
+    # Deployment compatibility only: if docker.yaml is empty but an environment
+    # endpoint exists, show it as a bootstrap connection. Saving it through the
+    # host manager will create docker.yaml and end this fallback state.
+    if not hosts and env_url:
+        server_name = settings.docker_server_name or "local-docker"
+        hosts.append({
+            "id": "env-default",
+            "name": server_name,
+            "url": env_url,
+            "core_url": "",
+            "discovery_override": "",
+            "homepage_server": server_name,
+            "public_host": settings.docker_public_host,
+            "source": "environment",
+            "source_label": "部署环境回退",
+            "editable": False,
+            "manageable": False,
+            "has_metadata": False,
+            "has_custom": False,
+            "custom_id": "",
             "has_yaml": False,
             "yaml_configured": False,
             "yaml_mode": "none",
-            "client": DockerDiscoveryClient(custom["url"]),
+            "client": docker_discovery if env_url == docker_discovery.base_url.rstrip("/") else DockerDiscoveryClient(env_url),
+            "discovery_via_env": True,
         })
-
-    env_url = (settings.docker_discovery_url or docker_discovery.base_url).rstrip("/")
-    if env_url:
-        duplicate = any(str(host.get("url") or "").rstrip("/") == env_url for host in hosts)
-        if not duplicate:
-            server_name = first_server or settings.docker_server_name or "local-docker"
-            client = docker_discovery if env_url == docker_discovery.base_url.rstrip("/") else DockerDiscoveryClient(env_url)
-            socket_row = next((row for row in hosts if str(row.get("homepage_server")) == server_name and not row.get("client")), None)
-            if socket_row is not None:
-                socket_row.update({
-                    "url": env_url,
-                    "public_host": settings.docker_public_host,
-                    "source": "environment",
-                    "source_label": "DOCKER_DISCOVERY_URL · 覆盖 Socket 发现",
-                    "client": client,
-                })
-            else:
-                hosts.append({
-                    "id": "env-default",
-                    "name": f"{server_name}（环境默认）",
-                    "url": env_url,
-                    "homepage_server": server_name,
-                    "public_host": settings.docker_public_host,
-                    "source": "environment",
-                    "source_label": "DOCKER_DISCOVERY_URL",
-                    "editable": False,
-                    "manageable": False,
-                    "edit_kind": "",
-                    "has_custom": False,
-                    "custom_id": "",
-                    "has_yaml": server_name in servers,
-                    "yaml_configured": server_name in servers,
-                    "yaml_mode": servers.get(server_name, {}).get("mode", "none"),
-                    "client": client,
-                })
     return hosts
 
 
@@ -2160,15 +2156,17 @@ def docker_hosts_page(
         "url": "",
         "homepage_server": "",
         "public_host": "",
+        "discovery_override": "",
     }
     if editable:
         form_values.update({
-            "original_id": str(editable.get("custom_id") or ""),
+            "original_id": "",
             "original_server": str(editable.get("homepage_server") or ""),
             "name": str(editable.get("name") or editable.get("homepage_server") or ""),
-            "url": str(editable.get("url") or ""),
+            "url": str(editable.get("core_url") or editable.get("url") or ""),
             "homepage_server": str(editable.get("homepage_server") or ""),
             "public_host": str(editable.get("public_host") or ""),
+            "discovery_override": str(editable.get("discovery_override") or ""),
         })
     return templates.TemplateResponse(
         request,
@@ -2199,15 +2197,18 @@ async def docker_host_test(request: Request, _: None = Depends(auth_guard)) -> J
             client = target["client"]
             label = str(target.get("name") or host_id)
         else:
-            raw_url = str(form.get("url", "")).strip()
+            core_url = str(form.get("url", "")).strip().rstrip("/")
+            override = str(form.get("discovery_override", "")).strip().rstrip("/")
+            test_url = override or core_url
             validated = store._validate_docker_discovery_host_payload({
                 "id": "test-host",
                 "name": "Test",
-                "url": raw_url,
+                "url": test_url,
                 "homepage_server": str(form.get("homepage_server", "test-server") or "test-server"),
                 "public_host": str(form.get("public_host", "")),
             })
-            client = DockerDiscoveryClient(validated["url"])
+            existing_server = homepage_docker_servers().get(str(form.get("homepage_server", "") or ""))
+            client = _docker_client_from_url_and_yaml(validated["url"], existing_server) if existing_server else DockerDiscoveryClient(validated["url"])
             label = validated["url"]
         if not client.ping():
             raise ConfigError("Docker API /_ping 不可达。")
@@ -2222,14 +2223,14 @@ async def docker_host_test(request: Request, _: None = Depends(auth_guard)) -> J
 async def docker_host_save(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
     form = await request.form()
     verify_csrf(request, str(form.get("csrf", "")))
-    original_id = str(form.get("original_id", "")).strip().lower()
     original_server = str(form.get("original_server", "")).strip()
     homepage_server = str(form.get("homepage_server", "")).strip()
-    host_id = _docker_custom_host_id(homepage_server, str(form.get("name", "")))
+    core_url = str(form.get("url", "")).strip().rstrip("/")
+    override = str(form.get("discovery_override", "")).strip().rstrip("/")
     payload = {
-        "id": host_id,
+        "id": _docker_custom_host_id(homepage_server, str(form.get("name", ""))),
         "name": str(form.get("name", "")),
-        "url": str(form.get("url", "")),
+        "url": core_url,
         "homepage_server": homepage_server,
         "public_host": str(form.get("public_host", "")),
     }
@@ -2241,10 +2242,26 @@ async def docker_host_save(request: Request, _: None = Depends(auth_guard)) -> R
             duplicate = next((item for item in docker_discovery_hosts() if str(item.get("homepage_server") or "").casefold() == validated["homepage_server"].casefold()), None)
             if duplicate:
                 raise ConfigError(f"Docker 主机“{validated['homepage_server']}”已存在，请直接编辑现有主机。")
+
+        if override:
+            # Validate Admin-only override independently. It is never copied into docker.yaml.
+            store._validate_docker_host_metadata(validated["homepage_server"], {"discovery_override": override})
+            if override == validated["url"].rstrip("/"):
+                override = ""
+
         created = upsert_homepage_docker_server_from_discovery(validated, actor(request))
-        saved = store.save_docker_discovery_host(validated, actor(request), original_id=original_id)
+        metadata = store.save_docker_host_metadata(
+            validated["homepage_server"],
+            {
+                "display_name": validated["name"] if validated["name"] != validated["homepage_server"] else "",
+                "public_host": validated["public_host"],
+                "discovery_override": override,
+            },
+            actor(request),
+        )
         note = "已创建 docker.yaml Server" if created else "已更新 docker.yaml Server"
-        return redirect("/docker/hosts", ok=f"已保存 Docker 主机“{saved['name']}”；{note}。")
+        meta_note = "；Admin 仅保存显示元数据" if metadata else "；无需额外 Admin 元数据"
+        return redirect("/docker/hosts", ok=f"已保存 Docker 主机“{validated['name']}”；{note}{meta_note}。")
     except ConfigError as exc:
         return redirect("/docker/hosts", error=str(exc))
 
@@ -2278,7 +2295,7 @@ def docker_host_delete_page(host_id: str, request: Request, _: None = Depends(au
         raise HTTPException(404)
     server_name = str(host.get("homepage_server") or "")
     references = docker_server_references(server_name)
-    has_custom = bool(host.get("has_custom") or host.get("source") == "custom")
+    has_metadata = bool(store.docker_host_metadata().get(server_name))
     has_yaml = server_name in homepage_docker_servers()
     return templates.TemplateResponse(
         request,
@@ -2288,9 +2305,10 @@ def docker_host_delete_page(host_id: str, request: Request, _: None = Depends(au
             "docker",
             host=_docker_host_safe(host),
             references=references,
-            has_custom=has_custom,
+            has_metadata=has_metadata,
+            has_custom=has_metadata,  # compatibility with older templates/tests
             has_yaml=has_yaml,
-            default_remove_custom=has_custom,
+            default_remove_custom=False,
             default_remove_yaml=has_yaml,
             error=request.query_params.get("error"),
         ),
@@ -2314,12 +2332,13 @@ async def docker_host_delete_confirm(request: Request, _: None = Depends(auth_gu
         current_server = str(host.get("homepage_server") or "").strip()
         if current_server != server_name:
             raise ConfigError("Docker Server 映射已经发生变化，请刷新后重试。")
-        has_custom = bool(host.get("has_custom") or host.get("source") == "custom")
+        has_metadata = bool(store.docker_host_metadata().get(server_name))
+        has_custom = has_metadata  # compatibility with v0.4.1/v0.4.2 POST payloads
         has_yaml = server_name in homepage_docker_servers()
         if not remove_custom and not remove_yaml:
             raise ConfigError("至少选择一项删除操作。")
-        if remove_custom and not has_custom:
-            raise ConfigError("该主机当前没有 Admin 自定义发现连接。")
+        if remove_custom and not has_metadata:
+            raise ConfigError("该主机当前没有 Admin 元数据。")
         if remove_yaml and not has_yaml:
             raise ConfigError("该主机当前没有 docker.yaml Server。")
         refs = docker_server_references(server_name)
@@ -2341,15 +2360,18 @@ async def docker_host_delete_confirm(request: Request, _: None = Depends(auth_gu
                 raise ConfigError("docker.yaml Server 已不存在，请刷新页面。")
             del docker_data[server_name]
             store.write_data("docker.yaml", docker_data, actor(request), f"delete docker server {server_name}")
-
-        if remove_custom:
-            store.delete_docker_discovery_host(host_id, actor(request))
+            # Metadata without its docker.yaml server is orphaned, so remove it automatically.
+            if has_metadata:
+                store.delete_docker_host_metadata(server_name, actor(request))
+        elif remove_custom:
+            # Backward-compatible endpoint behavior for v0.4.1/v0.4.2 clients.
+            store.delete_docker_host_metadata(server_name, actor(request))
 
         parts: list[str] = []
-        if remove_custom:
-            parts.append("Admin 发现连接")
+        if remove_custom and not remove_yaml:
+            parts.append("Admin 元数据")
         if remove_yaml:
-            parts.append(f"docker.yaml Server“{server_name}”")
+            parts.append(f"Docker 主机“{server_name}”")
         if cleared:
             parts.append(f"{cleared} 个服务的 Docker 关联")
         return redirect("/docker/hosts", ok="已删除 " + "、".join(parts) + "。")
@@ -2361,26 +2383,14 @@ async def docker_host_delete_confirm(request: Request, _: None = Depends(auth_gu
 async def docker_host_delete(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
     form = await request.form()
     verify_csrf(request, str(form.get("csrf", "")))
-    try:
-        store.delete_docker_discovery_host(str(form.get("host_id", "")), actor(request))
-        return redirect("/docker/hosts", ok="已删除 Admin 自定义 Docker 发现连接；docker.yaml 未被删除。")
-    except ConfigError as exc:
-        return redirect("/docker/hosts", error=str(exc))
+    return redirect("/docker/hosts", error="v0.4.3 已取消独立 Admin 发现层删除；请使用 Docker 主机删除向导。")
 
 
 @app.post("/docker/hosts/sync-homepage")
 async def docker_host_sync_homepage(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
     form = await request.form()
     verify_csrf(request, str(form.get("csrf", "")))
-    host_id = str(form.get("host_id", "")).strip()
-    try:
-        host = docker_discovery_host(host_id)
-        if not host or host.get("source") != "custom":
-            raise ConfigError("只能同步 Admin 自定义 Docker 主机。")
-        created = sync_custom_docker_host_to_homepage({k: str(host.get(k) or "") for k in ("id", "name", "url", "homepage_server", "public_host")}, actor(request))
-        return redirect("/docker/hosts", ok="已创建 docker.yaml Server。" if created else "docker.yaml Server 已存在且连接一致。")
-    except ConfigError as exc:
-        return redirect("/docker/hosts", error=str(exc))
+    return redirect("/docker/hosts", ok="v0.4.3 已以 docker.yaml 为唯一 Docker 连接源，无需再执行单独同步。")
 
 
 @app.post("/docker/setup-homepage")
