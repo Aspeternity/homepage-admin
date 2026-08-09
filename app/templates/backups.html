@@ -4,7 +4,7 @@
 <section class="page-heading">
   <div>
     <h1>备份回滚</h1>
-    <p>每次保存前都会备份原文件；恢复操作本身也会先备份当前版本。系统最多自动保留 {{ backup_limit }} 组备份。</p>
+    <p>每次保存前都会备份原文件；恢复操作本身也会先备份当前版本。当前最多自动保留 {{ backup_limit }} 组备份。</p>
   </div>
   {% if backups %}
   <div class="heading-actions">
@@ -16,6 +16,39 @@
   </div>
   {% endif %}
 </section>
+
+<section class="form-card backup-policy-card">
+  <div class="backup-policy-copy">
+    <div class="section-title-row">
+      <div>
+        <h2>自动保留策略</h2>
+        <p class="section-help">可直接在后台调整备份数量，无需修改 Portainer Stack。保存后如果现有备份超过新上限，会立即删除最旧的备份。</p>
+      </div>
+      <span class="status-pill {{ 'ok' if backup_limit_custom else '' }}">{{ '自定义' if backup_limit_custom else '环境默认' }}</span>
+    </div>
+  </div>
+  <div class="backup-policy-controls">
+    <form class="backup-limit-form" method="post" action="/backups/settings">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>保留备份数量
+        <div class="backup-limit-input-row">
+          <input type="number" name="backup_limit" value="{{ backup_limit }}" min="1" max="500" step="1" inputmode="numeric" required>
+          <span>组</span>
+        </div>
+      </label>
+      <button class="button primary" type="submit">保存上限</button>
+    </form>
+    {% if backup_limit_custom %}
+    <form method="post" action="/backups/settings/reset" data-confirm="恢复环境默认值 {{ backup_limit_default }} 组？">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="button secondary" type="submit">恢复默认 {{ backup_limit_default }}</button>
+    </form>
+    {% else %}
+    <span class="backup-policy-note">当前来自 <code>BACKUP_LIMIT={{ backup_limit_default }}</code></span>
+    {% endif %}
+  </div>
+</section>
+
 <div class="backup-list">
 {% for backup in backups %}
   <section class="backup-card">

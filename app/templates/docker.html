@@ -53,11 +53,12 @@
 {% if service_groups %}
 <section class="docker-toolbar form-card">
   <div>
-    <strong>默认导入分组</strong>
-    <p class="form-help">没有 <code>homepage.group</code> Label 时，新服务会预选这里。选择会保存在当前浏览器。</p>
+    <strong>导入分组策略</strong>
+    <p class="form-help">默认按服务类型智能推荐；也可以在这里固定一个分组。<code>homepage.group</code> Label 始终拥有最高优先级。</p>
   </div>
-  <select data-docker-import-group aria-label="默认导入分组">
-    {% for group in service_groups %}<option value="{{ loop.index0 }}" {% if loop.index0 == recommended_group_index %}selected{% endif %}>{{ group }}</option>{% endfor %}
+  <select data-docker-import-group aria-label="导入分组策略">
+    <option value="auto" selected>智能推荐（按服务类型）</option>
+    {% for group in service_groups %}<option value="{{ loop.index0 }}">固定到：{{ group }}</option>{% endfor %}
   </select>
 </section>
 {% endif %}
@@ -101,7 +102,7 @@
       {% elif c.role == 'Docker 只读代理' %}
       <span class="button secondary disabled">系统组件</span>
       {% else %}
-      <a class="button primary" data-docker-import-link data-import-base="/docker/import/{{ c.id[:12] }}" href="/docker/import/{{ c.id[:12] }}?group={{ recommended_group_index }}">添加到 Homepage</a>
+      <a class="button primary" data-docker-import-link data-import-base="/docker/import/{{ c.id[:12] }}" href="/docker/import/{{ c.id[:12] }}">添加到 Homepage</a>
       {% endif %}
     </div>
   </article>

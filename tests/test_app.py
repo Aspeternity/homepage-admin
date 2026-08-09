@@ -464,3 +464,70 @@ def test_docker_page_hides_internal_proxy_and_marks_existing_case_insensitive(mo
         assert "homepage-admin-docker-proxy" in shown.text
     finally:
         services_path.write_text(original, encoding="utf-8")
+
+
+def test_backup_limit_can_be_configured_and_reset() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    prefs = settings.data_dir / "admin-settings.json"
+    original = prefs.read_text(encoding="utf-8") if prefs.exists() else None
+    try:
+        response = client.post(
+            "/backups/settings",
+            data={"csrf": csrf, "backup_limit": "12"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert store.backup_limit() == 12
+        page = client.get("/backups")
+        assert 'name="backup_limit" value="12"' in page.text
+        assert "自定义" in page.text
+
+        invalid = client.post(
+            "/backups/settings",
+            data={"csrf": csrf, "backup_limit": "0"},
+            follow_redirects=False,
+        )
+        assert invalid.status_code == 303
+        assert store.backup_limit() == 12
+
+        reset = client.post(
+            "/backups/settings/reset",
+            data={"csrf": csrf},
+            follow_redirects=False,
+        )
+        assert reset.status_code == 303
+        assert store.backup_limit() == max(1, min(settings.backup_limit, 500))
+    finally:
+        if original is None:
+            prefs.unlink(missing_ok=True)
+        else:
+            prefs.write_text(original, encoding="utf-8")
+
+
+def test_service_profile_recommends_existing_group() -> None:
+    from app.docker_client import infer_service_profile, recommend_group_index
+
+    komari = {
+        "name": "Komari",
+        "image": "ghcr.io/komari-monitor/komari:latest",
+    }
+    profile = infer_service_profile(komari)
+    assert profile["kind"] == "服务器监控"
+    assert profile["description"] == "Komari 服务器监控"
+    assert profile["confidence"] == "高"
+    assert recommend_group_index(["Widgets", "群晖NAS", "内网Tools"], profile) == 2
+
+
+def test_v023_wizard_alignment_and_auto_group_assets_are_present() -> None:
+    root = __import__("pathlib").Path(__file__).resolve().parents[1]
+    css = (root / "app/static/app.css").read_text(encoding="utf-8")
+    js = (root / "app/static/app.js").read_text(encoding="utf-8")
+    docker_template = (root / "app/templates/docker.html").read_text(encoding="utf-8")
+    wizard_template = (root / "app/templates/docker_import_wizard.html").read_text(encoding="utf-8")
+    assert ".wizard-fields-grid > .wizard-field" in css
+    assert "grid-template-rows: auto 42px 14px" in css
+    assert "homepage-admin-docker-import-group-v2" in js
+    assert "智能推荐（按服务类型）" in docker_template
+    assert "识别为：{{ service_profile.kind }}" in wizard_template
+    assert "data-preview-icon-image" in wizard_template

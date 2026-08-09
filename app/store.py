@@ -49,6 +49,7 @@ class HomepageStore:
         self.backup_dir = self.data_dir / "backups"
         self.lock_path = self.data_dir / ".write.lock"
         self.audit_path = self.data_dir / "audit.jsonl"
+        self.preferences_path = self.data_dir / "admin-settings.json"
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -238,8 +239,58 @@ class HomepageStore:
                 self._audit(actor, f"delete all backups:{len(directories)}", "backups", None)
             return len(directories)
 
+    def _read_preferences(self) -> dict[str, Any]:
+        if not self.preferences_path.exists():
+            return {}
+        try:
+            payload = json.loads(self.preferences_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def backup_limit(self) -> int:
+        default = max(1, min(int(settings.backup_limit), 500))
+        value = self._read_preferences().get("backup_limit")
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        return max(1, min(parsed, 500))
+
+    def backup_limit_is_custom(self) -> bool:
+        return "backup_limit" in self._read_preferences()
+
+    def set_backup_limit(self, limit: int, actor: str) -> int:
+        if limit < 1 or limit > 500:
+            raise ConfigError("备份保留数量必须在 1 到 500 之间。")
+        with self.locked():
+            prefs = self._read_preferences()
+            prefs["backup_limit"] = int(limit)
+            self._atomic_write(
+                self.preferences_path,
+                json.dumps(prefs, ensure_ascii=False, indent=2) + "\n",
+            )
+            self._audit(actor, f"set backup limit:{limit}", "admin-settings.json", None)
+            self._prune_backups()
+        return limit
+
+    def reset_backup_limit(self, actor: str) -> int:
+        with self.locked():
+            prefs = self._read_preferences()
+            prefs.pop("backup_limit", None)
+            if prefs:
+                self._atomic_write(
+                    self.preferences_path,
+                    json.dumps(prefs, ensure_ascii=False, indent=2) + "\n",
+                )
+            elif self.preferences_path.exists():
+                self.preferences_path.unlink()
+            self._audit(actor, "reset backup limit", "admin-settings.json", None)
+            self._prune_backups()
+        return self.backup_limit()
+
     def _prune_backups(self) -> None:
-        limit = max(settings.backup_limit, 1)
+        limit = self.backup_limit()
         dirs = [p for p in self.backup_dir.iterdir() if p.is_dir()]
         dirs.sort(reverse=True)
         for old in dirs[limit:]:

@@ -1,44 +1,40 @@
-# Homepage Admin v0.2.2
+# Homepage Admin v0.2.3
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是和 Homepage 挂载同一个配置目录，直接读写官方 YAML 文件。
 
-> v0.2.2 的重点：**Docker 导入向导、右上角主题菜单、可删除的备份回滚记录**。
+> v0.2.3 的重点：**修复 Docker 导入向导字段错位、增强智能推荐与卡片预览、备份保留数量可在后台配置**。
 
-## v0.2.2 新增 / 修复
+## v0.2.3 新增 / 修复
 
-### Docker 导入向导
+### Docker 导入向导体验优化
 
-Docker 发现页点击“添加到 Homepage”后，不再直接跳进完整服务表单，而是进入四步导入流程：
+- 修复“访问地址”和“图标”等输入框因为来源提示数量不同而上下错位的问题。
+- 向导顶部新增服务识别信息：`识别为` + `置信度`。
+- Docker 发现页默认分组策略改为 `智能推荐（按服务类型）`；仍可手动固定到指定分组。
+- `homepage.group` Label 继续拥有最高优先级。
+- 常见服务按类型推荐现有分组，例如服务器监控 / 管理面板优先匹配 `内网Tools`，影音 / 下载类优先匹配 `群晖NAS` 等已有分组。
+- 扩展常见服务图标建议，并保留原有说明、发布端口、Widget 类型与 Widget URL 推断。
+- 卡片预览支持直接预览 HTTP(S) 图标与 `sh-*` 图标；图片失败时自动回退为文字图标。
+- YAML 预览继续只展示非敏感字段；API Key / Token / Password 仍在完整编辑器中填写。
 
-1. 识别容器：名称、镜像、运行状态、发布端口、Docker Server。
-2. 调整建议：自动推荐服务名、访问地址、图标、说明、分组、Widget 类型和 Widget URL。
-3. 实时预览：同时展示模拟 Homepage 卡片与非敏感 YAML 预览。
-4. 完整编辑：把向导中修改过的值带入原来的服务编辑器，再填写 API Key、用户名、密码及高级 YAML。
+### 备份保留数量可配置
 
-推荐值会标注来源，例如：`Homepage Label`、`容器名称`、`发布端口`、`镜像识别`、`Docker 发现页选择`。
+- `备份回滚` 页面新增 `自动保留策略`。
+- 可在 UI 中设置保留 `1–500` 组备份，不再只能依赖固定的 `BACKUP_LIMIT=50`。
+- 设置保存在 `/data/admin-settings.json`，因此容器重建后仍保留。
+- 如果降低上限，保存后立即删除最旧的超额备份。
+- 支持一键 `恢复默认`，回到环境变量 `BACKUP_LIMIT`（默认 50）。
+- 单个删除、清空全部、恢复备份与审计日志功能继续保留。
 
-内置常见服务说明识别包括 Jellyfin、qBittorrent、Transmission、Home Assistant、Portainer、Proxmox、Vaultwarden、MoviePilot、MeTube、Lsky Pro、MkDocs、MySQL、phpMyAdmin、Komari、CookieCloud、RustDesk、1Panel 等。
+### 延续 v0.2.2 的主题体验
 
-### 右上角主题菜单
-
-- 桌面端移除左下角大号主题按钮，改为页面右上角小图标。
-- 点击图标弹出：**浅色模式 / 深色模式 / 跟随系统**。
-- 继续使用浏览器 `localStorage` 保存主题偏好。
-- 旧版已保存的 `light` / `dark` 偏好可直接沿用。
-- 移动端与登录页保留紧凑图标切换。
-
-### 备份回滚维护
-
-- 每组备份新增“删除备份”按钮。
-- 备份页新增“清空全部备份”。
-- 删除操作均要求 CSRF 校验和二次确认。
-- 页面显示当前备份组数量、每组文件数和占用空间。
-- 自动保留上限 `BACKUP_LIMIT` 仍然生效；默认最多 50 组。
-- 删除备份动作写入审计日志。
+- 右上角紧凑主题图标。
+- 浅色 / 深色 / 跟随系统。
+- 浏览器记住主题偏好。
 
 ## Docker 安全架构
 
-延续 v0.2.1 的共享只读代理结构：
+延续 v0.2.1+ 的共享只读代理结构：
 
 ```text
 /var/run/docker.sock
@@ -60,15 +56,16 @@ homepage-docker-proxy
 
 `homepage-docker-proxy` 不映射宿主机端口，只加入共享 `homepage-tools` 网络。
 
-## 仍然支持的核心功能
+## 核心功能
 
 - 服务 / 书签 / 分组拖拽排序
 - 顶部组件拖拽排序
 - Jellyfin、qBittorrent、Transmission、Minecraft、Home Assistant、Portainer、Proxmox 专属 Widget 表单
 - API Key / Token / Password 遮挡与保留
 - 高级 YAML 敏感值安全占位符
-- Docker 容器发现、已添加识别、内部容器隐藏、端口去重
-- 自动备份、回滚、删除、YAML 校验、原子写入、审计日志
+- Docker 容器发现、已添加识别、系统组件隐藏、端口去重
+- Docker 四步导入向导、服务类型识别、智能分组、卡片与 YAML 预览
+- 自动备份、回滚、删除、可配置保留数量、YAML 校验、原子写入、审计日志
 - GitHub Actions 自动测试并发布 `amd64` / `arm64` GHCR 镜像
 
 ## 当前部署参数
@@ -83,15 +80,15 @@ Admin UID:GID: 1000:1000
 共享 Docker 网络: homepage-tools
 ```
 
-从 v0.2.1 升级请阅读：
+从 v0.2.2 升级请阅读：
 
 ```text
-UPGRADE_V0.2.2_ZH.md
+UPGRADE_V0.2.3_ZH.md
 ```
 
-## 官方 Homepage 对应配置
+## Homepage 配置文件
 
-Homepage Admin 仍以官方 YAML 作为唯一数据源：
+Homepage Admin 仍以 YAML / CSS / JS 文件作为数据源：
 
 - `services.yaml`
 - `bookmarks.yaml`

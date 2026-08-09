@@ -20,7 +20,11 @@
   <section class="form-card wizard-container-card">
     <div class="section-title-row">
       <div>
-        <h2>{{ container.name }}</h2>
+        <div class="wizard-recognition-row">
+          <h2>{{ container.name }}</h2>
+          <span class="recognition-pill">识别为：{{ service_profile.kind }}</span>
+          <span class="confidence-pill confidence-{{ service_profile.confidence }}">置信度：{{ service_profile.confidence }}</span>
+        </div>
         <p class="section-help">{{ container.image }}</p>
       </div>
       <span class="status-pill {{ 'ok' if container.state == 'running' else '' }}">{{ container.state or 'unknown' }}</span>
@@ -38,45 +42,45 @@
       <div class="section-title-row">
         <div><h2>Homepage 建议</h2><p class="section-help">所有建议都可以修改。右侧预览会实时更新。</p></div>
       </div>
-      <div class="form-grid two">
-        <label>服务名称
+      <div class="form-grid two wizard-fields-grid">
+        <label class="wizard-field">服务名称
           <input name="name" value="{{ values.name }}" required data-wizard-field="name">
-          {% if suggestion_sources.name %}<small class="field-source">来源：{{ suggestion_sources.name }}</small>{% endif %}
+          <small class="field-source{% if not suggestion_sources.name %} empty{% endif %}">{% if suggestion_sources.name %}来源：{{ suggestion_sources.name }}{% else %}&nbsp;{% endif %}</small>
         </label>
-        <label>所属分组
+        <label class="wizard-field">所属分组
           <select name="group_index" data-wizard-field="group">
             {% for group in groups %}<option value="{{ loop.index0 }}" {% if loop.index0 == group_index %}selected{% endif %}>{{ group }}</option>{% endfor %}
           </select>
-          {% if suggestion_sources.group %}<small class="field-source">来源：{{ suggestion_sources.group }}</small>{% endif %}
+          <small class="field-source{% if not suggestion_sources.group %} empty{% endif %}">{% if suggestion_sources.group %}来源：{{ suggestion_sources.group }}{% else %}&nbsp;{% endif %}</small>
         </label>
-        <label>访问地址
+        <label class="wizard-field">访问地址
           <input name="href" value="{{ values.href }}" placeholder="http://10.10.1.11:8080" data-wizard-field="href">
-          {% if suggestion_sources.href %}<small class="field-source">来源：{{ suggestion_sources.href }}</small>{% endif %}
+          <small class="field-source{% if not suggestion_sources.href %} empty{% endif %}">{% if suggestion_sources.href %}来源：{{ suggestion_sources.href }}{% else %}&nbsp;{% endif %}</small>
         </label>
-        <label>图标
+        <label class="wizard-field">图标
           <input name="icon" value="{{ values.icon }}" placeholder="sh-jellyfin / https://..." data-wizard-field="icon">
-          {% if suggestion_sources.icon %}<small class="field-source">来源：{{ suggestion_sources.icon }}</small>{% endif %}
+          <small class="field-source{% if not suggestion_sources.icon %} empty{% endif %}">{% if suggestion_sources.icon %}来源：{{ suggestion_sources.icon }}{% else %}&nbsp;{% endif %}</small>
         </label>
-        <label class="span-2">简短说明
+        <label class="span-2 wizard-field">简短说明
           <input name="description" value="{{ values.description }}" placeholder="例如：影视媒体中心" data-wizard-field="description">
-          {% if suggestion_sources.description %}<small class="field-source">来源：{{ suggestion_sources.description }}</small>{% endif %}
+          <small class="field-source{% if not suggestion_sources.description %} empty{% endif %}">{% if suggestion_sources.description %}来源：{{ suggestion_sources.description }}{% else %}&nbsp;{% endif %}</small>
         </label>
-        <label>站点监控 URL
+        <label class="wizard-field">站点监控 URL
           <input name="siteMonitor" value="{{ values.siteMonitor }}" placeholder="可留空" data-wizard-field="siteMonitor">
-          {% if suggestion_sources.siteMonitor %}<small class="field-source">来源：{{ suggestion_sources.siteMonitor }}</small>{% endif %}
+          <small class="field-source{% if not suggestion_sources.siteMonitor %} empty{% endif %}">{% if suggestion_sources.siteMonitor %}来源：{{ suggestion_sources.siteMonitor }}{% else %}&nbsp;{% endif %}</small>
         </label>
-        <label>ICMP Ping 主机
+        <label class="wizard-field">ICMP Ping 主机
           <input name="ping" value="{{ values.ping }}" placeholder="可留空" data-wizard-field="ping">
-          {% if suggestion_sources.ping %}<small class="field-source">来源：{{ suggestion_sources.ping }}</small>{% endif %}
+          <small class="field-source{% if not suggestion_sources.ping %} empty{% endif %}">{% if suggestion_sources.ping %}来源：{{ suggestion_sources.ping }}{% else %}&nbsp;{% endif %}</small>
         </label>
-        <label>Widget 类型
+        <label class="wizard-field">Widget 类型
           <input name="widget_type" value="{{ values.widget_type }}" list="wizard-widget-types" placeholder="可留空" data-wizard-field="widget_type">
           <datalist id="wizard-widget-types">{% for type_id, schema in widget_catalog.items() %}<option value="{{ type_id }}">{{ schema.label }}</option>{% endfor %}</datalist>
-          {% if suggestion_sources.widget_type %}<small class="field-source">来源：{{ suggestion_sources.widget_type }}</small>{% endif %}
+          <small class="field-source{% if not suggestion_sources.widget_type %} empty{% endif %}">{% if suggestion_sources.widget_type %}来源：{{ suggestion_sources.widget_type }}{% else %}&nbsp;{% endif %}</small>
         </label>
-        <label>Widget 地址
+        <label class="wizard-field">Widget 地址
           <input name="widget_url" value="{{ values.widget_fields.get('url', '') }}" placeholder="通常与访问地址相同" data-wizard-field="widget_url">
-          {% if suggestion_sources.widget_url %}<small class="field-source">来源：{{ suggestion_sources.widget_url }}</small>{% endif %}
+          <small class="field-source{% if not suggestion_sources.widget_url %} empty{% endif %}">{% if suggestion_sources.widget_url %}来源：{{ suggestion_sources.widget_url }}{% else %}&nbsp;{% endif %}</small>
         </label>
       </div>
       <input type="hidden" value="{{ values.server }}" data-wizard-static="server">
@@ -89,9 +93,12 @@
 
     <aside class="wizard-preview-stack">
       <section class="form-card preview-card-panel">
-        <div class="section-title-row"><div><h2>卡片预览</h2><p class="section-help">模拟 Homepage 服务卡片的信息层级。</p></div></div>
+        <div class="section-title-row"><div><h2>卡片预览</h2><p class="section-help">模拟 Homepage 服务卡片的信息层级；支持预览 URL 与 <code>sh-*</code> 图标。</p></div></div>
         <div class="homepage-card-preview">
-          <div class="preview-icon" data-preview-icon>H</div>
+          <div class="preview-icon" data-preview-icon>
+            <img data-preview-icon-image alt="" hidden>
+            <span data-preview-icon-fallback>H</span>
+          </div>
           <div class="preview-copy">
             <strong data-preview-name>{{ values.name }}</strong>
             <span data-preview-description>{{ values.description or values.href or '暂无说明' }}</span>

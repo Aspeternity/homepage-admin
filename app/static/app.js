@@ -304,10 +304,10 @@
     syncWidgetSchema();
   }
 
-  // Docker import group preference. Homepage labels still take precedence server-side.
+  // Docker import group strategy. "auto" lets the wizard choose a group from the recognized service type.
   const importGroup = $('[data-docker-import-group]');
   if (importGroup) {
-    const storageKey = 'homepage-admin-docker-import-group';
+    const storageKey = 'homepage-admin-docker-import-group-v2';
     try {
       const saved = localStorage.getItem(storageKey);
       if (saved !== null && [...importGroup.options].some((option) => option.value === saved)) importGroup.value = saved;
@@ -315,7 +315,9 @@
     const syncImportLinks = () => {
       $$('[data-docker-import-link]').forEach((link) => {
         const base = link.dataset.importBase || link.getAttribute('href').split('?')[0];
-        link.href = `${base}?group=${encodeURIComponent(importGroup.value)}`;
+        link.href = importGroup.value === 'auto'
+          ? base
+          : `${base}?group=${encodeURIComponent(importGroup.value)}`;
       });
     };
     importGroup.addEventListener('change', () => {
@@ -349,12 +351,35 @@
       const previewName = $('[data-preview-name]', wizard);
       const previewDescription = $('[data-preview-description]', wizard);
       const previewIcon = $('[data-preview-icon]', wizard);
+      const previewIconImage = $('[data-preview-icon-image]', wizard);
+      const previewIconFallback = $('[data-preview-icon-fallback]', wizard);
       const previewWidget = $('[data-preview-widget]', wizard);
       if (previewName) previewName.textContent = name;
       if (previewDescription) previewDescription.textContent = description || href || '暂无说明';
-      if (previewIcon) {
-        previewIcon.textContent = icon ? (icon.startsWith('http') ? 'IMG' : icon.replace(/^sh-/, '').slice(0, 2).toUpperCase()) : name.slice(0, 1).toUpperCase();
-        previewIcon.title = icon || '默认首字母图标';
+      if (previewIcon) previewIcon.title = icon || '默认首字母图标';
+      if (previewIconImage && previewIconFallback) {
+        let imageUrl = '';
+        if (/^https?:\/\//i.test(icon)) imageUrl = icon;
+        else if (/^sh-[a-z0-9._-]+$/i.test(icon)) {
+          const slug = icon.slice(3).toLowerCase();
+          imageUrl = `https://cdn.jsdelivr.net/gh/selfhst/icons/png/${encodeURIComponent(slug)}.png`;
+        }
+        previewIconFallback.textContent = icon
+          ? icon.replace(/^sh-/, '').slice(0, 2).toUpperCase()
+          : name.slice(0, 1).toUpperCase();
+        previewIconImage.onerror = () => {
+          previewIconImage.hidden = true;
+          previewIconFallback.hidden = false;
+        };
+        if (imageUrl) {
+          previewIconFallback.hidden = true;
+          previewIconImage.hidden = false;
+          previewIconImage.src = imageUrl;
+        } else {
+          previewIconImage.hidden = true;
+          previewIconImage.removeAttribute('src');
+          previewIconFallback.hidden = false;
+        }
       }
       if (previewWidget) previewWidget.hidden = !widgetType;
 

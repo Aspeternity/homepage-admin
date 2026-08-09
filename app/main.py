@@ -22,7 +22,9 @@ from .docker_client import (
     homepage_labels_to_values,
     infer_icon_and_widget,
     infer_service_description,
+    infer_service_profile,
     public_host_from_url,
+    recommend_group_index,
 )
 from .secrets import SECRET_PLACEHOLDER, mask_secrets, restore_masked_secrets
 from .security import ensure_csrf, login_limiter, require_auth, verify_csrf, verify_password
@@ -1006,7 +1008,7 @@ def docker_page(
     proxy_healthy = False
     hidden_internal_count = 0
     if not docker_discovery.enabled():
-        error = error or "Docker 容器发现未启用。请使用 v0.2.2 的 Compose（包含共享只读 Docker Proxy）。"
+        error = error or "Docker 容器发现未启用。请使用 v0.2.3 的 Compose（包含共享只读 Docker Proxy）。"
     else:
         proxy_healthy = docker_discovery.ping()
         try:
@@ -1104,6 +1106,7 @@ async def docker_migrate_homepage_proxy(request: Request, _: None = Depends(auth
 def docker_import_values(container: dict[str, Any], names: list[str], requested_group: int | None = None) -> tuple[dict[str, Any], int, dict[str, str]]:
     values = empty_service_values()
     sources: dict[str, str] = {}
+    profile = infer_service_profile(container)
     label_values = homepage_labels_to_values(container)
     for key in ["name", "icon", "href", "description", "siteMonitor", "ping", "server", "container"]:
         if label_values.get(key):
@@ -1123,19 +1126,19 @@ def docker_import_values(container: dict[str, Any], names: list[str], requested_
     inferred_icon, inferred_widget = infer_icon_and_widget(container)
     if not values["icon"] and inferred_icon:
         values["icon"] = inferred_icon
-        sources["icon"] = "镜像识别"
+        sources["icon"] = "服务识别"
     if not values["description"]:
         inferred_description = infer_service_description(container)
         if inferred_description:
             values["description"] = inferred_description
-            sources["description"] = "镜像识别"
+            sources["description"] = "服务识别"
 
     label_widget = label_values.get("widget") if isinstance(label_values.get("widget"), dict) else {}
     values["widget_type"] = str(label_widget.get("type", "") or inferred_widget)
     if label_widget.get("type"):
         sources["widget_type"] = "Homepage Label"
     elif inferred_widget:
-        sources["widget_type"] = "镜像识别"
+        sources["widget_type"] = "服务识别"
     for key, value in label_widget.items():
         if key == "type":
             continue
@@ -1160,10 +1163,15 @@ def docker_import_values(container: dict[str, Any], names: list[str], requested_
         sources["group"] = "Homepage Label"
     elif requested_group is not None and 0 <= requested_group < len(names):
         group_index = requested_group
-        sources["group"] = "Docker 发现页选择"
+        sources["group"] = "Docker 发现页手动选择"
     else:
-        group_index = recommended_import_group(names)
-        sources["group"] = "推荐分组"
+        profile_group = recommend_group_index(names, profile)
+        if profile_group is not None:
+            group_index = profile_group
+            sources["group"] = f"服务类型推荐 · {profile.get('kind', '通用服务')}"
+        else:
+            group_index = recommended_import_group(names)
+            sources["group"] = "通用推荐"
     return values, group_index, sources
 
 
@@ -1197,6 +1205,7 @@ def docker_import_wizard(
                 group_index=group_index,
                 values=values,
                 suggestion_sources=sources,
+                service_profile=infer_service_profile(container),
                 widget_catalog=WIDGET_CATALOG,
             ),
         )
@@ -1704,11 +1713,38 @@ def backups_page(request: Request, _: None = Depends(auth_guard)) -> HTMLRespons
             request,
             "backups",
             backups=store.list_backups(),
-            backup_limit=settings.backup_limit,
+            backup_limit=store.backup_limit(),
+            backup_limit_default=max(1, min(settings.backup_limit, 500)),
+            backup_limit_custom=store.backup_limit_is_custom(),
             ok=request.query_params.get("ok"),
             error=request.query_params.get("error"),
         ),
     )
+
+
+@app.post("/backups/settings")
+async def update_backup_settings(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        limit = int(str(form.get("backup_limit", "")).strip())
+        saved = store.set_backup_limit(limit, actor(request))
+        return redirect("/backups", ok=f"备份保留上限已更新为 {saved} 组；超出部分已按时间自动清理。")
+    except (TypeError, ValueError):
+        return redirect("/backups", error="请输入 1 到 500 之间的整数。")
+    except ConfigError as exc:
+        return redirect("/backups", error=str(exc))
+
+
+@app.post("/backups/settings/reset")
+async def reset_backup_settings(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        value = store.reset_backup_limit(actor(request))
+        return redirect("/backups", ok=f"已恢复环境默认备份上限：{value} 组。")
+    except ConfigError as exc:
+        return redirect("/backups", error=str(exc))
 
 
 @app.post("/backups/{backup_id}/{filename}/restore")
