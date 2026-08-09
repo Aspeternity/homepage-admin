@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.1 - 2026-08-09
+
+- 修复 Widget 中心未筛选时仍显示“没有符合当前筛选条件的 Widget”的空状态问题。
+- Widget 中心从 15 个增强模板扩展为完整官方 Service Widget 索引；未做专属表单的类型可搜索、可选择，并使用通用 YAML 配置。
+- 保留 15 个常用 Widget 的增强专属表单、字段选择和连接测试能力。
+- 修正 NGINX Proxy Manager 的 Widget type：`npm`。
+- 通用官方 Widget 在编辑器中显示明确的“官方索引 / 通用 YAML”提示，避免出现空白字段区。
+
 ## v0.3.0 - 2026-08-09
 
 ### Widget 与服务编辑

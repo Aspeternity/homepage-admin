@@ -1,10 +1,10 @@
-# Homepage Admin v0.3.0
+# Homepage Admin v0.3.1
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
-> v0.3.0 的主题是：**Widget 中心 + 元数据驱动表单 + 连接测试 + Proxmox 发现 + 多 Widget + 保存前 Diff**。
+> v0.3.1 的主题是：**Widget 中心 + 元数据驱动表单 + 连接测试 + Proxmox 发现 + 多 Widget + 保存前 Diff**。
 
-## v0.3.0 新功能
+## v0.3.1 新功能
 
 ### Widget 中心
 
@@ -83,7 +83,7 @@ Widget 表单不再为每个类型单独写页面，而是由 `app/widget_catalo
 
 ## 数据存储与 MySQL
 
-v0.3.0 **不要求 MySQL**。当前项目的数据模型仍然适合保持文件原生：
+v0.3.1 **不要求 MySQL**。当前项目的数据模型仍然适合保持文件原生：
 
 - Homepage 配置继续以官方 YAML 为唯一事实来源。
 - 管理后台偏好继续保存在 `/data/admin-settings.json`。
@@ -143,7 +143,7 @@ Admin 端口: 3001
 从 v0.2.4 升级请阅读：
 
 ```text
-UPGRADE_V0.3.0_ZH.md
+UPGRADE_V0.3.1_ZH.md
 ```
 
 ## Homepage 配置文件

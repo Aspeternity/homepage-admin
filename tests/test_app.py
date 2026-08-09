@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from ruamel.yaml import YAML
@@ -915,3 +916,49 @@ def test_v030_advanced_yaml_noop_does_not_create_backup() -> None:
     assert response.status_code == 303
     after = {p.name for p in backup_root.iterdir() if p.is_dir()} if backup_root.exists() else set()
     assert after == before
+
+
+def test_v031_widget_center_full_official_index_and_hidden_empty_state() -> None:
+    from app.widget_catalog import ENHANCED_WIDGET_CATALOG, OFFICIAL_WIDGET_INDEX, WIDGET_CATALOG
+
+    assert len(OFFICIAL_WIDGET_INDEX) >= 150
+    assert len(WIDGET_CATALOG) == len(OFFICIAL_WIDGET_INDEX)
+    assert len(ENHANCED_WIDGET_CATALOG) == 15
+    for type_id in [
+        "adguard",
+        "sonarr",
+        "radarr",
+        "seerr",
+        "npm",
+        "truenas",
+        "unifi_drive",
+        "watchtower",
+        "zabbix",
+    ]:
+        assert type_id in WIDGET_CATALOG
+    assert "nginxproxymanager" not in WIDGET_CATALOG
+    assert WIDGET_CATALOG["npm"]["enhanced"] is True
+    assert WIDGET_CATALOG["sonarr"]["enhanced"] is False
+
+    client = TestClient(app)
+    login(client)
+    page = client.get("/widget-center")
+    assert page.status_code == 200
+    assert "共 155 个类型" in page.text
+    assert "AdGuard Home" in page.text
+    assert "Sonarr" in page.text
+    assert "TrueNAS" in page.text
+    assert "/services/item/new?widget=sonarr" in page.text
+    assert "data-widget-center-empty hidden" in page.text
+
+    css = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.css").read_text(encoding="utf-8")
+    assert "[hidden] { display: none !important; }" in css
+
+
+def test_v031_generic_official_widget_can_open_service_editor() -> None:
+    client = TestClient(app)
+    login(client)
+    page = client.get("/services/item/new?widget=sonarr")
+    assert page.status_code == 200
+    assert 'value="sonarr"' in page.text
+    assert '"enhanced": false' in page.text

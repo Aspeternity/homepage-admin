@@ -414,7 +414,7 @@
   }
 
 
-  // v0.3.0 Widget Center filters.
+  // v0.3.1 Widget Center filters (full official index).
   const widgetSearch = $('[data-widget-search]');
   const widgetCategory = $('[data-widget-category]');
   if (widgetSearch || widgetCategory) {
@@ -484,6 +484,11 @@
       const values = initial?.fields || {};
       const secretSaved = initial?.secret_saved || {};
       const selectedFields = new Set(initial?.selected_fields || []);
+      if (schema.enhanced === false) {
+        const docs = escapeHtml(schema.docs || 'https://gethomepage.dev/widgets/services/');
+        container.innerHTML = `<div class="widget-schema-head"><div><strong>${escapeHtml(schema.label)}</strong><span class="role-pill">${escapeHtml(schema.category || 'Widget')}</span><span class="role-pill">官方索引</span></div><a href="${docs}" target="_blank" rel="noopener">官方文档 ↗</a></div><div class="alert info">此类型已收录到官方 Widget 索引，但当前版本暂未提供专属字段表单。请在下方“Widget 其他配置（YAML 映射）”中填写除 <code>type</code> 以外的官方配置字段；连接测试当前仅做配置级校验。</div>`;
+        return;
+      }
       const fields = schema.fields || [];
       const rows = fields.map((field) => {
         const name = String(field.name || '');

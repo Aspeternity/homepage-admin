@@ -2,7 +2,7 @@
 {% block title %}Widget 中心 · Homepage Admin{% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div><h1>Widget 中心</h1><p>从常用 Homepage 原生 Service Widget 中选择，表单字段由元数据动态生成。官方目前支持 100+ Service Widgets；这里优先收录家庭实验室常用类型。</p></div>
+  <div><h1>Widget 中心</h1><p>已索引 Homepage 当前官方 Service Widget，共 {{ widget_catalog|length }} 个类型；常用类型提供增强专属表单，其余类型也可搜索并通过通用 YAML 配置。</p></div>
   <div class="heading-actions"><a class="button primary" href="/services/item/new">空白新增服务</a></div>
 </section>
 
@@ -17,11 +17,11 @@
     <header>
       <div class="widget-catalog-icon">{{ schema.label[:1] }}</div>
       <div><h3>{{ schema.label }}</h3><code>{{ type_id }}</code></div>
-      <span class="role-pill">{{ schema.category }}</span>
+      <div class="widget-catalog-badges"><span class="role-pill">{{ schema.category }}</span><span class="role-pill {% if schema.enhanced %}success-pill{% endif %}">{% if schema.enhanced %}增强表单{% else %}官方索引{% endif %}</span></div>
     </header>
     <p>{{ schema.description }}</p>
     <div class="widget-catalog-meta">
-      <span>{{ schema.fields|length }} 个配置字段</span>
+      {% if schema.enhanced %}<span>{{ schema.fields|length }} 个配置字段</span>{% else %}<span>通用 YAML 配置</span>{% endif %}
       {% if schema.allowed_fields %}<span>{{ schema.allowed_fields|length }} 个可选展示字段</span>{% endif %}
       <span>{% if schema.test == 'config' %}配置校验{% elif schema.test == 'basic' %}基础连通测试{% else %}API 深度测试{% endif %}</span>
     </div>

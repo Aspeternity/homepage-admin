@@ -250,7 +250,7 @@ async def test_widget(widget_type: str, config: dict[str, Any]) -> dict[str, Any
         "basic": _basic_reachability,
     }
     if mode == "config":
-        return _result("配置字段完整。此 Widget 使用非 HTTP 协议，Admin v0.3.0 不主动探测目标端口。", level="config")
+        return _result("该 Widget 已收录官方索引，但当前没有专属 API 测试器；已完成配置级校验。请按官方文档填写其余 YAML 配置。", level="config")
     tester = testers.get(str(mode), _basic_reachability)
     try:
         return await tester(config)
