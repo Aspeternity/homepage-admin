@@ -1,19 +1,17 @@
-.PHONY: build up down logs test package
+.PHONY: test run build release
 
-build:
-	docker compose build
+VERSION ?= 0.2.0
 
-up:
-	docker compose up -d
-
-down:
-	docker compose down
-
-logs:
-	docker compose logs -f homepage-admin
+run:
+	uvicorn app.main:app --host 0.0.0.0 --port 3001 --reload
 
 test:
-	python -m pytest -q
+	pytest -q
 
-package:
-	cd .. && zip -r homepage-admin-v0.1.1.zip homepage-admin-v0.1.1-release -x '*/__pycache__/*' '*.pyc' '.git/*'
+build:
+	docker build -t homepage-admin:$(VERSION) .
+
+release:
+	cd .. && rm -f homepage-admin-v$(VERSION).zip homepage-admin-v$(VERSION).tar.gz
+	cd .. && zip -r homepage-admin-v$(VERSION).zip homepage-admin-v0.2.0 -x '*/__pycache__/*' '*.pyc' '.git/*' '.pytest_cache/*'
+	cd .. && tar --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' -czf homepage-admin-v$(VERSION).tar.gz homepage-admin-v0.2.0

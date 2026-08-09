@@ -15,9 +15,18 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import __version__
+from .docker_client import (
+    DockerDiscoveryClient,
+    first_published_port,
+    homepage_labels_to_values,
+    infer_icon_and_widget,
+    public_host_from_url,
+)
+from .secrets import SECRET_PLACEHOLDER, mask_secrets, restore_masked_secrets
 from .security import ensure_csrf, login_limiter, require_auth, verify_csrf, verify_password
 from .settings import settings
 from .store import ALLOWED_FILES, ConfigError, deep_plain, store
+from .widget_catalog import WIDGET_CATALOG, catalog_field_names, catalog_secret_names
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -33,6 +42,19 @@ if settings.allowed_hosts and settings.allowed_hosts != ("*",):
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+docker_discovery = DockerDiscoveryClient(settings.docker_discovery_url)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    if not request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "same-origin"
+    return response
 
 
 def auth_guard(request: Request) -> None:
@@ -171,6 +193,61 @@ def sync_layout_swap(first: str, second: str, user: str) -> None:
     keys[a], keys[b] = keys[b], keys[a]
     settings_data["layout"] = CommentedMap((key, layout[key]) for key in keys)
     store.write_data("settings.yaml", settings_data, user, f"layout swap {first} <-> {second}")
+
+
+def sync_layout_order(group_order: list[str], user: str) -> None:
+    settings_data = store.load("settings.yaml")
+    layout = settings_data.get("layout")
+    if not isinstance(layout, dict):
+        return
+    relevant = {name for name in group_order if name in layout}
+    if not relevant:
+        return
+    iterator = iter([name for name in group_order if name in relevant])
+    replacement = CommentedMap()
+    for key, value in layout.items():
+        if str(key) in relevant:
+            new_key = next(iterator)
+            replacement[new_key] = layout[new_key]
+        else:
+            replacement[key] = value
+    settings_data["layout"] = replacement
+    store.write_data("settings.yaml", settings_data, user, "layout reorder")
+
+
+def configured_docker_containers() -> set[str]:
+    configured: set[str] = set()
+    try:
+        data = store.load("services.yaml")
+    except ConfigError:
+        return configured
+    for group_entry in data:
+        try:
+            _, items = first_pair(group_entry)
+        except ConfigError:
+            continue
+        if not isinstance(items, list):
+            continue
+        for entry in items:
+            try:
+                _, details = first_pair(entry)
+            except ConfigError:
+                continue
+            if isinstance(details, dict) and details.get("container"):
+                configured.add(str(details.get("container")))
+    return configured
+
+
+def first_docker_server_name() -> str:
+    if settings.docker_server_name:
+        return settings.docker_server_name
+    try:
+        data = store.load("docker.yaml")
+    except ConfigError:
+        return ""
+    if isinstance(data, dict) and data:
+        return str(next(iter(data.keys())))
+    return ""
 
 
 @app.get("/healthz")
@@ -371,8 +448,8 @@ async def move_group(kind: str, group_index: int, request: Request, _: None = De
         return redirect(target, error=str(exc))
 
 
-def service_form_values(data: list[Any], group_index: int, item_index: int | None) -> dict[str, Any]:
-    values: dict[str, Any] = {
+def empty_service_values() -> dict[str, Any]:
+    return {
         "name": "",
         "icon": "",
         "href": "",
@@ -383,12 +460,16 @@ def service_form_values(data: list[Any], group_index: int, item_index: int | Non
         "server": "",
         "container": "",
         "widget_type": "",
-        "widget_url": "",
-        "widget_has_key": False,
+        "widget_fields": {},
+        "widget_secret_saved": {},
         "widget_extra": "",
         "extra": "",
         "multiple_widgets": False,
     }
+
+
+def service_form_values(data: list[Any], group_index: int, item_index: int | None) -> dict[str, Any]:
+    values = empty_service_values()
     if item_index is None:
         return values
     _, items = first_pair(data[group_index])
@@ -404,15 +485,59 @@ def service_form_values(data: list[Any], group_index: int, item_index: int | Non
         values["multiple_widgets"] = True
     widget = details.get("widget")
     if isinstance(widget, dict):
-        values["widget_type"] = widget.get("type", "")
-        values["widget_url"] = widget.get("url", "")
-        values["widget_has_key"] = "key" in widget and bool(widget.get("key"))
+        widget_type = str(widget.get("type", ""))
+        values["widget_type"] = widget_type
+        known_widget = catalog_field_names(widget_type) | {"url"}
+        for key in known_widget:
+            if key not in widget:
+                continue
+            if key in catalog_secret_names(widget_type):
+                values["widget_secret_saved"][key] = bool(widget.get(key))
+                continue
+            field_schema = next(
+                (f for f in WIDGET_CATALOG.get(widget_type, {}).get("fields", []) if f.get("name") == key),
+                {},
+            )
+            value = widget.get(key)
+            if field_schema.get("kind") == "yaml":
+                values["widget_fields"][key] = store.dump_fragment(value) if value not in (None, "") else ""
+            else:
+                values["widget_fields"][key] = value
         widget_extra = CommentedMap(
-            (k, copy.deepcopy(v)) for k, v in widget.items() if k not in {"type", "url", "key"}
+            (k, copy.deepcopy(v)) for k, v in widget.items() if k not in known_widget | {"type"}
         )
-        values["widget_extra"] = store.dump_fragment(widget_extra) if widget_extra else ""
-    values["extra"] = store.dump_fragment(extra) if extra else ""
+        values["widget_extra"] = store.dump_fragment(mask_secrets(widget_extra)) if widget_extra else ""
+    values["extra"] = store.dump_fragment(mask_secrets(extra)) if extra else ""
     return values
+
+
+def render_service_form(
+    request: Request,
+    *,
+    mode: str,
+    group_index: int,
+    item_index: int | None,
+    groups: list[str],
+    values: dict[str, Any],
+    error: str | None = None,
+    docker_source: str | None = None,
+) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "service_form.html",
+        context(
+            request,
+            "services",
+            mode=mode,
+            group_index=group_index,
+            item_index=item_index,
+            groups=groups,
+            values=values,
+            error=error,
+            widget_catalog=WIDGET_CATALOG,
+            docker_source=docker_source,
+        ),
+    )
 
 
 @app.get("/services/item/new", response_class=HTMLResponse)
@@ -427,10 +552,14 @@ def new_service(request: Request, group: int = 0, _: None = Depends(auth_guard))
         error = None
     except ConfigError as exc:
         names, values, error = [], {}, str(exc)
-    return templates.TemplateResponse(
+    return render_service_form(
         request,
-        "service_form.html",
-        context(request, "services", mode="new", group_index=group, item_index=None, groups=names, values=values, error=error),
+        mode="new",
+        group_index=group,
+        item_index=None,
+        groups=names,
+        values=values,
+        error=error,
     )
 
 
@@ -445,20 +574,34 @@ def edit_service(
         error = None
     except (ConfigError, IndexError) as exc:
         return redirect("/services", error=str(exc))
-    return templates.TemplateResponse(
+    return render_service_form(
         request,
-        "service_form.html",
-        context(
-            request,
-            "services",
-            mode="edit",
-            group_index=group_index,
-            item_index=item_index,
-            groups=names,
-            values=values,
-            error=error,
-        ),
+        mode="edit",
+        group_index=group_index,
+        item_index=item_index,
+        groups=names,
+        values=values,
+        error=error,
     )
+
+
+def _coerce_widget_field(kind: str, raw: str) -> Any:
+    if kind == "bool":
+        if raw == "":
+            return None
+        return raw.lower() == "true"
+    if kind == "number":
+        if raw == "":
+            return None
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise ConfigError(f"Widget 数字字段必须是整数：{raw}") from exc
+    if kind == "yaml":
+        if not raw.strip():
+            return None
+        return store.parse_any(raw)
+    return raw.strip() or None
 
 
 async def save_service(request: Request, group_index: int, item_index: int | None) -> RedirectResponse:
@@ -467,9 +610,23 @@ async def save_service(request: Request, group_index: int, item_index: int | Non
     try:
         data = store.load("services.yaml")
         target_group = int(str(form.get("group_index", group_index)))
+        if target_group < 0 or target_group >= len(data):
+            raise ConfigError("目标分组不存在。")
         name = str(form.get("name", "")).strip()
         if not name:
             raise ConfigError("服务名称不能为空。")
+        old_details: dict[str, Any] = {}
+        old_widget: dict[str, Any] = {}
+        old_widget_type = ""
+        if item_index is not None:
+            _, old_items = first_pair(data[group_index])
+            _, loaded_old_details = first_pair(old_items[item_index])
+            if isinstance(loaded_old_details, dict):
+                old_details = loaded_old_details
+                if isinstance(old_details.get("widget"), dict):
+                    old_widget = old_details["widget"]
+                    old_widget_type = str(old_widget.get("type", ""))
+
         details = CommentedMap()
         field_order = ["icon", "href", "description", "target", "siteMonitor", "ping", "server", "container"]
         for key in field_order:
@@ -477,36 +634,53 @@ async def save_service(request: Request, group_index: int, item_index: int | Non
             if value:
                 details[key] = value
         extra = store.parse_fragment(str(form.get("extra", "")), dict)
+        if old_details:
+            try:
+                extra = restore_masked_secrets(extra, old_details)
+            except ValueError as exc:
+                raise ConfigError(str(exc)) from exc
         for key, value in extra.items():
             if key in details or key == "widget":
                 continue
             details[key] = value
 
-        old_widget_key = None
-        if item_index is not None:
-            _, old_items = first_pair(data[group_index])
-            _, old_details = first_pair(old_items[item_index])
-            if isinstance(old_details, dict) and isinstance(old_details.get("widget"), dict):
-                old_widget_key = old_details["widget"].get("key")
-
         widget_type = str(form.get("widget_type", "")).strip()
-        widget_url = str(form.get("widget_url", "")).strip()
-        widget_key = str(form.get("widget_key", "")).strip()
         widget_extra_text = str(form.get("widget_extra", ""))
-        if widget_type or widget_url or widget_key or old_widget_key or widget_extra_text.strip():
-            widget = CommentedMap()
-            if widget_type:
-                widget["type"] = widget_type
-            if widget_url:
-                widget["url"] = widget_url
-            if widget_key:
-                widget["key"] = widget_key
-            elif old_widget_key:
-                widget["key"] = old_widget_key
-            widget_extra = store.parse_fragment(widget_extra_text, dict)
-            for key, value in widget_extra.items():
-                if key not in widget:
-                    widget[key] = value
+        schema = WIDGET_CATALOG.get(widget_type, {})
+        schema_fields = list(schema.get("fields", []))
+        # URL remains editable for unsupported widget types too.
+        if not any(field.get("name") == "url" for field in schema_fields):
+            schema_fields.insert(0, {"name": "url", "kind": "text"})
+
+        widget = CommentedMap()
+        if widget_type:
+            widget["type"] = widget_type
+        for field in schema_fields:
+            field_name = str(field.get("name", ""))
+            if not field_name:
+                continue
+            kind = str(field.get("kind", "text"))
+            raw = str(form.get(f"widget_field_{field_name}", ""))
+            if kind == "secret":
+                if raw.strip():
+                    widget[field_name] = raw.strip()
+                elif old_widget_type == widget_type and field_name in old_widget:
+                    widget[field_name] = copy.deepcopy(old_widget[field_name])
+                continue
+            value = _coerce_widget_field(kind, raw)
+            if value is not None:
+                widget[field_name] = value
+
+        widget_extra = store.parse_fragment(widget_extra_text, dict)
+        if old_widget_type == widget_type and old_widget:
+            try:
+                widget_extra = restore_masked_secrets(widget_extra, old_widget)
+            except ValueError as exc:
+                raise ConfigError(str(exc)) from exc
+        for key, value in widget_extra.items():
+            if key not in widget and key != "type":
+                widget[key] = value
+        if widget_type or len(widget) > 0:
             details["widget"] = widget
 
         new_entry = CommentedMap({name: details})
@@ -555,7 +729,7 @@ def bookmark_form_values(data: list[Any], group_index: int, item_index: int | No
     for key in known:
         values[key] = details.get(key, "")
     extra = CommentedMap((k, copy.deepcopy(v)) for k, v in details.items() if k not in known)
-    values["extra"] = store.dump_fragment(extra) if extra else ""
+    values["extra"] = store.dump_fragment(mask_secrets(extra)) if extra else ""
     return values
 
 
@@ -619,15 +793,26 @@ async def save_bookmark(request: Request, group_index: int, item_index: int | No
         if not details.get("href"):
             raise ConfigError("书签访问地址不能为空。")
         extra = store.parse_fragment(str(form.get("extra", "")), dict)
+        old_list: list[Any] = []
+        old_bookmark_details: dict[str, Any] = {}
+        if item_index is not None:
+            _, source_items = first_pair(data[group_index])
+            _, loaded_old_list = first_pair(source_items[item_index])
+            if isinstance(loaded_old_list, list):
+                old_list = loaded_old_list
+                if old_list and isinstance(old_list[0], dict):
+                    old_bookmark_details = old_list[0]
+        if old_bookmark_details:
+            try:
+                extra = restore_masked_secrets(extra, old_bookmark_details)
+            except ValueError as exc:
+                raise ConfigError(str(exc)) from exc
         for key, value in extra.items():
             if key not in details:
                 details[key] = value
         details_list = CommentedSeq([details])
-        if item_index is not None:
-            _, source_items = first_pair(data[group_index])
-            _, old_list = first_pair(source_items[item_index])
-            if isinstance(old_list, list) and len(old_list) > 1:
-                details_list.extend(copy.deepcopy(old_list[1:]))
+        if old_list and len(old_list) > 1:
+            details_list.extend(copy.deepcopy(old_list[1:]))
         entry = CommentedMap({name: details_list})
         if item_index is None:
             _, target_items = first_pair(data[target_group])
@@ -718,14 +903,137 @@ async def move_item(kind: str, request: Request, _: None = Depends(auth_guard)) 
         _, source_items = first_pair(data[source_group])
         item = source_items.pop(source_index)
         _, target_items = first_pair(data[target_group])
-        if source_group == target_group and target_index > source_index:
-            target_index -= 1
+        # target_index is calculated by the browser against cards with the dragged
+        # item already excluded, so it already matches the post-pop list.
         target_index = max(0, min(target_index, len(target_items)))
         target_items.insert(target_index, item)
         store.write_data(filename, data, actor(request), "drag item")
         return JSONResponse({"ok": True})
     except (KeyError, ValueError, IndexError, ConfigError) as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@app.post("/api/{kind}/group/reorder")
+async def reorder_group(kind: str, request: Request, _: None = Depends(auth_guard)) -> JSONResponse:
+    if kind not in {"services", "bookmarks"}:
+        raise HTTPException(404)
+    verify_csrf(request, request.headers.get("x-csrf-token"))
+    payload = await request.json()
+    try:
+        source_index = int(payload["source_index"])
+        target_index = int(payload["target_index"])
+        filename = f"{kind}.yaml"
+        data = store.load(filename)
+        group = data.pop(source_index)
+        if target_index > source_index:
+            target_index -= 1
+        target_index = max(0, min(target_index, len(data)))
+        data.insert(target_index, group)
+        store.write_data(filename, data, actor(request), "drag group")
+        sync_layout_order([first_pair(entry)[0] for entry in data], actor(request))
+        return JSONResponse({"ok": True})
+    except (KeyError, ValueError, IndexError, ConfigError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@app.get("/docker", response_class=HTMLResponse)
+def docker_page(request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
+    containers: list[dict[str, Any]] = []
+    error = request.query_params.get("error")
+    configured = configured_docker_containers()
+    if not docker_discovery.enabled():
+        error = error or "Docker 容器发现未启用。请使用 v0.2.0 的 Compose（包含只读发现代理）。"
+    else:
+        try:
+            containers = docker_discovery.list_containers()
+        except Exception as exc:
+            error = error or f"无法读取 Docker 容器：{exc}"
+    for item in containers:
+        item["configured"] = str(item.get("name", "")) in configured
+        item["published_ports"] = [p for p in item.get("ports", []) if p.get("public")]
+        labels = item.get("labels") or {}
+        item["homepage_labeled"] = any(str(k).startswith("homepage.") for k in labels)
+    return templates.TemplateResponse(
+        request,
+        "docker.html",
+        context(
+            request,
+            "docker",
+            containers=containers,
+            error=error,
+            ok=request.query_params.get("ok"),
+            docker_server=first_docker_server_name(),
+        ),
+    )
+
+
+@app.post("/docker/setup-homepage")
+async def docker_setup_homepage(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        data = store.load("docker.yaml")
+        if not isinstance(data, dict):
+            raise ConfigError("docker.yaml 必须是对象映射。")
+        if data:
+            return redirect("/docker", error="docker.yaml 已有配置，为避免覆盖请使用高级编辑器调整。")
+        data["local-docker"] = CommentedMap({"socket": "/var/run/docker.sock"})
+        store.write_data("docker.yaml", data, actor(request), "setup local docker server")
+        return redirect("/docker", ok="已在 docker.yaml 创建 local-docker。Homepage 必须已挂载 /var/run/docker.sock。")
+    except ConfigError as exc:
+        return redirect("/docker", error=str(exc))
+
+
+@app.get("/docker/import/{container_id}", response_class=HTMLResponse)
+def docker_import(request: Request, container_id: str, _: None = Depends(auth_guard)) -> HTMLResponse:
+    if not docker_discovery.enabled():
+        return redirect("/docker", error="Docker 容器发现未启用。")
+    try:
+        container = docker_discovery.get_container(container_id)
+        if not container:
+            return redirect("/docker", error="未找到该 Docker 容器。")
+        names = group_names("services.yaml")
+        if not names:
+            return redirect("/services", error="请先创建一个服务分组。")
+        values = empty_service_values()
+        label_values = homepage_labels_to_values(container)
+        for key in ["name", "icon", "href", "description", "siteMonitor", "ping", "server", "container"]:
+            if label_values.get(key):
+                values[key] = label_values[key]
+        values["name"] = values["name"] or str(container.get("name", "Docker Service"))
+        values["container"] = values["container"] or str(container.get("name", ""))
+        values["server"] = values["server"] or first_docker_server_name()
+        inferred_icon, inferred_widget = infer_icon_and_widget(container)
+        values["icon"] = values["icon"] or inferred_icon
+        label_widget = label_values.get("widget") if isinstance(label_values.get("widget"), dict) else {}
+        values["widget_type"] = str(label_widget.get("type", "") or inferred_widget)
+        for key, value in label_widget.items():
+            if key == "type":
+                continue
+            if key in catalog_secret_names(values["widget_type"]):
+                # Docker labels may contain a secret; never echo it into HTML. It can still be entered manually.
+                continue
+            values["widget_fields"][key] = value
+        if not values["href"]:
+            port = first_published_port(container)
+            if port:
+                host = settings.docker_public_host or public_host_from_url(settings.homepage_url)
+                values["href"] = f"http://{host}:{port}"
+        if values["widget_type"] and not values["widget_fields"].get("url") and values["href"]:
+            values["widget_fields"]["url"] = values["href"]
+        desired_group = str(label_values.get("group", ""))
+        group_index = names.index(desired_group) if desired_group in names else 0
+        return render_service_form(
+            request,
+            mode="new",
+            group_index=group_index,
+            item_index=None,
+            groups=names,
+            values=values,
+            docker_source=str(container.get("name", "")),
+        )
+    except Exception as exc:
+        return redirect("/docker", error=f"导入容器失败：{exc}")
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -758,7 +1066,7 @@ def settings_page(request: Request, _: None = Depends(auth_guard)) -> HTMLRespon
                         "collapsible": bool(cfg.get("collapsible", False)),
                         "initiallyCollapsed": bool(cfg.get("initiallyCollapsed", False)),
                         "extra": store.dump_fragment(
-                            CommentedMap(
+                            mask_secrets(CommentedMap(
                                 (k, copy.deepcopy(v))
                                 for k, v in cfg.items()
                                 if k
@@ -773,7 +1081,7 @@ def settings_page(request: Request, _: None = Depends(auth_guard)) -> HTMLRespon
                                     "collapsible",
                                     "initiallyCollapsed",
                                 }
-                            )
+                            ))
                         ),
                     }
                 )
@@ -832,7 +1140,7 @@ def settings_page(request: Request, _: None = Depends(auth_guard)) -> HTMLRespon
             "layout",
         }
         extra = CommentedMap((k, copy.deepcopy(v)) for k, v in data.items() if k not in known)
-        values["extra"] = store.dump_fragment(extra) if extra else ""
+        values["extra"] = store.dump_fragment(mask_secrets(extra)) if extra else ""
         error = request.query_params.get("error")
     except ConfigError as exc:
         values, error = {}, str(exc)
@@ -930,6 +1238,13 @@ async def save_settings(request: Request, _: None = Depends(auth_guard)) -> Redi
             if form.get(prefix + "initiallyCollapsed"):
                 cfg["initiallyCollapsed"] = True
             extra_cfg = store.parse_fragment(str(form.get(prefix + "extra", "")), dict)
+            old_layout = old.get("layout") if isinstance(old.get("layout"), dict) else {}
+            old_cfg = old_layout.get(name, {}) if isinstance(old_layout, dict) else {}
+            if isinstance(old_cfg, dict):
+                try:
+                    extra_cfg = restore_masked_secrets(extra_cfg, old_cfg)
+                except ValueError as exc:
+                    raise ConfigError(str(exc)) from exc
             for key, value in extra_cfg.items():
                 if key not in cfg:
                     cfg[key] = value
@@ -938,6 +1253,10 @@ async def save_settings(request: Request, _: None = Depends(auth_guard)) -> Redi
             data["layout"] = layout
 
         extra = store.parse_fragment(str(form.get("extra", "")), dict)
+        try:
+            extra = restore_masked_secrets(extra, old)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
         for key, value in extra.items():
             if key not in data:
                 data[key] = value
@@ -953,9 +1272,9 @@ def widgets_view() -> list[dict[str, Any]]:
     for index, entry in enumerate(data):
         try:
             name, cfg = first_pair(entry)
-            rows.append({"index": index, "name": name, "config": store.dump_fragment(cfg)})
+            rows.append({"index": index, "name": name, "config": store.dump_fragment(mask_secrets(cfg))})
         except ConfigError:
-            rows.append({"index": index, "name": f"无效组件 #{index + 1}", "config": store.dump_fragment(entry)})
+            rows.append({"index": index, "name": f"无效组件 #{index + 1}", "config": store.dump_fragment(mask_secrets(entry))})
     return rows
 
 
@@ -1010,6 +1329,12 @@ async def save_widget(request: Request, index: int | None) -> RedirectResponse:
             raise ConfigError("组件类型不能为空。")
         cfg = store.parse_any(str(form.get("config", "")))
         data = store.load("widgets.yaml")
+        if index is not None:
+            try:
+                _, old_cfg = first_pair(data[index])
+                cfg = restore_masked_secrets(cfg, old_cfg)
+            except ValueError as exc:
+                raise ConfigError(str(exc)) from exc
         entry = CommentedMap({name: cfg})
         if index is None:
             data.append(entry)
@@ -1063,6 +1388,25 @@ async def move_widget(request: Request, index: int, _: None = Depends(auth_guard
         return redirect("/widgets", error=str(exc))
 
 
+@app.post("/api/widgets/reorder")
+async def reorder_widget(request: Request, _: None = Depends(auth_guard)) -> JSONResponse:
+    verify_csrf(request, request.headers.get("x-csrf-token"))
+    payload = await request.json()
+    try:
+        source_index = int(payload["source_index"])
+        target_index = int(payload["target_index"])
+        data = store.load("widgets.yaml")
+        item = data.pop(source_index)
+        if target_index > source_index:
+            target_index -= 1
+        target_index = max(0, min(target_index, len(data)))
+        data.insert(target_index, item)
+        store.write_data("widgets.yaml", data, actor(request), "drag widget")
+        return JSONResponse({"ok": True})
+    except (KeyError, ValueError, IndexError, ConfigError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
 @app.get("/yaml", response_class=HTMLResponse)
 def yaml_index(request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
     return redirect("/yaml/services.yaml")
@@ -1070,8 +1414,15 @@ def yaml_index(request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
 
 @app.get("/yaml/{filename}", response_class=HTMLResponse)
 def yaml_editor(request: Request, filename: str, _: None = Depends(auth_guard)) -> HTMLResponse:
+    reveal = request.query_params.get("reveal") == "1"
     try:
-        text = store.read_text(filename)
+        if filename.endswith((".yaml", ".yml")) and not reveal:
+            data = store.load(filename)
+            text = store.dump(mask_secrets(data))
+            masked = True
+        else:
+            text = store.read_text(filename)
+            masked = False
         error = request.query_params.get("error")
     except ConfigError as exc:
         raise HTTPException(404, detail=str(exc))
@@ -1084,6 +1435,9 @@ def yaml_editor(request: Request, filename: str, _: None = Depends(auth_guard)) 
             filename=filename,
             files=list(ALLOWED_FILES.keys()),
             text=text,
+            masked=masked,
+            reveal=reveal,
+            secret_placeholder=SECRET_PLACEHOLDER,
             ok=request.query_params.get("ok"),
             error=error,
         ),
@@ -1095,11 +1449,28 @@ async def save_yaml(filename: str, request: Request, _: None = Depends(auth_guar
     form = await request.form()
     verify_csrf(request, str(form.get("csrf", "")))
     text = str(form.get("content", ""))
+    masked = str(form.get("masked", "")) == "1"
     try:
-        store.write_text(filename, text, actor(request), "advanced editor save")
-        return redirect(f"/yaml/{filename}", ok=f"{filename} 已保存并通过语法校验。")
+        if masked and filename.endswith((".yaml", ".yml")):
+            original = store.load(filename)
+            edited = store.validate_text(filename, text)
+            try:
+                restored = restore_masked_secrets(edited, original)
+            except ValueError as exc:
+                raise ConfigError(str(exc)) from exc
+            store.write_data(filename, restored, actor(request), "advanced editor save (masked)")
+        else:
+            store.write_text(filename, text, actor(request), "advanced editor save")
+        suffix = "" if masked else "?reveal=1"
+        separator = "&" if suffix else "?"
+        return RedirectResponse(
+            f"/yaml/{filename}{suffix}{separator}ok={quote(filename + ' 已保存并通过语法校验。')}",
+            status_code=303,
+        )
     except ConfigError as exc:
-        return redirect(f"/yaml/{filename}", error=str(exc))
+        base = f"/yaml/{filename}" + ("" if masked else "?reveal=1")
+        separator = "&" if "?" in base else "?"
+        return RedirectResponse(base + separator + "error=" + quote(str(exc)), status_code=303)
 
 
 @app.get("/backups", response_class=HTMLResponse)

@@ -20,6 +20,9 @@ class AppSettings:
     cookie_secure: bool = _bool("ADMIN_COOKIE_SECURE", False)
     homepage_url: str = os.getenv("HOMEPAGE_URL", "http://localhost:3000")
     backup_limit: int = int(os.getenv("BACKUP_LIMIT", "50"))
+    docker_discovery_url: str = os.getenv("DOCKER_DISCOVERY_URL", "").strip()
+    docker_public_host: str = os.getenv("DOCKER_PUBLIC_HOST", "").strip()
+    docker_server_name: str = os.getenv("DOCKER_SERVER_NAME", "").strip()
     allowed_hosts: tuple[str, ...] = tuple(
         x.strip() for x in os.getenv("ADMIN_ALLOWED_HOSTS", "*").split(",") if x.strip()
     )

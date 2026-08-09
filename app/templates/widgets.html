@@ -4,10 +4,11 @@
 <section class="page-heading"><div><h1>顶部组件</h1><p>组件按 widgets.yaml 中的顺序显示。</p></div><a class="button primary" href="/widgets/new">新增组件</a></section>
 <div class="simple-list">
 {% for row in rows %}
-  <article class="list-row">
+  <article class="list-row" data-widget-row data-widget-index="{{ row.index }}">
     <div class="list-index">{{ loop.index }}</div>
     <div class="list-copy"><h3>{{ row.name }}</h3><pre>{{ row.config|truncate(180) }}</pre></div>
     <div class="list-actions">
+      <button class="drag-handle icon-button" type="button" draggable="true" data-widget-drag title="拖动排序">⋮⋮</button>
       <form method="post" action="/widgets/{{ row.index }}/move"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="direction" value="up"><button class="icon-button" type="submit" {% if loop.first %}disabled{% endif %}>↑</button></form>
       <form method="post" action="/widgets/{{ row.index }}/move"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="direction" value="down"><button class="icon-button" type="submit" {% if loop.last %}disabled{% endif %}>↓</button></form>
       <a class="icon-button" href="/widgets/{{ row.index }}/edit">✎</a>

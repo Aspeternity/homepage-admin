@@ -1,8 +1,15 @@
 {% extends "base.html" %}
 {% block title %}{{ '新增服务' if mode == 'new' else '编辑服务' }} · Homepage Admin{% endblock %}
 {% block content %}
-<section class="page-heading"><div><a class="back-link" href="/services">← 返回服务管理</a><h1>{{ '新增服务' if mode == 'new' else '编辑服务' }}</h1><p>常用字段使用表单，Homepage 的其他字段仍可通过 YAML 片段保留。</p></div></section>
+<section class="page-heading">
+  <div>
+    <a class="back-link" href="/services">← 返回服务管理</a>
+    <h1>{{ '新增服务' if mode == 'new' else '编辑服务' }}</h1>
+    <p>常用字段可视化编辑；官方未覆盖字段继续保留在 YAML 片段中。</p>
+  </div>
+</section>
 {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+{% if docker_source %}<div class="alert info">已从 Docker 容器 <strong>{{ docker_source }}</strong> 预填。请检查访问地址、分组和 Widget 凭据后再保存。</div>{% endif %}
 <form class="editor-form" method="post" action="{% if mode == 'new' %}/services/item/create{% else %}/services/item/{{ group_index }}/{{ item_index }}/update{% endif %}">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <section class="form-card">
@@ -11,7 +18,7 @@
       <label>服务名称<input name="name" value="{{ values.name }}" placeholder="Jellyfin" required></label>
       <label>所属分组<select name="group_index">{% for group in groups %}<option value="{{ loop.index0 }}" {% if loop.index0 == group_index %}selected{% endif %}>{{ group }}</option>{% endfor %}</select></label>
       <label>访问地址<input name="href" value="{{ values.href }}" placeholder="https://jellyfin.example.com"></label>
-      <label>图标<input name="icon" value="{{ values.icon }}" placeholder="jellyfin.png 或 https://..."></label>
+      <label>图标<input name="icon" value="{{ values.icon }}" placeholder="sh-jellyfin / jellyfin.png / https://..."></label>
       <label class="span-2">简短说明<input name="description" value="{{ values.description }}" placeholder="影视媒体中心"></label>
       <label>打开方式<select name="target"><option value="">使用全局设置</option>{% for value in ['_blank','_self','_parent','_top'] %}<option value="{{ value }}" {% if values.target == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
       <label>站点监控 URL<input name="siteMonitor" value="{{ values.siteMonitor }}" placeholder="可使用内网地址"></label>
@@ -21,22 +28,59 @@
 
   <section class="form-card">
     <h2>Docker 集成</h2>
-    <p class="section-help">对应 docker.yaml 中的 server 名称和实际容器名。</p>
+    <p class="section-help">对应 <code>docker.yaml</code> 中的 server 名称和实际容器名。容器发现页可以自动预填。</p>
     <div class="form-grid two">
-      <label>Docker Server<input name="server" value="{{ values.server }}" placeholder="my-docker"></label>
+      <label>Docker Server<input name="server" value="{{ values.server }}" placeholder="local-docker"></label>
       <label>容器名称<input name="container" value="{{ values.container }}" placeholder="jellyfin"></label>
     </div>
   </section>
 
   <section class="form-card">
-    <h2>服务 Widget</h2>
-    {% if values.multiple_widgets %}<div class="alert warning">该服务使用了多个 Widgets。现有 <code>widgets:</code> 已保留在“额外服务配置”中；第一版表单只直接编辑单个 <code>widget:</code>。</div>{% endif %}
-    <div class="form-grid two">
-      <label>Widget 类型<input name="widget_type" value="{{ values.widget_type }}" placeholder="jellyfin / minecraft / qbittorrent"></label>
-      <label>Widget 地址<input name="widget_url" value="{{ values.widget_url }}" placeholder="https://jellyfin.example.com"></label>
-      <label class="span-2">API Key<input type="password" name="widget_key" placeholder="{% if values.widget_has_key %}已保存；留空保持不变{% else %}没有则留空{% endif %}" autocomplete="new-password"></label>
-      <label class="span-2">Widget 其他配置（YAML 映射）<textarea name="widget_extra" rows="8" spellcheck="false" placeholder="enableBlocks: true&#10;enableNowPlaying: true">{{ values.widget_extra }}</textarea></label>
+    <div class="section-title-row">
+      <div><h2>服务 Widget</h2><p class="section-help">v0.2.0 对常用 Widget 提供专属字段；其他 Widget 仍可使用下方 YAML。</p></div>
     </div>
+    {% if values.multiple_widgets %}<div class="alert warning">该服务使用了多个 <code>widgets:</code>。现有配置会保留在“额外服务配置”中；本表单只直接编辑单个 <code>widget:</code>。</div>{% endif %}
+    <div class="form-grid two">
+      <label>Widget 类型
+        <input name="widget_type" value="{{ values.widget_type }}" list="widget-type-options" placeholder="jellyfin / qbittorrent / homeassistant" data-widget-type-input>
+        <datalist id="widget-type-options">{% for type_id, schema in widget_catalog.items() %}<option value="{{ type_id }}">{{ schema.label }}</option>{% endfor %}</datalist>
+      </label>
+      <label>Widget 地址<input name="widget_field_url" value="{{ values.widget_fields.get('url', '') }}" placeholder="服务 API / Web 地址"></label>
+    </div>
+
+    {% for type_id, schema in widget_catalog.items() %}
+    <fieldset class="widget-schema" data-widget-schema="{{ type_id }}" {% if values.widget_type != type_id %}hidden disabled{% endif %}>
+      <div class="widget-schema-head"><strong>{{ schema.label }} 专属字段</strong><a href="{{ schema.docs }}" target="_blank" rel="noopener">官方文档 ↗</a></div>
+      <div class="form-grid two">
+        {% for field in schema.fields if field.name != 'url' %}
+          {% set current = values.widget_fields.get(field.name, '') %}
+          {% if field.kind == 'secret' %}
+          <label>{{ field.label }}
+            <input type="password" name="widget_field_{{ field.name }}" placeholder="{% if values.widget_secret_saved.get(field.name) %}已保存；留空保持原值{% else %}没有则留空{% endif %}" autocomplete="new-password">
+          </label>
+          {% elif field.kind == 'bool' %}
+          <label>{{ field.label }}
+            <select name="widget_field_{{ field.name }}">
+              <option value="" {% if current == '' %}selected{% endif %}>使用 Homepage 默认值</option>
+              <option value="true" {% if current is sameas true %}selected{% endif %}>true</option>
+              <option value="false" {% if current is sameas false %}selected{% endif %}>false</option>
+            </select>
+          </label>
+          {% elif field.kind == 'yaml' %}
+          <label class="span-2">{{ field.label }}（YAML）
+            <textarea name="widget_field_{{ field.name }}" rows="{{ field.rows or 7 }}" spellcheck="false" placeholder="{{ field.placeholder or '' }}">{{ current }}</textarea>
+          </label>
+          {% else %}
+          <label>{{ field.label }}<input {% if field.kind == 'number' %}inputmode="numeric"{% endif %} name="widget_field_{{ field.name }}" value="{{ current }}" placeholder="{{ field.placeholder or '' }}"></label>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </fieldset>
+    {% endfor %}
+
+    <label>Widget 其他配置（YAML 映射）
+      <textarea name="widget_extra" rows="8" spellcheck="false" placeholder="fields: [movies, series]&#10;headers:&#10;  X-Example: value">{{ values.widget_extra }}</textarea>
+    </label>
   </section>
 
   <section class="form-card">

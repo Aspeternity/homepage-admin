@@ -20,13 +20,14 @@
 
 <div class="groups-stack">
 {% for group in groups %}
-  <section class="group-panel">
+  <section class="group-panel" data-group-panel data-kind="{{ kind }}" data-group-index="{{ group.index }}">
     <header class="group-header">
       <div>
         <h2>{{ group.name }}</h2>
         <span class="count-badge">{{ group["items"]|length }} 项</span>
       </div>
       <div class="group-actions">
+        <button class="drag-handle icon-button" type="button" draggable="true" data-group-drag title="拖动分组排序">⋮⋮</button>
         <form method="post" action="/{{ kind }}/group/{{ group.index }}/move">
           <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="direction" value="up">
           <button class="icon-button" type="submit" title="分组上移" {% if loop.first %}disabled{% endif %}>↑</button>

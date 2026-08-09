@@ -28,7 +28,7 @@ ghcr.io/你的GitHub用户名/homepage-admin:latest
 
 ## 二、把项目源码上传到 GitHub
 
-1. 在电脑上解压 `homepage-admin-v0.1.1.zip`。
+1. 在电脑上解压 `homepage-admin-v0.2.0.zip`。
 2. 打开解压后的项目文件夹，确认能看到：
    - `.github/`
    - `app/`
@@ -40,7 +40,7 @@ ghcr.io/你的GitHub用户名/homepage-admin:latest
 4. 点击 `uploading an existing file`；如果仓库已经有文件，则点击 `Add file` -> `Upload files`。
 5. 将“项目文件夹里面的所有文件和文件夹”拖入上传区域。不要只上传 ZIP 文件。
 6. 确认上传列表里能看到 `.github/workflows/docker-publish.yml`。这是自动构建镜像最关键的文件。
-7. 页面底部 `Commit changes` 保持默认即可，提交说明可以写：`Initial Homepage Admin v0.1.1`。
+7. 页面底部 `Commit changes` 保持默认即可，提交说明可以写：`Initial Homepage Admin v0.2.0`。
 8. 点击 `Commit changes`。
 
 重要：项目中的 `.gitignore` 已经排除 `.env`。以后不要把真实密码、Session Secret、Homepage API Key 等提交到 GitHub。
@@ -126,109 +126,78 @@ docker images | grep homepage-admin
 
 ```bash
 mkdir -p /opt/docker/homepage-admin/data
+chown -R 1000:1000 /opt/docker/homepage-admin/data
 ```
 
-确认 Homepage 配置目录存在：
-
-```bash
-ls -la /opt/docker/homepage/config
-```
-
-应该至少能看到：
+当前已确认的 Homepage 配置目录是：
 
 ```text
-services.yaml
-bookmarks.yaml
-settings.yaml
-widgets.yaml
+/opt/docker/HomePage/data/config
 ```
 
 ### 2. 打开 Portainer Stack
 
 1. 登录 Portainer。
-2. 进入你的 Docker Environment。
-3. 左侧点击 `Stacks`。
-4. 点击 `Add stack`。
-5. Name 填：`homepage-admin`。
-6. Build method 选择 `Web editor`。
+2. 进入 Docker Environment。
+3. 点击 `Stacks` -> `Add stack`。
+4. Name 填 `homepage-admin`。
+5. 选择 `Web editor`。
 
-### 3. 粘贴 Compose
+### 3. 粘贴 v0.2.0 Compose
 
-打开项目里的 `docker-compose.ghcr.yml`，复制全部内容到 Portainer Web editor。
+直接复制项目里的 `docker-compose.ghcr.yml`。这个文件已经使用：
 
-一定要修改：
-
-```yaml
-image: ghcr.io/YOUR_GITHUB_USERNAME/homepage-admin:latest
+```text
+ghcr.io/aspeternity/homepage-admin:latest
+/opt/docker/HomePage/data/config:/config
+/opt/docker/homepage-admin/data:/data
 ```
 
-例如你的 GitHub 用户名是 `aspandre`：
+v0.2.0 Compose 有两个服务：
 
-```yaml
-image: ghcr.io/aspandre/homepage-admin:latest
+```text
+homepage-admin
+homepage-admin-docker-proxy
 ```
+
+第二个容器专门做 Docker 只读发现，不映射宿主机端口。
 
 ### 4. 添加 Portainer 环境变量
-
-在 Stack 页面下方的 `Environment variables` 区域逐项添加：
 
 ```text
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=你自己设置的强密码
 SESSION_SECRET=至少32位的随机字符串
-HOMEPAGE_URL=https://你的Homepage地址
+HOMEPAGE_URL=http://10.10.1.11:3000
 ADMIN_ALLOWED_HOSTS=*
 ADMIN_COOKIE_SECURE=false
 PUID=1000
 PGID=1000
 TZ=Asia/Shanghai
+DOCKER_PUBLIC_HOST=10.10.1.11
 ```
 
-第一版为了部署简单，可以先用 `ADMIN_PASSWORD`。确认运行正常后，再改成 bcrypt `ADMIN_PASSWORD_HASH`。
-
-生成 Session Secret 可以在 Docker VM 执行：
+生成 Session Secret：
 
 ```bash
 openssl rand -hex 32
 ```
 
-把输出的整串字符复制进 `SESSION_SECRET`。
+### 5. 部署并验证
 
-### 5. 检查卷路径
+点击 `Deploy the stack`。然后检查：
 
-默认 Compose 是：
-
-```yaml
-volumes:
-  - /opt/docker/homepage/config:/config
-  - /opt/docker/homepage-admin/data:/data
+```bash
+docker ps --filter name=homepage-admin
 ```
 
-如果你的 Homepage 配置不在 `/opt/docker/homepage/config`，必须把左边的宿主机路径改成你的真实路径。
-
-### 6. 部署
-
-点击：
+应该看到主后台和 Docker discovery sidecar。访问：
 
 ```text
-Deploy the stack
+http://10.10.1.11:3001
 ```
 
-等待容器创建成功。
-
-然后在 Portainer：
-
-```text
-Containers -> homepage-admin
-```
-
-检查状态为 `running` / `healthy`。
-
-访问：
-
-```text
-http://你的Docker-VM-IP:3001
-```
+左侧应出现 `Docker 发现`。
 
 ## 八、以后如何更新
 
@@ -265,8 +234,8 @@ docker pull ghcr.io/你的GitHub用户名/homepage-admin:latest
 当前工作流支持 Git Tag，例如：
 
 ```text
-v0.1.1
 v0.2.0
+v0.2.1
 v1.0.0
 ```
 
@@ -286,7 +255,7 @@ homepage-admin:0.2
 如果你希望生产环境固定版本、不自动跨版本更新，则可以把 Portainer Compose 改成：
 
 ```yaml
-image: ghcr.io/你的GitHub用户名/homepage-admin:0.1.1
+image: ghcr.io/你的GitHub用户名/homepage-admin:0.2.0
 ```
 
 ## 十、常见故障
@@ -306,7 +275,7 @@ image: ghcr.io/你的GitHub用户名/homepage-admin:0.1.1
 并确认文件不是被上传成：
 
 ```text
-homepage-admin-v0.1.1/.github/workflows/...
+homepage-admin-v0.2.0/.github/workflows/...
 ```
 
 也就是说，仓库根目录应直接看到 `Dockerfile`、`README.md`、`app/`、`.github/`。
@@ -326,7 +295,7 @@ docker logs homepage-admin
 以及配置目录权限：
 
 ```bash
-stat -c '%u:%g %n' /opt/docker/homepage/config
+stat -c '%u:%g %n' /opt/docker/HomePage/data/config
 stat -c '%u:%g %n' /opt/docker/homepage-admin/data
 ```
 

@@ -1,310 +1,161 @@
-# Homepage Admin v0.1.1
+# Homepage Admin v0.2.0
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是和 Homepage 挂载同一个配置目录，直接读写官方 YAML 文件。
 
-## 第一版包含的功能
+> 项目目标：保留 Homepage 的完整配置能力，同时把日常增删改、排序、Widget 配置、备份和 Docker 服务发现变成图形化操作。
 
-- 登录、Session、CSRF 校验和简单登录限流
-- `services.yaml`：服务/分组新增、编辑、删除、复制、跨分组拖动排序
-- 服务常用字段：图标、链接、说明、`siteMonitor`、`ping`、Docker 集成、单个 Widget
-- API Key 在普通表单中不回显；留空会保留原值
-- `bookmarks.yaml`：分组与书签管理、拖动排序
-- `settings.yaml`：标题、主题、背景滤镜、快速启动、布局配置
-- `widgets.yaml`：顶部组件增删改和排序
-- `docker.yaml`、`proxmox.yaml`、`kubernetes.yaml`、`custom.css`、`custom.js` 高级编辑
-- YAML 保存前校验、文件锁、临时文件原子替换
-- 每次保存前自动备份、可视化恢复、审计日志
-- 保留未知字段和大部分原有注释/顺序（使用 `ruamel.yaml`）
+## v0.2.0 重点
 
-## 与 Homepage 官方配置模型的对应关系
+- 服务 / 书签卡片跨分组拖动
+- 服务 / 书签分组拖动排序
+- 顶部组件拖动排序
+- Jellyfin、qBittorrent、Transmission、Minecraft、Home Assistant、Portainer、Proxmox 专属 Widget 表单
+- Widget API Key / Password 不回显，留空自动保留
+- 高级 YAML 默认隐藏敏感字段，并能安全保存占位符
+- Docker 容器发现与一键预填服务
+- 专用 Docker 发现 sidecar，主后台不直接接触 Docker socket
+- 自动备份、回滚、YAML 校验、原子写入、审计日志
+- GitHub Actions 自动测试并发布 `amd64` / `arm64` GHCR 镜像
 
-- 服务和分组来自 `services.yaml`，服务可配置 Widget、状态监控和 Docker 容器关联。
-- 书签来自 `bookmarks.yaml`，结构比服务简单。
-- 顶部信息组件来自 `widgets.yaml`，顺序由文件中的顺序决定。
-- 页面级选项来自 `settings.yaml`。官方说明该文件保存后，需要在 Homepage 页面右下角点击刷新图标重新生成静态 HTML。
-- 第一版不读取 Docker Socket。后续做“扫描 Docker 容器”时，应使用只读 Docker Socket Proxy，而不是把完整 Socket 直接给后台。
+## 对应 Homepage 官方配置
+
+Homepage Admin 仍以 Homepage 官方文件作为唯一数据源：
+
+- `services.yaml`：服务、状态监控、Docker 关联、Service Widget
+- `bookmarks.yaml`：书签
+- `settings.yaml`：页面设置、背景和 layout
+- `widgets.yaml`：顶部 Information Widgets
+- `docker.yaml`：Homepage Docker server
+- `proxmox.yaml`、`kubernetes.yaml`、`custom.css`、`custom.js`：高级编辑
 
 官方文档：
 
+- https://gethomepage.dev/configs/
 - https://gethomepage.dev/configs/services/
-- https://gethomepage.dev/configs/bookmarks/
-- https://gethomepage.dev/configs/settings/
-- https://gethomepage.dev/configs/info-widgets/
 - https://gethomepage.dev/configs/docker/
+- https://gethomepage.dev/widgets/services/
 
-## 目录结构
-
-```text
-homepage-admin-v0.1.1/
-├── app/
-│   ├── main.py
-│   ├── store.py
-│   ├── security.py
-│   ├── settings.py
-│   ├── templates/
-│   └── static/
-├── docker-compose.yml
-├── Dockerfile
-├── .env.example
-└── requirements.txt
-```
-
-
-## 推荐部署方式：GitHub + GHCR + Portainer
-
-从 v0.1.1 开始，项目自带 GitHub Actions，可在代码提交到 GitHub 后自动测试、构建并发布多架构 Docker 镜像到 GHCR。
-
-关键文件：
-
-- `.github/workflows/docker-publish.yml`：自动测试、构建、发布。
-- `docker-compose.ghcr.yml`：Portainer / Docker Compose 直接拉 GHCR 镜像。
-- `GITHUB_DEPLOY_GUIDE_ZH.md`：面向第一次使用 GitHub 的完整中文操作指南。
-
-最终部署镜像形式：
+## v0.2.0 Docker 发现架构
 
 ```text
-ghcr.io/你的GitHub用户名/homepage-admin:latest
+Docker Engine
+    │
+    │ /var/run/docker.sock
+    ▼
+homepage-admin-docker-proxy
+    │ 仅暴露 GET /api/containers
+    ▼
+homepage-admin
+    │
+    ├── /config -> Homepage 的真实配置目录
+    └── /data   -> Admin 备份与审计数据
 ```
 
-如果使用 GHCR 方案，就不需要在 Docker VM 本地执行 `docker build`。
+主 `homepage-admin` 容器不挂载 Docker socket。`docker-proxy` sidecar 只返回容器列表所需的有限元数据，并过滤常见敏感 Label。
 
-## 在你的 Docker VM 上部署
+注意：任何能访问 Docker socket 的进程都属于高权限组件。sidecar 通过最小接口缩小暴露面，但仍应只运行在可信主机上，并且不要给它映射宿主机端口。
 
-下面假定：
+## 你的 Portainer / Docker VM 部署
 
-- Homepage 配置目录：`/opt/docker/homepage/config`
-- 后台项目目录：`/opt/docker/homepage-admin`
-- 后台备份目录：`/opt/docker/homepage-admin/data`
-- 后台端口：`3001`
-
-### 1. 解压项目
-
-```bash
-mkdir -p /opt/docker/homepage-admin
-cd /opt/docker/homepage-admin
-unzip homepage-admin-v0.1.1.zip
-cd homepage-admin-v0.1.1
-```
-
-如果解压后多了一层目录，保证当前目录能看到 `docker-compose.yml`。
-
-### 2. 确认 Homepage 配置目录
-
-```bash
-ls -la /opt/docker/homepage/config
-```
-
-应当能看到：
+项目内的 `docker-compose.ghcr.yml` 已按当前环境预设：
 
 ```text
-services.yaml
-bookmarks.yaml
-settings.yaml
-widgets.yaml
+GHCR: ghcr.io/aspeternity/homepage-admin:latest
+Homepage config: /opt/docker/HomePage/data/config
+Admin data: /opt/docker/homepage-admin/data
+Admin port: 3001
+Docker public host: 10.10.1.11
+UID:GID: 1000:1000
 ```
 
-如果你的实际路径不同，修改 `docker-compose.yml` 中这一行：
+首次升级 v0.2.0 时，需要把原来只有一个 service 的 Stack 替换成 v0.2.0 的两 service Compose：
 
-```yaml
-- /opt/docker/homepage/config:/config
-```
+- `homepage-admin`
+- `docker-proxy`
 
-### 3. 创建环境文件
-
-```bash
-cp .env.example .env
-```
-
-先生成 Session 密钥：
-
-```bash
-openssl rand -hex 32
-```
-
-将结果填写到 `.env` 的 `SESSION_SECRET`。
-
-第一种登录密码配置方式，最简单：
+### 必填环境变量
 
 ```env
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=你的强密码
-ADMIN_PASSWORD_HASH=
+ADMIN_PASSWORD=你的后台密码
+SESSION_SECRET=至少32位随机字符串
+HOMEPAGE_URL=http://10.10.1.11:3000
 ```
 
-第二种方式更推荐，使用 bcrypt 哈希：
+推荐后续把 `ADMIN_PASSWORD` 改成 `ADMIN_PASSWORD_HASH`。
 
-先临时构建镜像：
+## Docker 发现如何使用
+
+1. 左侧打开“Docker 发现”。
+2. 如果 `docker.yaml` 还是空的，可以点击“创建 local-docker”。
+3. 确认 Homepage 本体已经挂载 `/var/run/docker.sock`。你的当前 Homepage 部署已满足这一点。
+4. 找到容器，点击“添加到 Homepage”。
+5. 后台会尝试预填容器名、图标、端口 URL、Homepage Labels 和可识别的 Widget 类型。
+6. 检查域名 / URL 和凭据后保存。
+
+Homepage Admin 不会自动猜测你的反向代理域名，因此发现出的 `http://10.10.1.11:端口` 只是建议值，可改成实际域名。
+
+## Widget 专属表单
+
+v0.2.0 首批覆盖：
+
+- Jellyfin
+- qBittorrent
+- Transmission
+- Minecraft
+- Home Assistant
+- Portainer
+- Proxmox
+
+未覆盖的 Widget 仍然可以填写 Widget 类型，并使用“Widget 其他配置（YAML 映射）”。已有未知字段会被保留。
+
+## 敏感字段保护
+
+普通 Widget 表单不会把已保存的 key/password/token 回显到 HTML。编辑时留空会保留原值。服务额外 YAML、顶部组件 YAML、settings.yaml 的额外字段（包括 `providers`）也会自动遮挡已识别的敏感值。
+
+高级 YAML 编辑器默认把敏感值替换成每个值独立的不可逆占位符，例如：
+
+```text
+__HOMEPAGE_ADMIN_SECRET_1a2b3c4d5e6f7890__
+```
+
+保存时会从原文件恢复占位符对应的真实值。占位符可随条目排序一起移动，但不能被复制到普通非敏感字段；检测到异常位置或无法对应原值时会拒绝保存。需要真正修改凭据时，可点击“临时显示敏感值”，或者优先使用 Widget 专属表单。
+
+## 备份与写入
+
+每次写入前：
+
+1. 获取文件锁
+2. 备份旧文件
+3. 校验 YAML
+4. 写入临时文件
+5. 原子替换正式文件
+6. 写审计日志
+
+备份目录：`/data/backups`
+
+## 本地开发
 
 ```bash
-docker compose build
-```
-
-生成哈希：
-
-```bash
-docker compose run --rm homepage-admin python -m app.hash_password '你的强密码'
-```
-
-将输出用单引号包住写进 `.env`：
-
-```env
-ADMIN_PASSWORD=
-ADMIN_PASSWORD_HASH='$2b$12$......'
-```
-
-### 4. 设置文件权限
-
-镜像默认使用 UID/GID `1000:1000`。先检查配置目录所有者：
-
-```bash
-stat -c '%u:%g %n' /opt/docker/homepage/config
-```
-
-最简单的设置：
-
-```bash
-mkdir -p /opt/docker/homepage-admin/data
-chown -R 1000:1000 /opt/docker/homepage/config /opt/docker/homepage-admin/data
-```
-
-如果你的 Homepage 已经使用其他 PUID/PGID，将 `.env` 中的 `PUID`、`PGID` 改成相同值，再按该 UID/GID 设置权限。
-
-### 5. 启动
-
-```bash
+cp .env.example .env
 docker compose up -d --build
 ```
 
-查看日志：
+运行测试：
 
 ```bash
-docker compose logs -f homepage-admin
+pip install -r requirements-dev.txt
+pytest -q
 ```
 
-访问：
+## 更新
+
+GitHub `main` 分支有新提交后，Actions 会自动测试并构建：
 
 ```text
-http://10.10.1.11:3001
+ghcr.io/aspeternity/homepage-admin:latest
 ```
 
-## 在 Portainer 中部署
+Portainer 中重新拉取镜像并 Recreate / Update Stack 即可。
 
-推荐使用 GHCR 镜像部署，不再需要本地构建。完整步骤见：
-
-```text
-GITHUB_DEPLOY_GUIDE_ZH.md
-```
-
-发布 GHCR 镜像后，在 `docker-compose.ghcr.yml` 中把：
-
-```text
-ghcr.io/YOUR_GITHUB_USERNAME/homepage-admin:latest
-```
-
-替换成你的真实 GitHub 用户名，然后粘贴到 Portainer Stack。
-
-`docker-compose.portainer.yml` 仍保留用于本地镜像模式，但新用户建议直接使用 `docker-compose.ghcr.yml`。
-
-## Nginx Proxy Manager 反代
-
-建议第一阶段只允许内网访问。如果需要域名访问：
-
-1. NPM 转发到 `10.10.1.11:3001`
-2. 启用 HTTPS
-3. `.env` 设置：
-
-```env
-ADMIN_COOKIE_SECURE=true
-ADMIN_ALLOWED_HOSTS=homepage-admin.aspandre.cn,10.10.1.11,localhost
-```
-
-4. 重建容器：
-
-```bash
-docker compose up -d --force-recreate
-```
-
-不要将后台无保护地暴露到公网。后台能够修改链接、API Key 和其他敏感配置。
-
-## 使用说明
-
-### 服务管理
-
-普通表单覆盖最常用的 Homepage 字段。没有做成表单的字段放在：
-
-- `Widget 其他配置`
-- `额外服务配置`
-
-例如：
-
-```yaml
-enableBlocks: true
-enableNowPlaying: true
-```
-
-或者：
-
-```yaml
-showStats: true
-```
-
-### 多 Widgets
-
-官方支持一个服务使用 `widgets:` 数组。第一版普通表单只直接编辑单个 `widget:`，但现有 `widgets:` 会保存在“额外服务配置”中，不会主动删除。复杂配置可使用高级编辑器。
-
-### 嵌套分组
-
-官方支持嵌套服务分组。第一版能够保留和显示嵌套分组，但不提供递归可视化编辑；请使用高级 YAML 编辑器。
-
-### settings.yaml 刷新
-
-保存页面设置后，打开 Homepage，在右下角点击刷新图标。普通服务和书签修改通常刷新浏览器即可看到。
-
-### 背景滤镜
-
-Homepage 官方说明 `cardBlur` 与背景的 `blur`、`saturate`、`brightness` 滤镜不兼容。设置页会提示这一点，但不会强制删除你的配置。
-
-## 数据安全
-
-保存流程：
-
-```text
-YAML 解析校验
-→ 文件锁
-→ 备份原文件
-→ 写入同目录临时文件
-→ fsync
-→ os.replace 原子替换
-→ 写入审计日志
-```
-
-备份目录：
-
-```text
-/opt/docker/homepage-admin/data/backups
-```
-
-审计日志：
-
-```text
-/opt/docker/homepage-admin/data/audit.jsonl
-```
-
-## 第一版已知限制
-
-- 不扫描 Docker 容器，也不连接 Docker Socket
-- 不自动读取 Homepage 所有 Widget 的专属字段定义
-- 多 Widgets 和嵌套分组主要通过高级 YAML 编辑器管理
-- 没有实时 iframe 预览，避免受 Homepage CSP 和反代策略影响
-- 当前仅单管理员账户
-- 配置写入是逐文件事务；创建/重命名分组时，`services.yaml`/`bookmarks.yaml` 与 `settings.yaml` 会分别备份和写入
-
-## 第二版建议
-
-- Docker Socket Proxy 只读容器扫描
-- 官方 Widget 模板库与动态表单
-- 图标搜索与本地图标上传
-- 分组拖动和设置页布局拖动
-- 修改前后 YAML Diff
-- Homepage 刷新/重载联动
-- 多用户和只读账户
+发布 Git Tag（例如 `v0.2.0`）后，工作流还会生成对应的语义版本镜像标签。

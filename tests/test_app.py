@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from fastapi.testclient import TestClient
 from ruamel.yaml import YAML
 
 from app.main import app
+from app.secrets import SECRET_PREFIX, mask_secrets
 from app.settings import settings
+from app.store import store
 
 
 def login(client: TestClient) -> str:
@@ -26,7 +27,7 @@ def test_login_and_main_pages() -> None:
     assert client.get("/healthz").status_code == 200
     assert client.get("/services", follow_redirects=False).status_code == 303
     login(client)
-    for path in ["/services", "/bookmarks", "/settings", "/widgets", "/yaml/services.yaml", "/backups"]:
+    for path in ["/services", "/bookmarks", "/settings", "/widgets", "/docker", "/yaml/services.yaml", "/backups"]:
         assert client.get(path).status_code == 200
 
 
@@ -36,6 +37,7 @@ def test_service_secret_is_not_rendered_and_is_preserved() -> None:
     edit = client.get("/services/item/0/0/edit")
     assert edit.status_code == 200
     assert "super-secret-key" not in edit.text
+    assert "已保存；留空保持原值" in edit.text
 
     response = client.post(
         "/services/item/0/0/update",
@@ -52,9 +54,10 @@ def test_service_secret_is_not_rendered_and_is_preserved() -> None:
             "server": "",
             "container": "",
             "widget_type": "jellyfin",
-            "widget_url": "https://jellyfin.example",
-            "widget_key": "",
-            "widget_extra": "enableBlocks: true",
+            "widget_field_url": "https://jellyfin.example",
+            "widget_field_key": "",
+            "widget_field_enableBlocks": "true",
+            "widget_extra": "",
             "extra": "",
         },
         follow_redirects=False,
@@ -65,6 +68,28 @@ def test_service_secret_is_not_rendered_and_is_preserved() -> None:
     assert data[0]["Core"][0]["Jellyfin"]["widget"]["enableBlocks"] is True
 
 
+def test_advanced_editor_masks_and_restores_secret() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    page = client.get("/yaml/services.yaml")
+    assert page.status_code == 200
+    assert "super-secret-key" not in page.text
+    assert SECRET_PREFIX in page.text
+
+    masked = mask_secrets(store.load("services.yaml"))
+    masked[0]["Core"][0]["Jellyfin"]["description"] = "Changed through masked editor"
+    content = store.dump(masked)
+    response = client.post(
+        "/yaml/services.yaml",
+        data={"csrf": csrf, "masked": "1", "content": content},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    data = YAML(typ="safe").load((settings.config_dir / "services.yaml").read_text(encoding="utf-8"))
+    assert data[0]["Core"][0]["Jellyfin"]["widget"]["key"] == "super-secret-key"
+    assert data[0]["Core"][0]["Jellyfin"]["description"] == "Changed through masked editor"
+
+
 def test_invalid_yaml_does_not_replace_file() -> None:
     client = TestClient(app)
     csrf = login(client)
@@ -72,11 +97,56 @@ def test_invalid_yaml_does_not_replace_file() -> None:
     before = path.read_text(encoding="utf-8")
     response = client.post(
         "/yaml/services.yaml",
-        data={"csrf": csrf, "content": "- invalid: [yaml"},
+        data={"csrf": csrf, "masked": "0", "content": "- invalid: [yaml"},
         follow_redirects=False,
     )
     assert response.status_code == 303
     assert path.read_text(encoding="utf-8") == before
+
+
+def test_group_drag_reorder_api() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    original = (settings.config_dir / "bookmarks.yaml").read_text(encoding="utf-8")
+    try:
+        (settings.config_dir / "bookmarks.yaml").write_text(
+            "---\n- One: []\n- Two: []\n- Three: []\n",
+            encoding="utf-8",
+        )
+        response = client.post(
+            "/api/bookmarks/group/reorder",
+            headers={"x-csrf-token": csrf},
+            json={"source_index": 0, "target_index": 3},
+        )
+        assert response.status_code == 200
+        data = YAML(typ="safe").load((settings.config_dir / "bookmarks.yaml").read_text(encoding="utf-8"))
+        assert list(data[0].keys()) == ["Two"]
+        assert list(data[2].keys()) == ["One"]
+    finally:
+        (settings.config_dir / "bookmarks.yaml").write_text(original, encoding="utf-8")
+
+
+def test_docker_import_prefills_service_form(monkeypatch) -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    login(client)
+    sample = {
+        "id": "abc123def456",
+        "name": "qbittorrent",
+        "image": "lscr.io/linuxserver/qbittorrent:latest",
+        "state": "running",
+        "status": "Up 1 hour",
+        "ports": [{"private": 8080, "public": 18080, "type": "tcp", "ip": "0.0.0.0"}],
+        "labels": {},
+    }
+    monkeypatch.setattr(main_module.docker_discovery, "base_url", "http://docker-proxy:9100")
+    monkeypatch.setattr(main_module.docker_discovery, "get_container", lambda _id: sample)
+    response = client.get("/docker/import/abc123def456")
+    assert response.status_code == 200
+    assert 'value="qbittorrent"' in response.text
+    assert 'value="sh-qbittorrent"' in response.text
+    assert 'value="qbittorrent" list="widget-type-options"' in response.text
 
 
 def test_backup_is_created() -> None:
@@ -85,9 +155,186 @@ def test_backup_is_created() -> None:
     current = (settings.config_dir / "widgets.yaml").read_text(encoding="utf-8")
     response = client.post(
         "/yaml/widgets.yaml",
-        data={"csrf": csrf, "content": current + "\n"},
+        data={"csrf": csrf, "masked": "1", "content": current + "\n"},
         follow_redirects=False,
     )
     assert response.status_code == 303
     backups = list((settings.data_dir / "backups").glob("*/widgets.yaml"))
     assert backups
+
+
+def test_item_drag_same_group_to_end() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    original = (settings.config_dir / "bookmarks.yaml").read_text(encoding="utf-8")
+    try:
+        (settings.config_dir / "bookmarks.yaml").write_text(
+            "---\n- Links:\n    - A:\n        - href: https://a.example\n    - B:\n        - href: https://b.example\n    - C:\n        - href: https://c.example\n",
+            encoding="utf-8",
+        )
+        response = client.post(
+            "/api/bookmarks/move",
+            headers={"x-csrf-token": csrf},
+            json={"source_group": 0, "source_index": 0, "target_group": 0, "target_index": 2},
+        )
+        assert response.status_code == 200
+        data = YAML(typ="safe").load((settings.config_dir / "bookmarks.yaml").read_text(encoding="utf-8"))
+        names = [next(iter(item.keys())) for item in data[0]["Links"]]
+        assert names == ["B", "C", "A"]
+    finally:
+        (settings.config_dir / "bookmarks.yaml").write_text(original, encoding="utf-8")
+
+
+def test_docker_proxy_filters_sensitive_homepage_labels() -> None:
+    from app.docker_proxy import _safe_labels
+
+    labels = _safe_labels(
+        {
+            "homepage.name": "Jellyfin",
+            "homepage.widget.type": "jellyfin",
+            "homepage.widget.key": "do-not-leak",
+            "homepage.widget.headers.Authorization": "Bearer do-not-leak",
+            "com.docker.compose.project": "media",
+            "unrelated.secret": "ignored",
+        }
+    )
+    assert labels["homepage.name"] == "Jellyfin"
+    assert labels["homepage.widget.type"] == "jellyfin"
+    assert labels["com.docker.compose.project"] == "media"
+    assert "homepage.widget.key" not in labels
+    assert "homepage.widget.headers.Authorization" not in labels
+
+
+def test_create_local_docker_server_when_docker_yaml_empty() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "docker.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        path.write_text("---\n", encoding="utf-8")
+        response = client.post(
+            "/docker/setup-homepage",
+            data={"csrf": csrf},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        assert data["local-docker"]["socket"] == "/var/run/docker.sock"
+    finally:
+        path.write_text(original, encoding="utf-8")
+
+
+def test_masked_secret_survives_reorder_but_cannot_move_to_public_field() -> None:
+    from app.secrets import restore_masked_secrets
+
+    original = [
+        {"Core": [
+            {"Jellyfin": {"description": "Media", "widget": {"type": "jellyfin", "key": "secret-a"}}},
+            {"Other": {"description": "Other"}},
+        ]}
+    ]
+    masked = mask_secrets(original)
+    masked[0]["Core"].reverse()
+    restored = restore_masked_secrets(masked, original)
+    assert restored[0]["Core"][1]["Jellyfin"]["widget"]["key"] == "secret-a"
+
+    masked = mask_secrets(original)
+    token = masked[0]["Core"][0]["Jellyfin"]["widget"]["key"]
+    masked[0]["Core"][0]["Jellyfin"]["description"] = token
+    import pytest
+    with pytest.raises(ValueError):
+        restore_masked_secrets(masked, original)
+
+
+def test_settings_provider_secret_is_masked_and_preserved() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "settings.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        path.write_text(
+            "---\ntitle: Test\nproviders:\n  openweathermap: provider-secret\n",
+            encoding="utf-8",
+        )
+        page = client.get("/settings")
+        assert page.status_code == 200
+        assert "provider-secret" not in page.text
+        assert SECRET_PREFIX in page.text
+
+        masked_extra = mask_secrets({"providers": {"openweathermap": "provider-secret"}})
+        response = client.post(
+            "/settings",
+            data={"csrf": csrf, "title": "Test 2", "extra": store.dump_fragment(masked_extra)},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        assert data["providers"]["openweathermap"] == "provider-secret"
+    finally:
+        path.write_text(original, encoding="utf-8")
+
+
+def test_top_widget_secret_is_masked_and_preserved() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "widgets.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        path.write_text(
+            "---\n- customapi:\n    url: https://example.invalid\n    token: widget-secret\n",
+            encoding="utf-8",
+        )
+        page = client.get("/widgets/0/edit")
+        assert page.status_code == 200
+        assert "widget-secret" not in page.text
+        assert SECRET_PREFIX in page.text
+
+        masked_cfg = mask_secrets({"url": "https://example.invalid", "token": "widget-secret"})
+        response = client.post(
+            "/widgets/0/update",
+            data={"csrf": csrf, "name": "customapi", "config": store.dump_fragment(masked_cfg)},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        assert data[0]["customapi"]["token"] == "widget-secret"
+    finally:
+        path.write_text(original, encoding="utf-8")
+
+
+def test_unknown_service_widget_extra_secret_is_masked_and_preserved() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "services.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        path.write_text(
+            "---\n- Core:\n    - Custom:\n        href: https://example.invalid\n        widget:\n          type: customapi\n          url: https://example.invalid\n          token: custom-widget-secret\n",
+            encoding="utf-8",
+        )
+        page = client.get("/services/item/0/0/edit")
+        assert page.status_code == 200
+        assert "custom-widget-secret" not in page.text
+        assert SECRET_PREFIX in page.text
+
+        data = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        masked_widget = mask_secrets({"token": data[0]["Core"][0]["Custom"]["widget"]["token"]})
+        response = client.post(
+            "/services/item/0/0/update",
+            data={
+                "csrf": csrf,
+                "name": "Custom",
+                "group_index": "0",
+                "href": "https://example.invalid",
+                "widget_type": "customapi",
+                "widget_field_url": "https://example.invalid",
+                "widget_extra": store.dump_fragment(masked_widget),
+                "extra": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        saved = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        assert saved[0]["Core"][0]["Custom"]["widget"]["token"] == "custom-widget-secret"
+    finally:
+        path.write_text(original, encoding="utf-8")

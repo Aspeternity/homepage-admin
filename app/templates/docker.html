@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Docker 发现 · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <h1>Docker 发现</h1>
+    <p>只读取容器元数据，用来快速预填 Homepage 服务；不会提供停止、删除或重启容器的接口。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="/docker">刷新列表</a>
+  </div>
+</section>
+
+<section class="form-card docker-status-card">
+  <div class="section-title-row">
+    <div>
+      <h2>Homepage Docker Server</h2>
+      {% if docker_server %}
+      <p class="section-help">当前检测到：<code>{{ docker_server }}</code>。导入服务时会自动预填 <code>server</code>。</p>
+      {% else %}
+      <p class="section-help">当前 <code>docker.yaml</code> 没有 server。容器仍可发现和导入，但 Homepage 的容器状态/资源统计需要配置 Docker server。</p>
+      {% endif %}
+    </div>
+    {% if not docker_server %}
+    <form method="post" action="/docker/setup-homepage">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="button primary" type="submit">创建 local-docker</button>
+    </form>
+    {% endif %}
+  </div>
+  <p class="form-help">此按钮会在空的 <code>docker.yaml</code> 中写入 <code>local-docker: socket: /var/run/docker.sock</code>。你的 Homepage 容器必须已经挂载这个 socket。</p>
+</section>
+
+{% if containers %}
+<div class="docker-grid">
+  {% for c in containers %}
+  <article class="docker-card">
+    <div class="docker-card-head">
+      <div>
+        <div class="docker-name-row"><h3>{{ c.name }}</h3><span class="state-dot {{ 'online' if c.state == 'running' else 'offline' }}"></span></div>
+        <p class="docker-image">{{ c.image }}</p>
+      </div>
+      <span class="status-pill {{ 'ok' if c.state == 'running' else '' }}">{{ c.state or 'unknown' }}</span>
+    </div>
+    <p class="docker-status-text">{{ c.status }}</p>
+    <div class="docker-meta">
+      {% if c.published_ports %}
+      <div><strong>端口</strong>
+        <div class="port-list">
+          {% for p in c.published_ports %}<span>{{ p.public }}→{{ p.private }}/{{ p.type }}</span>{% endfor %}
+        </div>
+      </div>
+      {% else %}<div><strong>端口</strong><span class="muted">无宿主机映射</span></div>{% endif %}
+      <div><strong>Homepage Labels</strong><span>{{ '已发现' if c.homepage_labeled else '无' }}</span></div>
+    </div>
+    <div class="docker-actions">
+      {% if c.configured %}
+      <span class="button secondary disabled">已在 services.yaml</span>
+      {% else %}
+      <a class="button primary" href="/docker/import/{{ c.id[:12] }}">添加到 Homepage</a>
+      {% endif %}
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<section class="empty-state">
+  <div class="empty-icon">⬡</div>
+  <h2>暂无可显示的容器</h2>
+  <p>如果 Docker 里确实有容器，请检查 v0.2.0 Compose 中的 <code>docker-proxy</code> 服务和 socket 挂载。</p>
+</section>
+{% endif %}
+{% endblock %}
