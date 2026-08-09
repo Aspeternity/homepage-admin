@@ -11,12 +11,13 @@
     <dl class="schema-status-list">
       <div><dt>来源仓库</dt><dd>{{ schema_status.source }}</dd></div>
       <div><dt>分支 / Ref</dt><dd><code>{{ schema_status.ref }}</code></dd></div>
-      <div><dt>最后同步</dt><dd>{{ schema_status.synced_at or '尚未成功在线同步' }}</dd></div>
+      <div><dt>最后同步</dt><dd>{% if schema_status.synced_at %}<time datetime="{{ schema_status.synced_at }}" data-local-datetime>{{ schema_status.synced_at }}</time><span class="local-time-note">本地时间</span>{% else %}尚未成功在线同步{% endif %}</dd></div>
       <div><dt>Widget 数量</dt><dd>{{ schema_status.widget_count }}</dd></div>
       <div><dt>官方文档数</dt><dd>{{ schema_status.document_count }}</dd></div>
       <div><dt>官方注册表项</dt><dd>{{ schema_status.registry_count }}</dd></div>
       <div><dt>自动生成字段</dt><dd>{{ schema_status.generated_field_count }}</dd></div>
-      <div><dt>自动同步</dt><dd>{{ '启用' if schema_status.auto_sync else '关闭' }} · 每 {{ schema_status.sync_interval_hours }} 小时检查</dd></div>
+      <div><dt>自动同步</dt><dd>{{ schema_status.sync_schedule_label }}</dd></div>
+      {% if schema_status.auto_sync and schema_status.next_sync_at %}<div><dt>下次计划</dt><dd><time datetime="{{ schema_status.next_sync_at }}" data-local-datetime>{{ schema_status.next_sync_at }}</time><span class="local-time-note">本地时间</span></dd></div>{% endif %}
     </dl>
     {% if schema_status.last_error %}<div class="alert warning">最近错误：{{ schema_status.last_error }}</div>{% endif %}
     {% if schema_status.errors %}<details class="schema-errors"><summary>查看同步时的部分解析警告（{{ schema_status.error_count }}）</summary><pre>{{ schema_status.errors|join('\n') }}</pre></details>{% endif %}
@@ -24,7 +25,7 @@
 
   <article class="form-card">
     <h2>工作方式</h2>
-    <p class="section-help">v0.3.2 不再依赖人工维护 15 个专属表单。同步器读取官方 <code>docs/widgets/services/*.md</code> 的 YAML 示例、Allowed fields，并读取 <code>src/widgets/widgets.js</code> 注册表。</p>
+    <p class="section-help">同步器直接读取 Homepage 官方 <code>docs/widgets/services/*.md</code> 中的 YAML 示例与 Allowed fields，并结合 <code>src/widgets/widgets.js</code> 注册表生成动态表单。</p>
     <div class="schema-flow">
       <span>Homepage 官方仓库</span><b>→</b><span>Schema Parser</span><b>→</b><span>/data 缓存</span><b>→</b><span>动态增强表单</span>
     </div>
@@ -32,8 +33,58 @@
   </article>
 </section>
 
+<section class="form-card schema-schedule-card" data-schema-schedule>
+  <div class="section-title-row">
+    <div>
+      <h2>自动同步计划</h2>
+      <p class="section-help">可直接在后台开启或关闭自动同步，并选择固定间隔或每天固定时间；修改后无需重启容器。</p>
+    </div>
+    <span class="status-pill {{ 'ok' if schema_status.sync_settings_custom else '' }}">{{ '自定义' if schema_status.sync_settings_custom else '环境默认' }}</span>
+  </div>
+  <form method="post" action="/widget-schema/schedule" class="schema-schedule-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="toggle-row">
+      <input type="checkbox" name="auto_sync" value="on" {% if schema_status.auto_sync %}checked{% endif %}>
+      <span><strong>启用自动同步</strong><small>关闭后仍可使用下面的“立即同步官方 Schema”。</small></span>
+    </label>
+    <div class="form-grid three schema-schedule-fields">
+      <label>同步方式
+        <select name="mode" data-schema-schedule-mode>
+          <option value="interval" {% if schema_status.sync_mode == 'interval' %}selected{% endif %}>固定间隔</option>
+          <option value="daily" {% if schema_status.sync_mode == 'daily' %}selected{% endif %}>每天固定时间</option>
+        </select>
+      </label>
+      <label data-schema-interval>同步间隔
+        <div class="input-with-suffix"><input type="number" name="interval_hours" value="{{ schema_status.sync_interval_hours }}" min="1" max="720" step="1" required><span>小时</span></div>
+      </label>
+      <label data-schema-daily-time>每天同步时间
+        <input type="time" name="daily_time" value="{{ schema_status.sync_time }}" required>
+      </label>
+      <label data-schema-timezone>计划时区
+        <div class="timezone-input-row">
+          <input type="text" name="timezone" value="{{ schema_status.sync_timezone }}" placeholder="Asia/Shanghai" list="schema-timezones" required data-schema-timezone-input>
+          <button class="button small secondary" type="button" data-use-browser-timezone>使用浏览器时区</button>
+        </div>
+        <small>使用 IANA 时区，例如 Asia/Shanghai、Asia/Tokyo、Europe/London 或 UTC。</small>
+      </label>
+      <datalist id="schema-timezones">
+        <option value="Asia/Shanghai"><option value="Asia/Hong_Kong"><option value="Asia/Tokyo"><option value="Asia/Singapore"><option value="Europe/London"><option value="America/New_York"><option value="UTC">
+      </datalist>
+    </div>
+    <div class="inline-actions">
+      <button class="button primary" type="submit">保存自动同步计划</button>
+    </div>
+  </form>
+  {% if schema_status.sync_settings_custom %}
+  <form method="post" action="/widget-schema/schedule/reset" class="schema-schedule-reset" data-confirm="恢复环境变量中的默认自动同步设置？">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="button secondary" type="submit">恢复环境默认</button>
+  </form>
+  {% endif %}
+</section>
+
 <section class="form-card">
-  <div class="section-title-row"><div><h2>手动操作</h2><p class="section-help">正常情况下无需操作。若 Homepage 刚新增 Widget，可立即同步，不必等待下一个自动检查周期。</p></div></div>
+  <div class="section-title-row"><div><h2>手动操作</h2><p class="section-help">若 Homepage 刚新增 Widget，可随时立即同步，不必等待自动计划。</p></div></div>
   <div class="inline-actions">
     <form method="post" action="/widget-schema/sync"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button primary" type="submit">立即同步官方 Schema</button></form>
     <form method="post" action="/widget-schema/reset"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button secondary" type="submit">清除缓存并恢复内置目录</button></form>

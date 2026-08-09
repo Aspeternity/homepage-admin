@@ -5,10 +5,12 @@ from typing import Any
 import copy
 import json
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .settings import settings
+from .store import store
 from .widget_schema_sync import fetch_official_widget_schemas
 
 # Enhanced schemas for the widgets Homepage Admin understands deeply.
@@ -566,16 +568,91 @@ def _parse_synced_at(value: Any) -> datetime | None:
         return None
 
 
-def widget_schema_sync_due() -> bool:
-    if not getattr(settings, "widget_schema_auto_sync", True):
+def _sync_preferences() -> dict[str, Any]:
+    try:
+        return store.widget_schema_sync_preferences()
+    except Exception:
+        return {
+            "auto_sync": bool(getattr(settings, "widget_schema_auto_sync", True)),
+            "mode": str(getattr(settings, "widget_schema_sync_mode", "interval") or "interval"),
+            "interval_hours": max(1, int(getattr(settings, "widget_schema_sync_interval_hours", 24))),
+            "daily_time": str(getattr(settings, "widget_schema_sync_time", "03:00") or "03:00"),
+            "timezone": str(getattr(settings, "widget_schema_timezone", "UTC") or "UTC"),
+            "custom": False,
+        }
+
+
+def _schedule_zone(name: str):
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return timezone.utc
+
+
+def _daily_schedule_for(now_utc: datetime, prefs: dict[str, Any]) -> tuple[datetime, datetime]:
+    zone = _schedule_zone(str(prefs.get("timezone") or "UTC"))
+    local_now = now_utc.astimezone(zone)
+    try:
+        hour, minute = [int(part) for part in str(prefs.get("daily_time") or "03:00").split(":", 1)]
+    except (TypeError, ValueError):
+        hour, minute = 3, 0
+    scheduled_local = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return local_now, scheduled_local
+
+
+def widget_schema_sync_due(now: datetime | None = None) -> bool:
+    prefs = _sync_preferences()
+    if not prefs.get("auto_sync", True):
         return False
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     synced_at = _parse_synced_at(_SCHEMA_STATE.get("synced_at"))
+    if str(prefs.get("mode") or "interval") == "daily":
+        local_now, scheduled_local = _daily_schedule_for(now_utc, prefs)
+        if local_now < scheduled_local:
+            return False
+        if not synced_at:
+            return True
+        last_local = synced_at.astimezone(scheduled_local.tzinfo)
+        return last_local < scheduled_local
     if not synced_at:
         return True
-    hours = max(1, int(getattr(settings, "widget_schema_sync_interval_hours", 24)))
-    age = datetime.now(timezone.utc) - synced_at.astimezone(timezone.utc)
+    hours = max(1, int(prefs.get("interval_hours") or 24))
+    age = now_utc - synced_at.astimezone(timezone.utc)
     return age.total_seconds() >= hours * 3600
 
+
+def widget_schema_next_sync_at(now: datetime | None = None) -> str | None:
+    prefs = _sync_preferences()
+    if not prefs.get("auto_sync", True):
+        return None
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    synced_at = _parse_synced_at(_SCHEMA_STATE.get("synced_at"))
+    if str(prefs.get("mode") or "interval") == "daily":
+        local_now, scheduled_local = _daily_schedule_for(now_utc, prefs)
+        if local_now < scheduled_local:
+            next_local = scheduled_local
+        elif not synced_at or synced_at.astimezone(scheduled_local.tzinfo) < scheduled_local:
+            next_local = local_now
+        else:
+            next_local = scheduled_local + timedelta(days=1)
+        return next_local.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    hours = max(1, int(prefs.get("interval_hours") or 24))
+    if not synced_at:
+        next_utc = now_utc
+    else:
+        next_utc = synced_at.astimezone(timezone.utc) + timedelta(hours=hours)
+        if next_utc < now_utc:
+            next_utc = now_utc
+    return next_utc.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def widget_schema_schedule_label() -> str:
+    prefs = _sync_preferences()
+    if not prefs.get("auto_sync", True):
+        return "已关闭"
+    if str(prefs.get("mode") or "interval") == "daily":
+        return f"每天 {prefs.get('daily_time', '03:00')} · {prefs.get('timezone', 'UTC')}"
+    return f"每 {max(1, int(prefs.get('interval_hours') or 24))} 小时"
 
 def sync_widget_schema_if_due() -> dict[str, Any]:
     if not widget_schema_sync_due():
@@ -653,12 +730,19 @@ def widget_schema_status() -> dict[str, Any]:
                 counts["bundled_fallback"] += 1
             if schema.get("auto_generated"):
                 generated_fields += len(schema.get("fields") or [])
+        prefs = _sync_preferences()
         return {
             **copy.deepcopy(_SCHEMA_STATE),
             **counts,
             "generated_field_count": generated_fields,
-            "auto_sync": bool(getattr(settings, "widget_schema_auto_sync", True)),
-            "sync_interval_hours": int(getattr(settings, "widget_schema_sync_interval_hours", 24)),
+            "auto_sync": bool(prefs.get("auto_sync", True)),
+            "sync_mode": str(prefs.get("mode", "interval")),
+            "sync_interval_hours": int(prefs.get("interval_hours", 24)),
+            "sync_time": str(prefs.get("daily_time", "03:00")),
+            "sync_timezone": str(prefs.get("timezone", "UTC")),
+            "sync_settings_custom": bool(prefs.get("custom", False)),
+            "sync_schedule_label": widget_schema_schedule_label(),
+            "next_sync_at": widget_schema_next_sync_at(),
             "cache_path": str(_cache_path()),
         }
 

@@ -1,6 +1,17 @@
-# Homepage Admin v0.3.3
+# Homepage Admin v0.3.4
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
+
+## v0.3.4 新功能
+
+- Widget Schema 的“最后同步”和“下次计划”在浏览器中显示为用户本地时间；缓存内部继续保存 UTC。
+- Schema 管理页新增可视化自动同步计划：开关、1–720 小时间隔、每天固定时间、IANA 时区和“使用浏览器时区”。
+- 自动同步计划持久化到 `/data/admin-settings.json`，运行时动态读取，保存后无需重启容器。
+- 页面中的版本绑定文案改为通用说明，升级后不会继续显示旧版本号。
+- Docker 镜像加入 `tzdata`，确保 `Asia/Shanghai` 等 IANA 时区可用于调度。
+
+环境变量仍作为默认值；后台保存的计划优先，恢复默认后重新使用环境变量。
+
 
 > v0.3.2 的主题是：**Homepage 官方 Widget Schema 自动同步 + 全量动态表单 + Schema 管理 + 全局回到顶部**。
 

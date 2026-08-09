@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import uuid
@@ -10,6 +11,7 @@ from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from filelock import FileLock
 from ruamel.yaml import YAML
@@ -247,6 +249,107 @@ class HomepageStore:
         except (OSError, json.JSONDecodeError):
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    def _widget_schema_sync_defaults(self) -> dict[str, Any]:
+        mode = str(getattr(settings, "widget_schema_sync_mode", "interval") or "interval").strip().lower()
+        if mode not in {"interval", "daily"}:
+            mode = "interval"
+        try:
+            interval = int(getattr(settings, "widget_schema_sync_interval_hours", 24))
+        except (TypeError, ValueError):
+            interval = 24
+        interval = max(1, min(interval, 720))
+        sync_time = str(getattr(settings, "widget_schema_sync_time", "03:00") or "03:00").strip()
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", sync_time):
+            sync_time = "03:00"
+        timezone_name = str(getattr(settings, "widget_schema_timezone", "UTC") or "UTC").strip()
+        try:
+            ZoneInfo(timezone_name)
+        except (ZoneInfoNotFoundError, ValueError):
+            timezone_name = "UTC"
+        return {
+            "auto_sync": bool(getattr(settings, "widget_schema_auto_sync", True)),
+            "mode": mode,
+            "interval_hours": interval,
+            "daily_time": sync_time,
+            "timezone": timezone_name,
+        }
+
+    def widget_schema_sync_preferences(self) -> dict[str, Any]:
+        defaults = self._widget_schema_sync_defaults()
+        prefs = self._read_preferences()
+        raw = prefs.get("widget_schema_sync")
+        if not isinstance(raw, dict):
+            return {**defaults, "custom": False}
+        result = dict(defaults)
+        if "auto_sync" in raw:
+            result["auto_sync"] = bool(raw.get("auto_sync"))
+        mode = str(raw.get("mode", result["mode"]) or result["mode"]).strip().lower()
+        if mode in {"interval", "daily"}:
+            result["mode"] = mode
+        try:
+            result["interval_hours"] = max(1, min(int(raw.get("interval_hours", result["interval_hours"])), 720))
+        except (TypeError, ValueError):
+            pass
+        daily_time = str(raw.get("daily_time", result["daily_time"]) or result["daily_time"]).strip()
+        if re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", daily_time):
+            result["daily_time"] = daily_time
+        timezone_name = str(raw.get("timezone", result["timezone"]) or result["timezone"]).strip()
+        try:
+            ZoneInfo(timezone_name)
+            result["timezone"] = timezone_name
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+        result["custom"] = True
+        return result
+
+    def set_widget_schema_sync_preferences(
+        self,
+        *,
+        auto_sync: bool,
+        mode: str,
+        interval_hours: int,
+        daily_time: str,
+        timezone_name: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        mode = str(mode).strip().lower()
+        if mode not in {"interval", "daily"}:
+            raise ConfigError("自动同步方式必须是固定间隔或每天固定时间。")
+        if interval_hours < 1 or interval_hours > 720:
+            raise ConfigError("自动同步间隔必须在 1 到 720 小时之间。")
+        daily_time = str(daily_time).strip()
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", daily_time):
+            raise ConfigError("每天同步时间必须是 HH:MM 格式。")
+        timezone_name = str(timezone_name).strip() or "UTC"
+        try:
+            ZoneInfo(timezone_name)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ConfigError("时区无效，请填写 IANA 时区，例如 Asia/Shanghai、Asia/Tokyo 或 UTC。") from exc
+        payload = {
+            "auto_sync": bool(auto_sync),
+            "mode": mode,
+            "interval_hours": int(interval_hours),
+            "daily_time": daily_time,
+            "timezone": timezone_name,
+        }
+        with self.locked():
+            prefs = self._read_preferences()
+            prefs["widget_schema_sync"] = payload
+            self._atomic_write(self.preferences_path, json.dumps(prefs, ensure_ascii=False, indent=2) + "\n")
+            self._audit(actor, f"set widget schema sync:{json.dumps(payload, ensure_ascii=False, sort_keys=True)}", "admin-settings.json", None)
+        return {**payload, "custom": True}
+
+    def reset_widget_schema_sync_preferences(self, actor: str) -> dict[str, Any]:
+        with self.locked():
+            prefs = self._read_preferences()
+            prefs.pop("widget_schema_sync", None)
+            if prefs:
+                self._atomic_write(self.preferences_path, json.dumps(prefs, ensure_ascii=False, indent=2) + "\n")
+            elif self.preferences_path.exists():
+                self.preferences_path.unlink()
+            self._audit(actor, "reset widget schema sync settings", "admin-settings.json", None)
+        return self.widget_schema_sync_preferences()
 
     def backup_limit(self) -> int:
         default = max(1, min(int(settings.backup_limit), 500))

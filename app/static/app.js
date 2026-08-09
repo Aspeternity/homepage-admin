@@ -658,6 +658,43 @@
     $('[data-yaml-diff-confirm]', dialog || document)?.addEventListener('click', () => { bypass = true; dialog?.close(); yamlDiffForm.submit(); });
   }
 
+  // Render ISO timestamps in the browser's local timezone. The Schema cache
+  // stores UTC so it is unambiguous across containers and hosts.
+  $$('[data-local-datetime]').forEach((node) => {
+    const raw = node.getAttribute('datetime') || node.textContent || '';
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return;
+    try {
+      node.textContent = new Intl.DateTimeFormat(undefined, {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+      }).format(parsed);
+      node.title = `UTC: ${raw}`;
+    } catch (_) {}
+  });
+
+  // Widget Schema schedule editor: support interval or a daily wall-clock time.
+  const schemaSchedule = $('[data-schema-schedule]');
+  if (schemaSchedule) {
+    const mode = $('[data-schema-schedule-mode]', schemaSchedule);
+    const intervalField = $('[data-schema-interval]', schemaSchedule);
+    const dailyField = $('[data-schema-daily-time]', schemaSchedule);
+    const timezoneField = $('[data-schema-timezone]', schemaSchedule);
+    const timezoneInput = $('[data-schema-timezone-input]', schemaSchedule);
+    const refreshScheduleFields = () => {
+      const daily = mode?.value === 'daily';
+      if (intervalField) intervalField.hidden = daily;
+      if (dailyField) dailyField.hidden = !daily;
+      if (timezoneField) timezoneField.hidden = !daily;
+    };
+    mode?.addEventListener('change', refreshScheduleFields);
+    $('[data-use-browser-timezone]', schemaSchedule)?.addEventListener('click', () => {
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (timezoneInput && zone) timezoneInput.value = zone;
+    });
+    refreshScheduleFields();
+  }
+
   // v0.3.2 global back-to-top control for long discovery / Widget pages.
   const backToTop = $('[data-back-to-top]');
   if (backToTop) {

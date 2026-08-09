@@ -1165,3 +1165,94 @@ def test_v033_no_master_fallback_in_widget_catalog() -> None:
     from pathlib import Path
     source = (Path(__file__).resolve().parents[1] / "app" / "widget_catalog.py").read_text(encoding="utf-8")
     assert 'widget_schema_ref", "master"' not in source
+
+
+def test_v034_schema_page_uses_version_neutral_copy_and_local_time_renderer() -> None:
+    client = TestClient(app)
+    login(client)
+    response = client.get("/widget-schema")
+    assert response.status_code == 200
+    assert "v0.3.2 不再依赖" not in response.text
+    assert "自动同步计划" in response.text
+    assert 'name="mode"' in response.text
+    assert 'name="daily_time"' in response.text
+    assert 'name="timezone"' in response.text
+    source = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "data-local-datetime" in source
+    assert "Intl.DateTimeFormat" in source
+
+
+def test_v034_widget_schema_schedule_can_be_configured_and_reset() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    try:
+        response = client.post(
+            "/widget-schema/schedule",
+            data={
+                "csrf": csrf,
+                "auto_sync": "on",
+                "mode": "daily",
+                "interval_hours": "12",
+                "daily_time": "04:30",
+                "timezone": "Asia/Shanghai",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        prefs = store.widget_schema_sync_preferences()
+        assert prefs["custom"] is True
+        assert prefs["auto_sync"] is True
+        assert prefs["mode"] == "daily"
+        assert prefs["daily_time"] == "04:30"
+        assert prefs["timezone"] == "Asia/Shanghai"
+        page = client.get("/widget-schema")
+        assert 'value="04:30"' in page.text
+        assert 'value="Asia/Shanghai"' in page.text
+    finally:
+        store.reset_widget_schema_sync_preferences("test")
+    assert store.widget_schema_sync_preferences()["custom"] is False
+
+
+def test_v034_daily_widget_schema_schedule_uses_configured_timezone() -> None:
+    from datetime import datetime, timezone
+    from app import widget_catalog as catalog_module
+
+    original_state = dict(catalog_module._SCHEMA_STATE)
+    try:
+        store.set_widget_schema_sync_preferences(
+            auto_sync=True,
+            mode="daily",
+            interval_hours=24,
+            daily_time="03:00",
+            timezone_name="Asia/Shanghai",
+            actor="test",
+        )
+        catalog_module._SCHEMA_STATE["synced_at"] = "2026-08-09T17:00:00Z"  # 01:00 Asia/Shanghai
+        assert catalog_module.widget_schema_sync_due(datetime(2026, 8, 9, 18, 30, tzinfo=timezone.utc)) is False
+        assert catalog_module.widget_schema_sync_due(datetime(2026, 8, 9, 19, 1, tzinfo=timezone.utc)) is True
+        catalog_module._SCHEMA_STATE["synced_at"] = "2026-08-09T19:05:00Z"  # 03:05 Asia/Shanghai
+        assert catalog_module.widget_schema_sync_due(datetime(2026, 8, 9, 20, 0, tzinfo=timezone.utc)) is False
+        assert catalog_module.widget_schema_next_sync_at(datetime(2026, 8, 9, 20, 0, tzinfo=timezone.utc)) == "2026-08-10T19:00:00Z"
+    finally:
+        catalog_module._SCHEMA_STATE.clear()
+        catalog_module._SCHEMA_STATE.update(original_state)
+        store.reset_widget_schema_sync_preferences("test")
+
+
+def test_v034_widget_schema_schedule_rejects_invalid_timezone() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    response = client.post(
+        "/widget-schema/schedule",
+        data={
+            "csrf": csrf,
+            "auto_sync": "on",
+            "mode": "daily",
+            "interval_hours": "24",
+            "daily_time": "03:00",
+            "timezone": "Not/A-Timezone",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "error=" in response.headers["location"]

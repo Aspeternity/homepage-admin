@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.4 - 2026-08-10
+
+- Schema 时间在浏览器按本地时区显示，同时保留 UTC 作为内部标准。
+- 自动同步支持后台开关、固定间隔、每天固定时间和 IANA 时区。
+- 自动同步设置持久化到 `/data/admin-settings.json`，无需重启生效。
+- Schema / Service 页面删除固定旧版本号文案。
+- Docker 镜像加入 `tzdata`。
+
 ## v0.3.3 - 2026-08-10
 
 - Fix Widget Schema runtime synchronization default ref from obsolete `master` to Homepage upstream `dev`.

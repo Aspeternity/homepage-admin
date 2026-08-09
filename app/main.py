@@ -54,25 +54,24 @@ BASE_DIR = Path(__file__).resolve().parent
 
 @asynccontextmanager
 async def app_lifespan(_: FastAPI):
-    task: asyncio.Task[Any] | None = None
-    if settings.widget_schema_auto_sync:
-        async def runner() -> None:
-            while True:
-                try:
-                    await asyncio.to_thread(sync_widget_schema_if_due)
-                except Exception:
-                    # The bundled/cached catalog remains usable. The error is exposed on /widget-schema.
-                    pass
-                await asyncio.sleep(3600)
+    async def runner() -> None:
+        while True:
+            try:
+                # Runtime preferences are read on every check, so enabling/disabling
+                # or changing the schedule in the UI takes effect without a restart.
+                await asyncio.to_thread(sync_widget_schema_if_due)
+            except Exception:
+                # The bundled/cached catalog remains usable. The error is exposed on /widget-schema.
+                pass
+            await asyncio.sleep(60)
 
-        task = asyncio.create_task(runner(), name="widget-schema-auto-sync")
+    task = asyncio.create_task(runner(), name="widget-schema-auto-sync")
     try:
         yield
     finally:
-        if task is not None:
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(title="Homepage Admin", version=__version__, docs_url=None, redoc_url=None, lifespan=app_lifespan)
@@ -1297,6 +1296,48 @@ def widget_schema_page(request: Request, _: None = Depends(auth_guard)) -> HTMLR
     )
 
 
+@app.post("/widget-schema/schedule")
+async def widget_schema_schedule_update(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        interval_hours = int(str(form.get("interval_hours", "24")).strip())
+        saved = store.set_widget_schema_sync_preferences(
+            auto_sync=str(form.get("auto_sync", "")).lower() in {"1", "true", "yes", "on"},
+            mode=str(form.get("mode", "interval")),
+            interval_hours=interval_hours,
+            daily_time=str(form.get("daily_time", "03:00")),
+            timezone_name=str(form.get("timezone", "UTC")),
+            actor=actor(request),
+        )
+        if not saved["auto_sync"]:
+            message = "Widget Schema 自动同步已关闭；手动同步仍可正常使用。"
+        elif saved["mode"] == "daily":
+            message = f"自动同步已保存：每天 {saved['daily_time']}（{saved['timezone']}）。"
+        else:
+            message = f"自动同步已保存：每 {saved['interval_hours']} 小时检查一次。"
+        return redirect("/widget-schema", ok=message)
+    except (TypeError, ValueError):
+        return redirect("/widget-schema", error="自动同步间隔必须填写 1 到 720 之间的整数。")
+    except ConfigError as exc:
+        return redirect("/widget-schema", error=str(exc))
+
+
+@app.post("/widget-schema/schedule/reset")
+async def widget_schema_schedule_reset(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    saved = store.reset_widget_schema_sync_preferences(actor(request))
+    if saved["auto_sync"]:
+        if saved["mode"] == "daily":
+            message = f"已恢复环境默认自动同步计划：每天 {saved['daily_time']}（{saved['timezone']}）。"
+        else:
+            message = f"已恢复环境默认自动同步计划：每 {saved['interval_hours']} 小时。"
+    else:
+        message = "已恢复环境默认设置：自动同步关闭。"
+    return redirect("/widget-schema", ok=message)
+
+
 @app.post("/widget-schema/sync")
 async def widget_schema_sync_now(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
     form = await request.form()
@@ -1316,7 +1357,7 @@ async def widget_schema_reset(request: Request, _: None = Depends(auth_guard)) -
     form = await request.form()
     verify_csrf(request, str(form.get("csrf", "")))
     reset_widget_schema_cache()
-    return redirect("/widget-schema", ok="已清除官方 Schema 缓存并恢复内置目录；自动同步仍会按计划重试。")
+    return redirect("/widget-schema", ok="已清除官方 Schema 缓存并恢复内置目录；后续自动同步将按当前计划处理。")
 
 
 @app.post("/widget-schema/import")

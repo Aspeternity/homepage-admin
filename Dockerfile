@@ -6,6 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# IANA timezone database is used by the configurable Widget Schema scheduler.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --gid 1000 app && useradd --uid 1000 --gid 1000 --create-home app
 
 COPY requirements.txt ./
