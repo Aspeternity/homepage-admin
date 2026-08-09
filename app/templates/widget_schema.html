@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Widget Schema · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><a class="back-link" href="/widget-center">← 返回 Widget 中心</a><h1>Widget Schema</h1><p>同步 Homepage 官方 Service Widget 文档与注册表，并自动把官方 YAML 配置示例转换为可视化表单。</p></div>
+</section>
+
+<section class="schema-management-grid">
+  <article class="form-card schema-status-card">
+    <div class="section-title-row"><div><h2>同步状态</h2><p class="section-help">缓存保存在 Admin 的 <code>/data</code>，不会修改 Homepage 官方配置文件。</p></div><span class="role-pill {% if schema_status.synced_at %}success-pill{% endif %}">{{ '已在线同步' if schema_status.synced_at else '内置离线目录' }}</span></div>
+    <dl class="schema-status-list">
+      <div><dt>来源仓库</dt><dd>{{ schema_status.source }}</dd></div>
+      <div><dt>分支 / Ref</dt><dd><code>{{ schema_status.ref }}</code></dd></div>
+      <div><dt>最后同步</dt><dd>{{ schema_status.synced_at or '尚未成功在线同步' }}</dd></div>
+      <div><dt>Widget 数量</dt><dd>{{ schema_status.widget_count }}</dd></div>
+      <div><dt>官方文档数</dt><dd>{{ schema_status.document_count }}</dd></div>
+      <div><dt>官方注册表项</dt><dd>{{ schema_status.registry_count }}</dd></div>
+      <div><dt>自动生成字段</dt><dd>{{ schema_status.generated_field_count }}</dd></div>
+      <div><dt>自动同步</dt><dd>{{ '启用' if schema_status.auto_sync else '关闭' }} · 每 {{ schema_status.sync_interval_hours }} 小时检查</dd></div>
+    </dl>
+    {% if schema_status.last_error %}<div class="alert warning">最近错误：{{ schema_status.last_error }}</div>{% endif %}
+    {% if schema_status.errors %}<details class="schema-errors"><summary>查看同步时的部分解析警告（{{ schema_status.error_count }}）</summary><pre>{{ schema_status.errors|join('\n') }}</pre></details>{% endif %}
+  </article>
+
+  <article class="form-card">
+    <h2>工作方式</h2>
+    <p class="section-help">v0.3.2 不再依赖人工维护 15 个专属表单。同步器读取官方 <code>docs/widgets/services/*.md</code> 的 YAML 示例、Allowed fields，并读取 <code>src/widgets/widgets.js</code> 注册表。</p>
+    <div class="schema-flow">
+      <span>Homepage 官方仓库</span><b>→</b><span>Schema Parser</span><b>→</b><span>/data 缓存</span><b>→</b><span>动态增强表单</span>
+    </div>
+    <p class="section-help">Portainer、Proxmox、Jellyfin 等已有深度连接测试的类型，会在自动字段上继续叠加 Admin 的专门增强规则；其他官方 Widget 也会获得自动表单与基础测试。</p>
+  </article>
+</section>
+
+<section class="form-card">
+  <div class="section-title-row"><div><h2>手动操作</h2><p class="section-help">正常情况下无需操作。若 Homepage 刚新增 Widget，可立即同步，不必等待下一个自动检查周期。</p></div></div>
+  <div class="inline-actions">
+    <form method="post" action="/widget-schema/sync"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button primary" type="submit">立即同步官方 Schema</button></form>
+    <form method="post" action="/widget-schema/reset"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button secondary" type="submit">清除缓存并恢复内置目录</button></form>
+  </div>
+</section>
+
+<section class="form-card">
+  <details>
+    <summary><strong>离线导入 Widget Schema JSON</strong></summary>
+    <p class="section-help">用于无法访问 GitHub 的环境。可粘贴另一个 Homepage Admin 导出的缓存对象，或直接粘贴 Widget 映射；导入后会写入 <code>/data/widget-schema-cache.json</code>。</p>
+    <form method="post" action="/widget-schema/import">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Schema JSON<textarea name="schema_json" rows="12" spellcheck="false" placeholder='{"meta": {...}, "widgets": {...}}' required></textarea></label>
+      <div class="modal-actions"><button class="button secondary" type="submit">导入 Schema</button></div>
+    </form>
+  </details>
+</section>
+{% endblock %}

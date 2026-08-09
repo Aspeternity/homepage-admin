@@ -24,3 +24,6 @@ Thumbs.db
 # Local archives
 *.zip
 *.tar.gz
+
+# Generated official Widget Schema snapshot (CI build artifact)
+app/bundled_widget_schema.json

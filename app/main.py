@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import copy
+from contextlib import asynccontextmanager, suppress
 import difflib
 import json
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -32,12 +35,47 @@ from .security import ensure_csrf, login_limiter, require_auth, verify_csrf, ver
 from .settings import settings
 from .store import ALLOWED_FILES, ConfigError, deep_plain, store
 from .proxmox_client import ProxmoxConnection, ProxmoxDiscoveryClient, ProxmoxDiscoveryError
-from .widget_catalog import WIDGET_CATALOG, catalog_categories, catalog_field_names, catalog_secret_names, public_catalog
+from .widget_catalog import (
+    WIDGET_CATALOG,
+    catalog_categories,
+    catalog_field_names,
+    catalog_secret_names,
+    public_catalog,
+    import_widget_schema_json,
+    reset_widget_schema_cache,
+    sync_widget_schema,
+    sync_widget_schema_if_due,
+    widget_schema_status,
+)
 from .widget_tester import WidgetTestError, test_widget
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="Homepage Admin", version=__version__, docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def app_lifespan(_: FastAPI):
+    task: asyncio.Task[Any] | None = None
+    if settings.widget_schema_auto_sync:
+        async def runner() -> None:
+            while True:
+                try:
+                    await asyncio.to_thread(sync_widget_schema_if_due)
+                except Exception:
+                    # The bundled/cached catalog remains usable. The error is exposed on /widget-schema.
+                    pass
+                await asyncio.sleep(3600)
+
+        task = asyncio.create_task(runner(), name="widget-schema-auto-sync")
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+
+app = FastAPI(title="Homepage Admin", version=__version__, docs_url=None, redoc_url=None, lifespan=app_lifespan)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.session_secret,
@@ -414,7 +452,7 @@ def bookmarks_page(request: Request, _: None = Depends(auth_guard)) -> HTMLRespo
             "bookmarks",
             kind="bookmarks",
             title="书签管理",
-            subtitle="管理 bookmarks.yaml 中的轻量链接和 PT 站点。",
+            subtitle="管理 bookmarks.yaml 中的网站书签、快捷链接和分类。",
             groups=groups,
             ok=request.query_params.get("ok"),
             error=error,
@@ -729,10 +767,13 @@ def _coerce_widget_field(kind: str, raw: str) -> Any:
     if kind == "number":
         if raw == "":
             return None
+        value = raw.strip()
         try:
-            return int(raw)
+            if re.fullmatch(r"[+-]?\d+", value):
+                return int(value)
+            return float(value)
         except ValueError as exc:
-            raise ConfigError(f"Widget 数字字段必须是整数：{raw}") from exc
+            raise ConfigError(f"Widget 数字字段必须是有效数字：{raw}") from exc
     if kind == "yaml":
         if not raw.strip():
             return None
@@ -1234,8 +1275,59 @@ def widget_center_page(request: Request, _: None = Depends(auth_guard)) -> HTMLR
             "widget-center",
             widget_catalog=WIDGET_CATALOG,
             categories=catalog_categories(),
+            schema_status=widget_schema_status(),
+            ok=request.query_params.get("ok"),
+            error=request.query_params.get("error"),
         ),
     )
+
+
+@app.get("/widget-schema", response_class=HTMLResponse)
+def widget_schema_page(request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "widget_schema.html",
+        context(
+            request,
+            "widget-center",
+            schema_status=widget_schema_status(),
+            ok=request.query_params.get("ok"),
+            error=request.query_params.get("error"),
+        ),
+    )
+
+
+@app.post("/widget-schema/sync")
+async def widget_schema_sync_now(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        status = await asyncio.to_thread(sync_widget_schema, force=True)
+        return redirect(
+            "/widget-schema",
+            ok=f"官方 Widget Schema 已同步：{status.get('widget_count', 0)} 个 Widget，自动字段 {status.get('generated_field_count', 0)} 个。",
+        )
+    except Exception as exc:
+        return redirect("/widget-schema", error=f"同步失败：{exc}")
+
+
+@app.post("/widget-schema/reset")
+async def widget_schema_reset(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    reset_widget_schema_cache()
+    return redirect("/widget-schema", ok="已清除官方 Schema 缓存并恢复内置目录；自动同步仍会按计划重试。")
+
+
+@app.post("/widget-schema/import")
+async def widget_schema_import(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        status = import_widget_schema_json(str(form.get("schema_json", "")))
+        return redirect("/widget-schema", ok=f"Schema 已导入：{status.get('widget_count', 0)} 个 Widget。")
+    except (ValueError, OSError) as exc:
+        return redirect("/widget-schema", error=f"导入失败：{exc}")
 
 
 def _proxmox_connections() -> dict[str, ProxmoxConnection]:

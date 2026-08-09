@@ -26,6 +26,11 @@ class AppSettings:
     homepage_docker_proxy_host: str = os.getenv("HOMEPAGE_DOCKER_PROXY_HOST", "homepage-docker-proxy").strip()
     homepage_docker_proxy_port: int = int(os.getenv("HOMEPAGE_DOCKER_PROXY_PORT", "2375"))
     hide_internal_containers: bool = _bool("DOCKER_HIDE_INTERNAL", True)
+    widget_schema_auto_sync: bool = _bool("WIDGET_SCHEMA_AUTO_SYNC", True)
+    widget_schema_sync_interval_hours: int = int(os.getenv("WIDGET_SCHEMA_SYNC_INTERVAL_HOURS", "24"))
+    widget_schema_ref: str = os.getenv("WIDGET_SCHEMA_REF", "master").strip() or "master"
+    widget_schema_timeout: float = float(os.getenv("WIDGET_SCHEMA_TIMEOUT", "8"))
+    widget_schema_workers: int = int(os.getenv("WIDGET_SCHEMA_WORKERS", "10"))
     allowed_hosts: tuple[str, ...] = tuple(
         x.strip() for x in os.getenv("ADMIN_ALLOWED_HOSTS", "*").split(",") if x.strip()
     )

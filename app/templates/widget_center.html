@@ -2,9 +2,25 @@
 {% block title %}Widget 中心 · Homepage Admin{% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div><h1>Widget 中心</h1><p>已索引 Homepage 当前官方 Service Widget，共 {{ widget_catalog|length }} 个类型；常用类型提供增强专属表单，其余类型也可搜索并通过通用 YAML 配置。</p></div>
-  <div class="heading-actions"><a class="button primary" href="/services/item/new">空白新增服务</a></div>
+  <div>
+    <h1>Widget 中心</h1>
+    <p>从 Homepage 官方 Service Widget 文档自动生成配置表单；官方新增 Widget 后会按计划自动同步，无需等待 Homepage Admin 发版。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="/widget-schema">Schema 管理</a>
+    <a class="button primary" href="/services/item/new">空白新增服务</a>
+  </div>
 </section>
+
+<section class="schema-summary-bar">
+  <div><span>当前目录</span><strong>{{ widget_catalog|length }}</strong><small>Widget</small></div>
+  <div><span>官方自动表单</span><strong>{{ schema_status.official_auto }}</strong><small>类型</small></div>
+  <div><span>Admin 深度增强</span><strong>{{ schema_status.admin_enhanced }}</strong><small>类型</small></div>
+  <div><span>自动生成字段</span><strong>{{ schema_status.generated_field_count }}</strong><small>项</small></div>
+  <div class="schema-summary-source"><span>Schema 来源</span><strong>{{ schema_status.source }}</strong><small>{{ schema_status.ref }}{% if schema_status.synced_at %} · {{ schema_status.synced_at }}{% else %} · 尚未在线同步{% endif %}</small></div>
+</section>
+
+{% if schema_status.last_error %}<div class="alert warning">最近一次自动同步失败：{{ schema_status.last_error }}。当前继续使用已缓存或内置目录。</div>{% endif %}
 
 <section class="form-card widget-center-toolbar">
   <label>搜索 Widget<input type="search" placeholder="Proxmox / NAS / 下载 / 监控..." data-widget-search></label>
@@ -17,13 +33,23 @@
     <header>
       <div class="widget-catalog-icon">{{ schema.label[:1] }}</div>
       <div><h3>{{ schema.label }}</h3><code>{{ type_id }}</code></div>
-      <div class="widget-catalog-badges"><span class="role-pill">{{ schema.category }}</span><span class="role-pill {% if schema.enhanced %}success-pill{% endif %}">{% if schema.enhanced %}增强表单{% else %}官方索引{% endif %}</span></div>
+      <div class="widget-catalog-badges">
+        <span class="role-pill">{{ schema.category }}</span>
+        {% if schema.source_mode == 'admin-enhanced' %}
+          <span class="role-pill success-pill">深度增强</span>
+        {% elif schema.auto_generated %}
+          <span class="role-pill auto-pill">官方自动表单</span>
+        {% else %}
+          <span class="role-pill">离线目录</span>
+        {% endif %}
+      </div>
     </header>
     <p>{{ schema.description }}</p>
     <div class="widget-catalog-meta">
-      {% if schema.enhanced %}<span>{{ schema.fields|length }} 个配置字段</span>{% else %}<span>通用 YAML 配置</span>{% endif %}
+      <span>{{ schema.fields|length }} 个配置字段</span>
       {% if schema.allowed_fields %}<span>{{ schema.allowed_fields|length }} 个可选展示字段</span>{% endif %}
       <span>{% if schema.test == 'config' %}配置校验{% elif schema.test == 'basic' %}基础连通测试{% else %}API 深度测试{% endif %}</span>
+      {% if schema.alias_of %}<span>兼容别名 → {{ schema.alias_of }}</span>{% endif %}
     </div>
     {% if schema.notice %}<div class="widget-catalog-notice">{{ schema.notice }}</div>{% endif %}
     <footer><a href="{{ schema.docs }}" target="_blank" rel="noopener">官方文档 ↗</a><a class="button primary small" href="/services/item/new?widget={{ type_id }}">使用此 Widget</a></footer>

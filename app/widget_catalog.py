@@ -2,6 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
+import copy
+import json
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+
+from .settings import settings
+from .widget_schema_sync import fetch_official_widget_schemas
+
 # Enhanced schemas for the widgets Homepage Admin understands deeply.
 # The full official Service Widget index is merged below so every documented widget
 # remains searchable even when a bespoke form has not been implemented yet.
@@ -235,7 +244,7 @@ ENHANCED_WIDGET_CATALOG: dict[str, dict[str, Any]] = {
 
 
 # Full Homepage Service Widget index.  The official documentation contains many more
-# integrations than we can reasonably give a bespoke form on day one.  v0.3.1 keeps
+# integrations than we can reasonably give a bespoke form on day one.  v0.3.2 keeps
 # all official widget types searchable here, while ENHANCED_WIDGET_CATALOG provides
 # richer forms / field pickers / deep tests for the widgets we actively model.
 #
@@ -428,7 +437,254 @@ def _build_catalog() -> dict[str, dict[str, Any]]:
     return result
 
 
-WIDGET_CATALOG: dict[str, dict[str, Any]] = _build_catalog()
+BUILTIN_WIDGET_CATALOG: dict[str, dict[str, Any]] = _build_catalog()
+WIDGET_CATALOG: dict[str, dict[str, Any]] = copy.deepcopy(BUILTIN_WIDGET_CATALOG)
+_SCHEMA_LOCK = threading.RLock()
+_SCHEMA_STATE: dict[str, Any] = {
+    "source": "bundled",
+    "ref": getattr(settings, "widget_schema_ref", "master"),
+    "synced_at": None,
+    "document_count": 0,
+    "widget_count": len(WIDGET_CATALOG),
+    "registry_count": 0,
+    "error_count": 0,
+    "errors": [],
+    "last_error": "",
+}
+
+
+def _merge_field_lists(auto_fields: list[dict[str, Any]], enhanced_fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    overrides = {str(field.get("name")): field for field in enhanced_fields if field.get("name")}
+    seen: set[str] = set()
+    for field in auto_fields:
+        name = str(field.get("name", ""))
+        merged = dict(field)
+        if name in overrides:
+            merged.update(overrides[name])
+        result.append(merged)
+        seen.add(name)
+    for name, field in overrides.items():
+        if name not in seen:
+            result.append(dict(field))
+    return result
+
+
+def _merge_synced_catalog(synced: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    # Synced official schemas are primary. Bundled entries are retained as an offline fallback
+    # and deep Admin enhancements are layered on top without hiding newly-added official fields.
+    # A successful official sync is authoritative: removed/deprecated official types should
+    # disappear instead of being kept forever by the old hand-maintained index. Deep Admin
+    # integrations are the only local entries retained when the upstream docs temporarily omit one.
+    result: dict[str, dict[str, Any]] = copy.deepcopy(synced)
+
+    for type_id, enhanced in ENHANCED_WIDGET_CATALOG.items():
+        base = copy.deepcopy(result.get(type_id, {}))
+        auto_fields = list(base.get("fields") or [])
+        manual_fields = list(enhanced.get("fields") or [])
+        base.update({k: copy.deepcopy(v) for k, v in enhanced.items() if k != "fields"})
+        base["fields"] = _merge_field_lists(auto_fields, manual_fields)
+        if not base.get("allowed_fields"):
+            base["allowed_fields"] = copy.deepcopy(enhanced.get("allowed_fields") or [])
+        base["enhanced"] = True
+        base["auto_generated"] = bool(synced.get(type_id))
+        base["source_mode"] = "admin-enhanced"
+        result[type_id] = base
+
+    for type_id, schema in result.items():
+        schema.setdefault("enhanced", bool(schema.get("fields")))
+        schema.setdefault("auto_generated", type_id in synced)
+        schema.setdefault("source_mode", "official-auto" if type_id in synced else "bundled-fallback")
+    return dict(sorted(result.items()))
+
+
+def _apply_catalog(catalog: dict[str, dict[str, Any]], state: dict[str, Any] | None = None) -> None:
+    with _SCHEMA_LOCK:
+        WIDGET_CATALOG.clear()
+        WIDGET_CATALOG.update(catalog)
+        if state:
+            _SCHEMA_STATE.update(state)
+        _SCHEMA_STATE["widget_count"] = len(WIDGET_CATALOG)
+
+
+def _cache_path():
+    return settings.data_dir / "widget-schema-cache.json"
+
+
+def load_widget_schema_cache() -> bool:
+    path = _cache_path()
+    if not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        widgets = payload.get("widgets")
+        meta = payload.get("meta") or {}
+        if not isinstance(widgets, dict) or len(widgets) < 20:
+            return False
+        _apply_catalog(_merge_synced_catalog(widgets), dict(meta))
+        return True
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return False
+
+
+def _write_cache(widgets: dict[str, dict[str, Any]], meta: dict[str, Any]) -> None:
+    path = _cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(".tmp")
+    temp.write_text(json.dumps({"schema_version": 1, "meta": meta, "widgets": widgets}, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(path)
+
+
+def sync_widget_schema(*, force: bool = True) -> dict[str, Any]:
+    with _SCHEMA_LOCK:
+        # Keep concurrent manual/automatic syncs from hammering GitHub.
+        if not force and not widget_schema_sync_due():
+            return widget_schema_status()
+        try:
+            widgets, meta = fetch_official_widget_schemas(
+                ref=getattr(settings, "widget_schema_ref", "master"),
+                timeout=float(getattr(settings, "widget_schema_timeout", 8.0)),
+                workers=int(getattr(settings, "widget_schema_workers", 10)),
+            )
+            if len(widgets) < 50:
+                raise RuntimeError(f"官方 Widget Schema 数量异常：只发现 {len(widgets)} 个，已拒绝覆盖现有缓存。")
+            _write_cache(widgets, meta)
+            meta["last_error"] = ""
+            _apply_catalog(_merge_synced_catalog(widgets), meta)
+            return widget_schema_status()
+        except Exception as exc:
+            _SCHEMA_STATE["last_error"] = str(exc)
+            raise
+
+
+def _parse_synced_at(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def widget_schema_sync_due() -> bool:
+    if not getattr(settings, "widget_schema_auto_sync", True):
+        return False
+    synced_at = _parse_synced_at(_SCHEMA_STATE.get("synced_at"))
+    if not synced_at:
+        return True
+    hours = max(1, int(getattr(settings, "widget_schema_sync_interval_hours", 24)))
+    age = datetime.now(timezone.utc) - synced_at.astimezone(timezone.utc)
+    return age.total_seconds() >= hours * 3600
+
+
+def sync_widget_schema_if_due() -> dict[str, Any]:
+    if not widget_schema_sync_due():
+        return widget_schema_status()
+    return sync_widget_schema(force=False)
+
+
+def import_widget_schema_json(raw: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Schema JSON 无效：{exc}") from exc
+    if isinstance(payload, dict) and isinstance(payload.get("widgets"), dict):
+        widgets = payload["widgets"]
+        meta = dict(payload.get("meta") or {})
+    elif isinstance(payload, dict):
+        widgets = payload
+        meta = {}
+    else:
+        raise ValueError("Schema JSON 必须是 widgets 映射或包含 widgets 的缓存对象。")
+    if len(widgets) < 20 or not all(isinstance(key, str) and isinstance(value, dict) for key, value in widgets.items()):
+        raise ValueError("Schema 数量或格式异常，至少需要 20 个 Widget 映射。")
+    meta.update({
+        "source": "manual-import",
+        "ref": str(meta.get("ref") or getattr(settings, "widget_schema_ref", "master")),
+        "synced_at": str(meta.get("synced_at") or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")),
+        "widget_count": len(widgets),
+        "last_error": "",
+    })
+    _write_cache(widgets, meta)
+    _apply_catalog(_merge_synced_catalog(widgets), meta)
+    return widget_schema_status()
+
+
+def reset_widget_schema_cache() -> dict[str, Any]:
+    path = _cache_path()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+    # Prefer the official snapshot bundled into the image by GitHub Actions.
+    # This keeps every auto-generated form available even when runtime GitHub
+    # access is temporarily unavailable. Fall back to the hand-maintained
+    # directory only for development/source archives that have no snapshot.
+    if load_bundled_widget_schema():
+        _SCHEMA_STATE["last_error"] = ""
+        return widget_schema_status()
+
+    state = {
+        "source": "bundled-fallback",
+        "ref": getattr(settings, "widget_schema_ref", "master"),
+        "synced_at": None,
+        "document_count": 0,
+        "registry_count": 0,
+        "error_count": 0,
+        "errors": [],
+        "last_error": "",
+    }
+    _apply_catalog(copy.deepcopy(BUILTIN_WIDGET_CATALOG), state)
+    return widget_schema_status()
+
+
+def widget_schema_status() -> dict[str, Any]:
+    with _SCHEMA_LOCK:
+        counts = {"official_auto": 0, "admin_enhanced": 0, "bundled_fallback": 0}
+        generated_fields = 0
+        for schema in WIDGET_CATALOG.values():
+            mode = str(schema.get("source_mode", ""))
+            if mode == "official-auto":
+                counts["official_auto"] += 1
+            elif mode == "admin-enhanced":
+                counts["admin_enhanced"] += 1
+            else:
+                counts["bundled_fallback"] += 1
+            if schema.get("auto_generated"):
+                generated_fields += len(schema.get("fields") or [])
+        return {
+            **copy.deepcopy(_SCHEMA_STATE),
+            **counts,
+            "generated_field_count": generated_fields,
+            "auto_sync": bool(getattr(settings, "widget_schema_auto_sync", True)),
+            "sync_interval_hours": int(getattr(settings, "widget_schema_sync_interval_hours", 24)),
+            "cache_path": str(_cache_path()),
+        }
+
+
+def load_bundled_widget_schema() -> bool:
+    path = Path(__file__).resolve().with_name("bundled_widget_schema.json")
+    if not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        widgets = payload.get("widgets")
+        meta = payload.get("meta") or {}
+        if not isinstance(widgets, dict) or len(widgets) < 20:
+            return False
+        bundled_meta = dict(meta)
+        bundled_meta["source"] = "bundled-official-schema"
+        _apply_catalog(_merge_synced_catalog(widgets), bundled_meta)
+        return True
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return False
+
+
+# Prefer the schema snapshot generated by GitHub Actions, then overlay a newer /data cache.
+# If neither exists, installations remain fully usable with the hand-maintained offline index.
+load_bundled_widget_schema()
+load_widget_schema_cache()
 
 
 def catalog_field_names(widget_type: str) -> set[str]:

@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.3.2 - 2026-08-10
+
+- 新增 Homepage 官方 Widget Schema 同步引擎：解析官方 Service Widget 文档 YAML 示例、Allowed fields 与 `src/widgets/widgets.js` 注册表。
+- 官方同步成功后，所有可解析 Service Widget 自动生成增强表单，不再只有 15 个手工增强类型。
+- 自动识别文本、布尔、数字、YAML、Secret 字段，并把官方 Allowed fields 转换为可视化选择。
+- 同一官方文档存在多个 YAML 示例时会合并字段，避免遗漏版本或可选配置。
+- 现有 15 个深度增强 Widget 改为叠加层：保留深度测试和专属标签，同时自动继承官方新增字段。
+- 新增 `/data/widget-schema-cache.json` 持久缓存，默认每 24 小时后台同步；失败时继续使用上次缓存 / 内置目录。
+- 新增 Widget Schema 管理页，可查看同步状态、立即同步、查看解析警告、清除缓存，并支持离线导入 Schema JSON。
+- GitHub Actions 发布镜像前生成官方 Schema 快照，GHCR 镜像自带近期官方 Schema。
+- 成功同步后以上游注册表为权威，官方删除 / 废弃的 Widget 不会被旧手工索引永久保留。
+- 书签管理默认文案去除 PT 专用描述，改为通用的网站书签、快捷链接和分类。
+- 新增全局“回到顶部”按钮，长页面滚动后自动出现，并支持平滑回顶。
+- Widget 自动字段显示官方示例中的 inline comment 帮助文本。
+
 ## v0.3.1 - 2026-08-09
 
 - 修复 Widget 中心未筛选时仍显示“没有符合当前筛选条件的 Widget”的空状态问题。

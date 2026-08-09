@@ -414,7 +414,7 @@
   }
 
 
-  // v0.3.1 Widget Center filters (full official index).
+  // v0.3.2 Widget Center filters (official Schema-driven catalog).
   const widgetSearch = $('[data-widget-search]');
   const widgetCategory = $('[data-widget-category]');
   if (widgetSearch || widgetCategory) {
@@ -495,24 +495,25 @@
         const label = escapeHtml(field.label || name);
         const value = values[name] ?? '';
         const required = field.required ? '<em class="required-mark">必填</em>' : '';
+        const help = field.help ? `<small class="field-help">${escapeHtml(field.help)}</small>` : '';
         const baseName = `widgets_${slot}_field_${name}`;
         if (field.kind === 'secret') {
           const placeholder = secretSaved[name] ? '已保存；留空保持原值' : (field.placeholder || '没有则留空');
-          return `<label>${label}${required}<input type="password" name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}" autocomplete="new-password"></label>`;
+          return `<label>${label}${required}<input type="password" name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}" autocomplete="new-password">${help}</label>`;
         }
         if (field.kind === 'bool') {
           const current = value === true ? 'true' : value === false ? 'false' : '';
-          return `<label>${label}${required}<select name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}"><option value="" ${current === '' ? 'selected' : ''}>使用 Homepage 默认值</option><option value="true" ${current === 'true' ? 'selected' : ''}>true</option><option value="false" ${current === 'false' ? 'selected' : ''}>false</option></select></label>`;
+          return `<label>${label}${required}<select name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}"><option value="" ${current === '' ? 'selected' : ''}>使用 Homepage 默认值</option><option value="true" ${current === 'true' ? 'selected' : ''}>true</option><option value="false" ${current === 'false' ? 'selected' : ''}>false</option></select>${help}</label>`;
         }
         if (field.kind === 'yaml') {
-          return `<label class="span-2">${label}${required}<textarea name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" rows="${Number(field.rows || 6)}" spellcheck="false" placeholder="${escapeHtml(field.placeholder || '')}">${escapeHtml(value)}</textarea></label>`;
+          return `<label class="span-2">${label}${required}<textarea name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" rows="${Number(field.rows || 6)}" spellcheck="false" placeholder="${escapeHtml(field.placeholder || '')}">${escapeHtml(value)}</textarea>${help}</label>`;
         }
         if (field.kind === 'select') {
           const options = (field.options || []).map((option) => `<option value="${escapeHtml(option)}" ${String(value) === String(option) ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('');
-          return `<label>${label}${required}<select name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}"><option value="">使用默认值</option>${options}</select></label>`;
+          return `<label>${label}${required}<select name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}"><option value="">使用默认值</option>${options}</select>${help}</label>`;
         }
-        const inputMode = field.kind === 'number' ? ' inputmode="numeric"' : '';
-        return `<label>${label}${required}<input name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(field.placeholder || '')}"${inputMode}></label>`;
+        const inputMode = field.kind === 'number' ? ' inputmode="decimal"' : '';
+        return `<label>${label}${required}<input name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(field.placeholder || '')}"${inputMode}>${help}</label>`;
       }).join('');
       const allowed = schema.allowed_fields || [];
       const fieldPicker = allowed.length ? `<div class="widget-field-picker span-2"><div class="field-picker-head"><strong>显示字段</strong><span>Homepage 最多显示 4 项；不选择则使用官方默认字段。</span></div><div class="checkbox-row">${allowed.map((name) => `<label class="checkbox compact-check"><input type="checkbox" name="widgets_${slot}_fields" value="${escapeHtml(name)}" ${selectedFields.has(name) ? 'checked' : ''}><span>${escapeHtml(name)}</span></label>`).join('')}</div></div>` : '';
@@ -655,6 +656,15 @@
     });
     $$('[data-yaml-diff-close]', dialog || document).forEach((button) => button.addEventListener('click', () => dialog?.close()));
     $('[data-yaml-diff-confirm]', dialog || document)?.addEventListener('click', () => { bypass = true; dialog?.close(); yamlDiffForm.submit(); });
+  }
+
+  // v0.3.2 global back-to-top control for long discovery / Widget pages.
+  const backToTop = $('[data-back-to-top]');
+  if (backToTop) {
+    const updateBackToTop = () => { backToTop.hidden = window.scrollY < 520; };
+    window.addEventListener('scroll', updateBackToTop, { passive: true });
+    backToTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+    updateBackToTop();
   }
 
 })();

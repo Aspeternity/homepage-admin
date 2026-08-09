@@ -10,7 +10,7 @@
 {% if not connections %}
 <section class="form-card">
   <h2>尚未配置 proxmox.yaml</h2>
-  <p class="section-help">你已经可以在 Service Widget 中使用 Proxmox Token；v0.3.1 可以把现有 Proxmox Widget 的连接安全复制到 <code>proxmox.yaml</code>，无需再次粘贴 Secret。</p>
+  <p class="section-help">你已经可以在 Service Widget 中使用 Proxmox Token；当前版本可以把现有 Proxmox Widget 的连接安全复制到 <code>proxmox.yaml</code>，无需再次粘贴 Secret。</p>
   {% if widget_candidates %}
   <div class="simple-list">
     {% for candidate in widget_candidates %}

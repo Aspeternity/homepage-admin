@@ -1,32 +1,38 @@
-# Homepage Admin v0.3.1
+# Homepage Admin v0.3.2
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
-> v0.3.1 的主题是：**Widget 中心 + 元数据驱动表单 + 连接测试 + Proxmox 发现 + 多 Widget + 保存前 Diff**。
+> v0.3.2 的主题是：**Homepage 官方 Widget Schema 自动同步 + 全量动态表单 + Schema 管理 + 全局回到顶部**。
 
-## v0.3.1 新功能
+## v0.3.2 新功能
 
-### Widget 中心
+### Widget 中心：从人工目录升级为官方 Schema 驱动
 
-新增独立的 **Widget 中心**，按分类浏览和搜索常用 Homepage Service Widget。当前内置家庭实验室常用模板：
+v0.3.2 不再把“15 个增强表单 + 其余通用 YAML”作为长期方案。Admin 会自动同步 Homepage 官方：
 
-- Jellyfin
-- Portainer
-- Proxmox VE
-- Home Assistant
-- qBittorrent
-- Transmission
-- Synology DiskStation
-- OpenWRT / ImmortalWRT
-- Minecraft
-- GameDig
-- Glances
-- Uptime Kuma
-- NGINX Proxy Manager
-- Grafana
-- Custom API
+- `docs/widgets/services/*.md`：读取 Widget YAML 配置示例、Allowed fields。
+- `src/widgets/widgets.js`：读取真实 Widget 注册表和兼容别名。
 
-Widget 表单不再为每个类型单独写页面，而是由 `app/widget_catalog.py` 元数据动态生成。后续增加 Widget 支持主要扩展目录元数据即可。
+同步器会把官方配置示例转换为动态表单：文本、布尔、数字、YAML、Secret 等字段自动识别；`Allowed fields` 自动变成展示字段复选框。官方以后新增 Service Widget 时，Admin 会在后台同步后自动出现，不必等待 Homepage Admin 发版。
+
+现有 Jellyfin、Portainer、Proxmox、Home Assistant、qBittorrent 等深度增强会叠加在官方自动 Schema 上，继续提供更友好的标签和深度连接测试，同时不会挡住官方新增字段。
+
+### Widget Schema 管理与缓存
+
+新增 **Widget 中心 → Schema 管理**：
+
+- 查看来源、Ref、最后同步时间和 Widget / 字段数量。
+- 手动立即同步。
+- 查看部分解析警告。
+- 清除 `/data/widget-schema-cache.json` 并恢复内置离线目录。
+- 无法访问 GitHub 时可离线导入 Widget Schema JSON。
+
+默认每 24 小时后台检查一次官方 Schema；同步失败不会影响现有管理功能。GitHub Actions 发布 GHCR 镜像前也会生成一份近期官方 Schema 快照。
+
+### 通用文案与长页面体验
+
+- 书签管理不再默认提到 PT 站点，统一描述为“网站书签、快捷链接和分类”。
+- 全站长页面滚动超过约 520px 后显示“回到顶部”，Widget 中心、Docker 发现、Proxmox 发现、高级编辑等页面均可使用。
 
 ### 保存前“测试连接”
 
@@ -83,7 +89,7 @@ Widget 表单不再为每个类型单独写页面，而是由 `app/widget_catalo
 
 ## 数据存储与 MySQL
 
-v0.3.1 **不要求 MySQL**。当前项目的数据模型仍然适合保持文件原生：
+v0.3.2 **不要求 MySQL**。当前项目的数据模型仍然适合保持文件原生：
 
 - Homepage 配置继续以官方 YAML 为唯一事实来源。
 - 管理后台偏好继续保存在 `/data/admin-settings.json`。
@@ -143,7 +149,7 @@ Admin 端口: 3001
 从 v0.2.4 升级请阅读：
 
 ```text
-UPGRADE_V0.3.1_ZH.md
+UPGRADE_V0.3.2_ZH.md
 ```
 
 ## Homepage 配置文件

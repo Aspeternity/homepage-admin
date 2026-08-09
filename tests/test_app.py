@@ -28,7 +28,7 @@ def test_login_and_main_pages() -> None:
     assert client.get("/healthz").status_code == 200
     assert client.get("/services", follow_redirects=False).status_code == 303
     login(client)
-    for path in ["/services", "/bookmarks", "/settings", "/widgets", "/widget-center", "/docker", "/proxmox", "/yaml/services.yaml", "/backups"]:
+    for path in ["/services", "/bookmarks", "/settings", "/widgets", "/widget-center", "/widget-schema", "/docker", "/proxmox", "/yaml/services.yaml", "/backups"]:
         assert client.get(path).status_code == 200
 
 
@@ -918,33 +918,24 @@ def test_v030_advanced_yaml_noop_does_not_create_backup() -> None:
     assert after == before
 
 
-def test_v031_widget_center_full_official_index_and_hidden_empty_state() -> None:
+def test_v032_widget_center_offline_fallback_and_hidden_empty_state() -> None:
     from app.widget_catalog import ENHANCED_WIDGET_CATALOG, OFFICIAL_WIDGET_INDEX, WIDGET_CATALOG
 
     assert len(OFFICIAL_WIDGET_INDEX) >= 150
-    assert len(WIDGET_CATALOG) == len(OFFICIAL_WIDGET_INDEX)
+    assert len(WIDGET_CATALOG) >= len(OFFICIAL_WIDGET_INDEX)
     assert len(ENHANCED_WIDGET_CATALOG) == 15
     for type_id in [
-        "adguard",
-        "sonarr",
-        "radarr",
-        "seerr",
-        "npm",
-        "truenas",
-        "unifi_drive",
-        "watchtower",
-        "zabbix",
+        "adguard", "sonarr", "radarr", "seerr", "npm", "truenas", "unifi_drive", "watchtower", "zabbix",
     ]:
         assert type_id in WIDGET_CATALOG
     assert "nginxproxymanager" not in WIDGET_CATALOG
     assert WIDGET_CATALOG["npm"]["enhanced"] is True
-    assert WIDGET_CATALOG["sonarr"]["enhanced"] is False
 
     client = TestClient(app)
     login(client)
     page = client.get("/widget-center")
     assert page.status_code == 200
-    assert "共 155 个类型" in page.text
+    assert "从 Homepage 官方 Service Widget 文档自动生成配置表单" in page.text
     assert "AdGuard Home" in page.text
     assert "Sonarr" in page.text
     assert "TrueNAS" in page.text
@@ -953,12 +944,206 @@ def test_v031_widget_center_full_official_index_and_hidden_empty_state() -> None
 
     css = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.css").read_text(encoding="utf-8")
     assert "[hidden] { display: none !important; }" in css
+    assert ".back-to-top" in css
 
 
-def test_v031_generic_official_widget_can_open_service_editor() -> None:
+def test_v032_schema_parser_builds_dynamic_enhanced_form() -> None:
+    from app.widget_schema_sync import parse_widget_document
+
+    markdown = """---
+title: Sonarr
+description: Sonarr Widget Configuration
+---
+Allowed fields: `[\"wanted\", \"queued\", \"series\"]`.
+```yaml
+widget:
+  type: sonarr
+  url: http://sonarr.host.or.ip
+  key: apikeyapikeyapikeyapikeyapikey
+  enableQueue: true # optional, defaults to false
+```
+"""
+    parsed = parse_widget_document(markdown, "sonarr")
+    assert parsed is not None
+    type_id, schema = parsed
+    assert type_id == "sonarr"
+    assert schema["auto_generated"] is True
+    assert schema["enhanced"] is True
+    assert schema["allowed_fields"] == ["wanted", "queued", "series"]
+    fields = {field["name"]: field for field in schema["fields"]}
+    assert fields["url"]["kind"] == "text"
+    assert fields["key"]["kind"] == "secret"
+    assert fields["enableQueue"]["kind"] == "bool"
+    assert fields["enableQueue"]["required"] is False
+
+
+def test_v032_schema_sync_can_add_new_official_widget_without_release(monkeypatch) -> None:
+    from app import widget_catalog as catalog_module
+
+    original = {key: dict(value) for key, value in catalog_module.WIDGET_CATALOG.items()}
+    try:
+        fake = {}
+        # Safety guard requires a realistic catalog size.
+        for index in range(60):
+            type_id = f"futurewidget{index}"
+            fake[type_id] = {
+                "label": f"Future Widget {index}",
+                "category": "应用",
+                "description": "官方自动同步测试",
+                "docs": "https://gethomepage.dev/widgets/services/",
+                "icon": "mdi-puzzle-outline",
+                "test": "basic",
+                "allowed_fields": ["status"],
+                "fields": [
+                    {"name": "url", "label": "服务地址", "kind": "text", "required": True},
+                    {"name": "apiToken", "label": "Api Token", "kind": "secret", "required": True},
+                ],
+                "enhanced": True,
+                "auto_generated": True,
+                "source_mode": "official-auto",
+            }
+        monkeypatch.setattr(catalog_module, "fetch_official_widget_schemas", lambda **_: (fake, {
+            "source": "gethomepage/homepage", "ref": "dev", "synced_at": "2026-08-10T00:00:00Z",
+            "document_count": 60, "widget_count": 60, "registry_count": 60, "error_count": 0, "errors": [],
+        }))
+        status = catalog_module.sync_widget_schema(force=True)
+        assert "futurewidget59" in catalog_module.WIDGET_CATALOG
+        assert catalog_module.WIDGET_CATALOG["futurewidget59"]["fields"][1]["kind"] == "secret"
+        assert status["official_auto"] >= 60
+
+        client = TestClient(app)
+        login(client)
+        page = client.get("/services/item/new?widget=futurewidget59")
+        assert page.status_code == 200
+        assert 'value="futurewidget59"' in page.text
+        assert '"auto_generated": true' in page.text
+    finally:
+        catalog_module.reset_widget_schema_cache()
+        catalog_module.WIDGET_CATALOG.clear()
+        catalog_module.WIDGET_CATALOG.update(original)
+
+
+def test_v032_bookmark_copy_is_general_and_back_to_top_is_global() -> None:
     client = TestClient(app)
     login(client)
-    page = client.get("/services/item/new?widget=sonarr")
+    page = client.get("/bookmarks")
     assert page.status_code == 200
-    assert 'value="sonarr"' in page.text
-    assert '"enhanced": false' in page.text
+    assert "网站书签、快捷链接和分类" in page.text
+    assert "PT 站点" not in page.text
+    form = client.get("/bookmarks/item/new?group=0")
+    assert "常用网站、工具、文档和其他快捷入口" in form.text
+    assert "PT 站点" not in form.text
+    assert "data-back-to-top" in page.text
+
+
+def test_v032_widget_schema_management_page() -> None:
+    client = TestClient(app)
+    login(client)
+    page = client.get("/widget-schema")
+    assert page.status_code == 200
+    assert "Widget Schema" in page.text
+    assert "立即同步官方 Schema" in page.text
+
+
+def test_v032_schema_parser_merges_multiple_official_examples() -> None:
+    from app.widget_schema_sync import parse_widget_document
+
+    markdown = '''---
+title: Demo
+description: Demo Widget Configuration
+---
+Allowed fields: `["one", "two"]`.
+```yaml
+widget:
+  type: demo
+  url: http://demo
+  key: first-key
+```
+```yaml
+widget:
+  type: demo
+  url: http://demo
+  mode: advanced # optional
+  nested:
+    one: two
+```
+'''
+    parsed = parse_widget_document(markdown, "demo")
+    assert parsed is not None
+    _, schema = parsed
+    fields = {field["name"]: field for field in schema["fields"]}
+    assert set(fields) == {"url", "key", "mode", "nested"}
+    assert fields["mode"]["required"] is False
+    assert fields["nested"]["kind"] == "yaml"
+
+
+def test_v032_schema_management_offline_import(monkeypatch) -> None:
+    import json
+    from app import widget_catalog as catalog_module
+
+    client = TestClient(app)
+    csrf = login(client)
+    fake = {
+        f"imported{i}": {
+            "label": f"Imported {i}",
+            "category": "应用",
+            "description": "Imported schema",
+            "docs": "https://gethomepage.dev/widgets/services/",
+            "test": "config",
+            "allowed_fields": [],
+            "fields": [{"name": "url", "label": "服务地址", "kind": "text", "required": True}],
+            "enhanced": True,
+            "auto_generated": True,
+            "source_mode": "official-auto",
+        }
+        for i in range(20)
+    }
+    original = {key: dict(value) for key, value in catalog_module.WIDGET_CATALOG.items()}
+    try:
+        response = client.post(
+            "/widget-schema/import",
+            data={"csrf": csrf, "schema_json": json.dumps({"widgets": fake})},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert "imported19" in catalog_module.WIDGET_CATALOG
+    finally:
+        catalog_module.reset_widget_schema_cache()
+        catalog_module.WIDGET_CATALOG.clear()
+        catalog_module.WIDGET_CATALOG.update(original)
+
+
+def test_v032_auto_schema_number_fields_accept_decimal_values() -> None:
+    from app.main import _coerce_widget_field
+
+    assert _coerce_widget_field("number", "15") == 15
+    assert _coerce_widget_field("number", "1.5") == 1.5
+    assert _coerce_widget_field("number", "-0.25") == -0.25
+
+
+def test_v032_schema_parser_handles_full_service_examples_and_commented_options() -> None:
+    from app.widget_schema_sync import parse_widget_document
+
+    markdown = '''---
+title: Nested Demo
+---
+```yaml
+- Apps:
+    - Nested Demo:
+        href: http://demo
+        widget:
+          type: nesteddemo
+          url: http://demo
+          key: secret-value
+          # refreshInterval: 1500 # optional refresh interval
+```
+'''
+    parsed = parse_widget_document(markdown, "nested-demo")
+    assert parsed is not None
+    widget_type, schema = parsed
+    assert widget_type == "nesteddemo"
+    fields = {field["name"]: field for field in schema["fields"]}
+    assert set(fields) == {"url", "key", "refreshInterval"}
+    assert fields["key"]["kind"] == "secret"
+    assert fields["refreshInterval"]["kind"] == "number"
+    assert fields["refreshInterval"]["required"] is False
