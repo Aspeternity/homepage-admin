@@ -8,8 +8,16 @@
     <p>常用字段可视化编辑；官方未覆盖字段继续保留在 YAML 片段中。</p>
   </div>
 </section>
+{% if docker_source %}
+<div class="wizard-steps compact" aria-label="Docker 导入步骤">
+  <span class="active"><b>1</b>识别容器</span>
+  <span class="active"><b>2</b>调整建议</span>
+  <span class="active"><b>3</b>预览</span>
+  <span class="active current"><b>4</b>完整编辑</span>
+</div>
+{% endif %}
 {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
-{% if docker_source %}<div class="alert info">已从 Docker 容器 <strong>{{ docker_source }}</strong> 预填。请检查访问地址、分组和 Widget 凭据后再保存。</div>{% endif %}
+{% if docker_source %}<div class="alert info">已从 Docker 容器 <strong>{{ docker_source }}</strong> 带入向导结果。补充 Widget 凭据或高级字段后即可保存。</div>{% endif %}
 <form class="editor-form" method="post" action="{% if mode == 'new' %}/services/item/create{% else %}/services/item/{{ group_index }}/{{ item_index }}/update{% endif %}">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <section class="form-card">
@@ -37,7 +45,7 @@
 
   <section class="form-card">
     <div class="section-title-row">
-      <div><h2>服务 Widget</h2><p class="section-help">v0.2.1 对常用 Widget 提供专属字段；其他 Widget 仍可使用下方 YAML。</p></div>
+      <div><h2>服务 Widget</h2><p class="section-help">当前版本对常用 Widget 提供专属字段；其他 Widget 仍可使用下方 YAML。</p></div>
     </div>
     {% if values.multiple_widgets %}<div class="alert warning">该服务使用了多个 <code>widgets:</code>。现有配置会保留在“额外服务配置”中；本表单只直接编辑单个 <code>widget:</code>。</div>{% endif %}
     <div class="form-grid two">

@@ -3,26 +3,82 @@
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const csrf = () => document.body.dataset.csrf || '';
 
-  const applyTheme = (theme) => {
-    const next = theme === 'light' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
-    try { localStorage.setItem('homepage-admin-theme', next); } catch (_) {}
-    $$('[data-theme-toggle]').forEach((button) => {
-      const icon = $('[data-theme-icon]', button);
-      const label = $('[data-theme-label]', button);
-      const isLight = next === 'light';
-      if (icon) icon.textContent = isLight ? '☾' : '☀';
-      if (label) label.textContent = isLight ? '切换深色' : '切换浅色';
-      button.setAttribute('aria-label', isLight ? '切换深色主题' : '切换浅色主题');
-      button.title = isLight ? '切换深色主题' : '切换浅色主题';
+  const systemTheme = () => window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  const currentThemeMode = () => document.documentElement.dataset.themeMode || 'dark';
+  const resolveTheme = (mode) => mode === 'system' ? systemTheme() : (mode === 'light' ? 'light' : 'dark');
+
+  const applyThemeMode = (mode, persist = true) => {
+    const nextMode = ['light', 'dark', 'system'].includes(mode) ? mode : 'dark';
+    const resolved = resolveTheme(nextMode);
+    document.documentElement.dataset.themeMode = nextMode;
+    document.documentElement.dataset.theme = resolved;
+    if (persist) {
+      try { localStorage.setItem('homepage-admin-theme', nextMode); } catch (_) {}
+    }
+    $$('[data-theme-icon]').forEach((icon) => {
+      icon.textContent = resolved === 'light' ? '☀' : '☾';
+    });
+    $$('[data-theme-choice]').forEach((button) => {
+      const active = button.dataset.themeChoice === nextMode;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    $$('[data-theme-menu-toggle], [data-theme-cycle]').forEach((button) => {
+      const names = { light: '浅色模式', dark: '深色模式', system: '跟随系统' };
+      button.title = `主题：${names[nextMode]}`;
+      button.setAttribute('aria-label', `主题：${names[nextMode]}`);
     });
   };
 
-  applyTheme(document.documentElement.dataset.theme);
-  $$('[data-theme-toggle]').forEach((button) => {
+  applyThemeMode(currentThemeMode(), false);
+
+  const themeMedia = window.matchMedia('(prefers-color-scheme: light)');
+  const systemThemeChanged = () => {
+    if (currentThemeMode() === 'system') applyThemeMode('system', false);
+  };
+  if (themeMedia.addEventListener) themeMedia.addEventListener('change', systemThemeChanged);
+  else if (themeMedia.addListener) themeMedia.addListener(systemThemeChanged);
+
+  $$('[data-theme-choice]').forEach((button) => {
     button.addEventListener('click', () => {
-      applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+      applyThemeMode(button.dataset.themeChoice);
+      const menu = button.closest('[data-theme-menu]');
+      const popover = menu?.querySelector('[data-theme-popover]');
+      const trigger = menu?.querySelector('[data-theme-menu-toggle]');
+      if (popover) popover.hidden = true;
+      trigger?.setAttribute('aria-expanded', 'false');
     });
+  });
+
+  $$('[data-theme-cycle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      applyThemeMode(resolveTheme(currentThemeMode()) === 'light' ? 'dark' : 'light');
+    });
+  });
+
+  $$('[data-theme-menu-toggle]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const menu = button.closest('[data-theme-menu]');
+      const popover = menu?.querySelector('[data-theme-popover]');
+      if (!popover) return;
+      const opening = popover.hidden;
+      $$('[data-theme-popover]').forEach((other) => { other.hidden = true; });
+      $$('[data-theme-menu-toggle]').forEach((other) => other.setAttribute('aria-expanded', 'false'));
+      popover.hidden = !opening;
+      button.setAttribute('aria-expanded', opening ? 'true' : 'false');
+    });
+  });
+
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('[data-theme-menu]')) return;
+    $$('[data-theme-popover]').forEach((popover) => { popover.hidden = true; });
+    $$('[data-theme-menu-toggle]').forEach((button) => button.setAttribute('aria-expanded', 'false'));
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    $$('[data-theme-popover]').forEach((popover) => { popover.hidden = true; });
+    $$('[data-theme-menu-toggle]').forEach((button) => button.setAttribute('aria-expanded', 'false'));
   });
 
   $('[data-sidebar-toggle]')?.addEventListener('click', () => {
@@ -268,4 +324,62 @@
     });
     syncImportLinks();
   }
+  // Docker import wizard: live Homepage card + non-sensitive YAML preview.
+  const wizard = $('[data-import-wizard]');
+  if (wizard) {
+    const field = (name) => $(`[data-wizard-field="${name}"]`, wizard);
+    const staticField = (name) => $(`[data-wizard-static="${name}"]`, wizard)?.value || '';
+    const yamlQuote = (value) => {
+      const text = String(value ?? '');
+      if (!text) return "''";
+      if (/^[A-Za-z0-9_./:@-]+$/.test(text)) return text;
+      return JSON.stringify(text);
+    };
+    const renderWizard = () => {
+      const name = field('name')?.value.trim() || '未命名服务';
+      const href = field('href')?.value.trim() || '';
+      const icon = field('icon')?.value.trim() || '';
+      const description = field('description')?.value.trim() || '';
+      const siteMonitor = field('siteMonitor')?.value.trim() || '';
+      const ping = field('ping')?.value.trim() || '';
+      const widgetType = field('widget_type')?.value.trim() || '';
+      const widgetUrl = field('widget_url')?.value.trim() || '';
+      const groupSelect = field('group');
+      const groupName = groupSelect?.selectedOptions?.[0]?.textContent?.trim() || 'Group';
+      const previewName = $('[data-preview-name]', wizard);
+      const previewDescription = $('[data-preview-description]', wizard);
+      const previewIcon = $('[data-preview-icon]', wizard);
+      const previewWidget = $('[data-preview-widget]', wizard);
+      if (previewName) previewName.textContent = name;
+      if (previewDescription) previewDescription.textContent = description || href || '暂无说明';
+      if (previewIcon) {
+        previewIcon.textContent = icon ? (icon.startsWith('http') ? 'IMG' : icon.replace(/^sh-/, '').slice(0, 2).toUpperCase()) : name.slice(0, 1).toUpperCase();
+        previewIcon.title = icon || '默认首字母图标';
+      }
+      if (previewWidget) previewWidget.hidden = !widgetType;
+
+      const lines = [`- ${groupName}:`, `    - ${name}:`];
+      const push = (key, value) => { if (value) lines.push(`        ${key}: ${yamlQuote(value)}`); };
+      push('icon', icon);
+      push('href', href);
+      push('description', description);
+      push('siteMonitor', siteMonitor);
+      push('ping', ping);
+      push('server', staticField('server'));
+      push('container', staticField('container'));
+      if (widgetType) {
+        lines.push('        widget:');
+        lines.push(`          type: ${yamlQuote(widgetType)}`);
+        if (widgetUrl) lines.push(`          url: ${yamlQuote(widgetUrl)}`);
+      }
+      const yaml = $('[data-wizard-yaml]', wizard);
+      if (yaml) yaml.textContent = lines.join('\n');
+    };
+    $$('[data-wizard-field]', wizard).forEach((input) => {
+      input.addEventListener('input', renderWizard);
+      input.addEventListener('change', renderWizard);
+    });
+    renderWizard();
+  }
+
 })();

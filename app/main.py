@@ -21,6 +21,7 @@ from .docker_client import (
     first_published_port,
     homepage_labels_to_values,
     infer_icon_and_widget,
+    infer_service_description,
     public_host_from_url,
 )
 from .secrets import SECRET_PLACEHOLDER, mask_secrets, restore_masked_secrets
@@ -1005,7 +1006,7 @@ def docker_page(
     proxy_healthy = False
     hidden_internal_count = 0
     if not docker_discovery.enabled():
-        error = error or "Docker 容器发现未启用。请使用 v0.2.1 的 Compose（包含共享只读 Docker Proxy）。"
+        error = error or "Docker 容器发现未启用。请使用 v0.2.2 的 Compose（包含共享只读 Docker Proxy）。"
     else:
         proxy_healthy = docker_discovery.ping()
         try:
@@ -1100,8 +1101,74 @@ async def docker_migrate_homepage_proxy(request: Request, _: None = Depends(auth
         return redirect("/docker", error=str(exc))
 
 
+def docker_import_values(container: dict[str, Any], names: list[str], requested_group: int | None = None) -> tuple[dict[str, Any], int, dict[str, str]]:
+    values = empty_service_values()
+    sources: dict[str, str] = {}
+    label_values = homepage_labels_to_values(container)
+    for key in ["name", "icon", "href", "description", "siteMonitor", "ping", "server", "container"]:
+        if label_values.get(key):
+            values[key] = label_values[key]
+            sources[key] = "Homepage Label"
+
+    if not values["name"]:
+        values["name"] = str(container.get("name", "Docker Service"))
+        sources["name"] = "容器名称"
+    if not values["container"]:
+        values["container"] = str(container.get("name", ""))
+        sources["container"] = "容器名称"
+    if not values["server"]:
+        values["server"] = first_docker_server_name()
+        sources["server"] = "docker.yaml"
+
+    inferred_icon, inferred_widget = infer_icon_and_widget(container)
+    if not values["icon"] and inferred_icon:
+        values["icon"] = inferred_icon
+        sources["icon"] = "镜像识别"
+    if not values["description"]:
+        inferred_description = infer_service_description(container)
+        if inferred_description:
+            values["description"] = inferred_description
+            sources["description"] = "镜像识别"
+
+    label_widget = label_values.get("widget") if isinstance(label_values.get("widget"), dict) else {}
+    values["widget_type"] = str(label_widget.get("type", "") or inferred_widget)
+    if label_widget.get("type"):
+        sources["widget_type"] = "Homepage Label"
+    elif inferred_widget:
+        sources["widget_type"] = "镜像识别"
+    for key, value in label_widget.items():
+        if key == "type":
+            continue
+        if key in catalog_secret_names(values["widget_type"]):
+            continue
+        values["widget_fields"][key] = value
+        sources[f"widget_{key}"] = "Homepage Label"
+
+    if not values["href"]:
+        port = first_published_port(container)
+        if port:
+            host = settings.docker_public_host or public_host_from_url(settings.homepage_url)
+            values["href"] = f"http://{host}:{port}"
+            sources["href"] = "发布端口"
+    if values["widget_type"] and not values["widget_fields"].get("url") and values["href"]:
+        values["widget_fields"]["url"] = values["href"]
+        sources["widget_url"] = "访问地址"
+
+    desired_group = str(label_values.get("group", ""))
+    if desired_group in names:
+        group_index = names.index(desired_group)
+        sources["group"] = "Homepage Label"
+    elif requested_group is not None and 0 <= requested_group < len(names):
+        group_index = requested_group
+        sources["group"] = "Docker 发现页选择"
+    else:
+        group_index = recommended_import_group(names)
+        sources["group"] = "推荐分组"
+    return values, group_index, sources
+
+
 @app.get("/docker/import/{container_id}", response_class=HTMLResponse)
-def docker_import(
+def docker_import_wizard(
     request: Request,
     container_id: str,
     group: int | None = None,
@@ -1116,42 +1183,72 @@ def docker_import(
         names = group_names("services.yaml")
         if not names:
             return redirect("/services", error="请先创建一个服务分组。")
-        values = empty_service_values()
-        label_values = homepage_labels_to_values(container)
-        for key in ["name", "icon", "href", "description", "siteMonitor", "ping", "server", "container"]:
-            if label_values.get(key):
-                values[key] = label_values[key]
-        values["name"] = values["name"] or str(container.get("name", "Docker Service"))
-        values["container"] = values["container"] or str(container.get("name", ""))
-        values["server"] = values["server"] or first_docker_server_name()
-        inferred_icon, inferred_widget = infer_icon_and_widget(container)
-        values["icon"] = values["icon"] or inferred_icon
-        label_widget = label_values.get("widget") if isinstance(label_values.get("widget"), dict) else {}
-        values["widget_type"] = str(label_widget.get("type", "") or inferred_widget)
-        for key, value in label_widget.items():
-            if key == "type":
-                continue
-            if key in catalog_secret_names(values["widget_type"]):
-                continue
-            values["widget_fields"][key] = value
-        if not values["href"]:
-            port = first_published_port(container)
-            if port:
-                host = settings.docker_public_host or public_host_from_url(settings.homepage_url)
-                values["href"] = f"http://{host}:{port}"
-        if values["widget_type"] and not values["widget_fields"].get("url") and values["href"]:
-            values["widget_fields"]["url"] = values["href"]
-        desired_group = str(label_values.get("group", ""))
-        if desired_group in names:
-            group_index = names.index(desired_group)
-        elif group is not None and 0 <= group < len(names):
-            group_index = group
-        else:
-            group_index = recommended_import_group(names)
+        values, group_index, sources = docker_import_values(container, names, group)
+        container = dict(container)
+        container["published_ports"] = [p for p in dedupe_ports(container.get("ports") or []) if p.get("public")]
+        return templates.TemplateResponse(
+            request,
+            "docker_import_wizard.html",
+            context(
+                request,
+                "docker",
+                container=container,
+                groups=names,
+                group_index=group_index,
+                values=values,
+                suggestion_sources=sources,
+                widget_catalog=WIDGET_CATALOG,
+            ),
+        )
+    except Exception as exc:
+        return redirect("/docker", error=f"导入容器失败：{exc}")
+
+
+@app.get("/docker/import/{container_id}/edit", response_class=HTMLResponse)
+def docker_import_edit(
+    request: Request,
+    container_id: str,
+    group_index: int | None = None,
+    name: str | None = None,
+    href: str | None = None,
+    icon: str | None = None,
+    description: str | None = None,
+    siteMonitor: str | None = None,
+    ping: str | None = None,
+    widget_type: str | None = None,
+    widget_url: str | None = None,
+    _: None = Depends(auth_guard),
+) -> HTMLResponse:
+    if not docker_discovery.enabled():
+        return redirect("/docker", error="Docker 容器发现未启用。")
+    try:
+        container = docker_discovery.get_container(container_id)
+        if not container:
+            return redirect("/docker", error="未找到该 Docker 容器。")
+        names = group_names("services.yaml")
+        if not names:
+            return redirect("/services", error="请先创建一个服务分组。")
+        values, resolved_group, _ = docker_import_values(container, names, group_index)
+        overrides = {
+            "name": name,
+            "href": href,
+            "icon": icon,
+            "description": description,
+            "siteMonitor": siteMonitor,
+            "ping": ping,
+            "widget_type": widget_type,
+        }
+        for key, value in overrides.items():
+            if value is not None:
+                values[key] = value
+        if widget_url is not None:
+            values["widget_fields"]["url"] = widget_url
+        if group_index is not None and 0 <= group_index < len(names):
+            resolved_group = group_index
         return render_service_form(
             request,
             mode="new",
-            group_index=group_index,
+            group_index=resolved_group,
             item_index=None,
             groups=names,
             values=values,
@@ -1607,6 +1704,7 @@ def backups_page(request: Request, _: None = Depends(auth_guard)) -> HTMLRespons
             request,
             "backups",
             backups=store.list_backups(),
+            backup_limit=settings.backup_limit,
             ok=request.query_params.get("ok"),
             error=request.query_params.get("error"),
         ),
@@ -1622,6 +1720,30 @@ async def restore_backup(
     try:
         store.restore(backup_id, filename, actor(request))
         return redirect("/backups", ok=f"已从 {backup_id} 恢复 {filename}。恢复前的当前文件也已自动备份。")
+    except ConfigError as exc:
+        return redirect("/backups", error=str(exc))
+
+
+@app.post("/backups/{backup_id}/delete")
+async def delete_backup(
+    request: Request, backup_id: str, _: None = Depends(auth_guard)
+) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        store.delete_backup(backup_id, actor(request))
+        return redirect("/backups", ok=f"备份 {backup_id} 已删除。")
+    except ConfigError as exc:
+        return redirect("/backups", error=str(exc))
+
+
+@app.post("/backups/delete-all")
+async def delete_all_backups(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        count = store.delete_all_backups(actor(request))
+        return redirect("/backups", ok=f"已删除 {count} 组备份。" if count else "当前没有可删除的备份。")
     except ConfigError as exc:
         return redirect("/backups", error=str(exc))
 

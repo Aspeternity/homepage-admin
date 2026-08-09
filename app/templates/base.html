@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="dark" data-theme-mode="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,8 +7,13 @@
   <script>
     (() => {
       try {
-        const saved = localStorage.getItem('homepage-admin-theme');
-        document.documentElement.dataset.theme = saved === 'light' ? 'light' : 'dark';
+        const saved = localStorage.getItem('homepage-admin-theme') || 'dark';
+        const mode = ['light', 'dark', 'system'].includes(saved) ? saved : 'dark';
+        const resolved = mode === 'system'
+          ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+          : mode;
+        document.documentElement.dataset.themeMode = mode;
+        document.documentElement.dataset.theme = resolved;
       } catch (_) {}
     })();
   </script>
@@ -33,7 +38,6 @@
         <a class="nav-item {% if active == 'backups' %}active{% endif %}" href="/backups"><span>↶</span>备份回滚</a>
       </nav>
       <div class="sidebar-footer">
-        <button class="button secondary full theme-toggle" type="button" data-theme-toggle aria-label="切换浅色主题"><span data-theme-icon>☀</span><span data-theme-label>切换浅色</span></button>
         <a class="button secondary full" href="{{ homepage_url }}" target="_blank" rel="noopener">打开 Homepage ↗</a>
         <div class="user-row">
           <span class="avatar">{{ username[:1]|upper }}</span>
@@ -51,8 +55,20 @@
       <header class="mobile-header">
         <button class="icon-button" type="button" data-sidebar-toggle>☰</button>
         <strong>Homepage Admin</strong>
-        <button class="icon-button mobile-theme-toggle" type="button" data-theme-toggle aria-label="切换主题"><span data-theme-icon>☀</span></button>
+        <button class="icon-button mobile-theme-toggle" type="button" data-theme-cycle aria-label="切换主题"><span data-theme-icon>☀</span></button>
       </header>
+
+      <div class="desktop-page-tools">
+        <div class="theme-menu" data-theme-menu>
+          <button class="icon-button theme-menu-trigger" type="button" data-theme-menu-toggle aria-label="主题设置" aria-expanded="false" title="主题设置"><span data-theme-icon>☀</span></button>
+          <div class="theme-popover" data-theme-popover hidden>
+            <button type="button" data-theme-choice="light"><span>☀</span><span>浅色模式</span><b>✓</b></button>
+            <button type="button" data-theme-choice="dark"><span>☾</span><span>深色模式</span><b>✓</b></button>
+            <button type="button" data-theme-choice="system"><span>◐</span><span>跟随系统</span><b>✓</b></button>
+          </div>
+        </div>
+      </div>
+
       {% if ok %}<div class="alert success">{{ ok }}</div>{% endif %}
       {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
       {% block content %}{% endblock %}

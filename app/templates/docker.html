@@ -7,7 +7,7 @@
     <p>通过共享只读 Docker Proxy 读取容器元数据；不会提供停止、删除、重启或 Exec 接口。</p>
   </div>
   <div class="heading-actions">
-    {% if hidden_internal_count and not show_internal %}<a class="button secondary" href="/docker?show_internal=true">显示内部容器 ({{ hidden_internal_count }})</a>{% elif show_internal %}<a class="button secondary" href="/docker">隐藏内部容器</a>{% endif %}
+    {% if hidden_internal_count and not show_internal %}<a class="button secondary" href="/docker?show_internal=true">显示系统组件 ({{ hidden_internal_count }})</a>{% elif show_internal %}<a class="button secondary" href="/docker">隐藏系统组件</a>{% endif %}
     <a class="button secondary" href="/docker{% if show_internal %}?show_internal=true{% endif %}">刷新列表</a>
   </div>
 </section>
@@ -27,7 +27,7 @@
 
   {% if docker_server_info.mode == 'socket' %}
   <div class="alert warning">
-    当前仍是直接 Socket 模式：<code>{{ docker_server_info.socket }}</code>。v0.2.1 推荐改为共享只读代理，之后可以把 Homepage 的 <code>PGID</code> 恢复为原值并移除 Docker Socket 挂载。
+    当前仍是直接 Socket 模式：<code>{{ docker_server_info.socket }}</code>。当前版本推荐改为共享只读代理，之后可以把 Homepage 的 <code>PGID</code> 恢复为原值并移除 Docker Socket 挂载。
   </div>
   <form method="post" action="/docker/migrate-homepage-proxy" data-confirm="切换 docker.yaml 后，请确保 Homepage 已加入 homepage-tools 网络。继续吗？">
     <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -99,7 +99,7 @@
       {% if c.configured %}
       <span class="button secondary disabled">已在 services.yaml</span>
       {% elif c.role == 'Docker 只读代理' %}
-      <span class="button secondary disabled">内部基础设施</span>
+      <span class="button secondary disabled">系统组件</span>
       {% else %}
       <a class="button primary" data-docker-import-link data-import-base="/docker/import/{{ c.id[:12] }}" href="/docker/import/{{ c.id[:12] }}?group={{ recommended_group_index }}">添加到 Homepage</a>
       {% endif %}
@@ -111,7 +111,7 @@
 <section class="empty-state">
   <div class="empty-icon">⬡</div>
   <h2>暂无可显示的容器</h2>
-  <p>如果 Docker 里确实有容器，请检查 v0.2.1 的 <code>homepage-docker-proxy</code>、<code>homepage-tools</code> 网络和 socket 挂载。</p>
+  <p>如果 Docker 里确实有容器，请检查当前版本的 <code>homepage-docker-proxy</code>、<code>homepage-tools</code> 网络和 socket 挂载。</p>
 </section>
 {% endif %}
 {% endblock %}

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="dark" data-theme-mode="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,8 +7,13 @@
   <script>
     (() => {
       try {
-        const saved = localStorage.getItem('homepage-admin-theme');
-        document.documentElement.dataset.theme = saved === 'light' ? 'light' : 'dark';
+        const saved = localStorage.getItem('homepage-admin-theme') || 'dark';
+        const mode = ['light', 'dark', 'system'].includes(saved) ? saved : 'dark';
+        const resolved = mode === 'system'
+          ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+          : mode;
+        document.documentElement.dataset.themeMode = mode;
+        document.documentElement.dataset.theme = resolved;
       } catch (_) {}
     })();
   </script>
@@ -17,7 +22,7 @@
   <script defer src="{{ url_for('static', path='app.js') }}"></script>
 </head>
 <body class="login-page">
-  <button class="button secondary login-theme-toggle" type="button" data-theme-toggle aria-label="切换浅色主题"><span data-theme-icon>☀</span><span data-theme-label>浅色</span></button>
+  <button class="icon-button login-theme-toggle" type="button" data-theme-cycle aria-label="切换主题" title="切换主题"><span data-theme-icon>☀</span></button>
   <main class="login-card">
     <div class="brand login-brand">
       <span class="brand-mark">H</span>

@@ -126,7 +126,7 @@ def test_group_drag_reorder_api() -> None:
         (settings.config_dir / "bookmarks.yaml").write_text(original, encoding="utf-8")
 
 
-def test_docker_import_prefills_service_form(monkeypatch) -> None:
+def test_docker_import_wizard_and_detailed_editor(monkeypatch) -> None:
     from app import main as main_module
 
     client = TestClient(app)
@@ -142,11 +142,30 @@ def test_docker_import_prefills_service_form(monkeypatch) -> None:
     }
     monkeypatch.setattr(main_module.docker_discovery, "base_url", "http://docker-proxy:9100")
     monkeypatch.setattr(main_module.docker_discovery, "get_container", lambda _id: sample)
-    response = client.get("/docker/import/abc123def456?group=0")
-    assert response.status_code == 200
-    assert 'value="qbittorrent"' in response.text
-    assert 'value="sh-qbittorrent"' in response.text
-    assert 'value="qbittorrent" list="widget-type-options"' in response.text
+
+    wizard = client.get("/docker/import/abc123def456?group=0")
+    assert wizard.status_code == 200
+    assert "Docker 导入向导" in wizard.text
+    assert 'value="qbittorrent"' in wizard.text
+    assert 'value="sh-qbittorrent"' in wizard.text
+    assert "qBittorrent 下载器" in wizard.text
+    assert "18080" in wizard.text
+    assert 'data-wizard-yaml' in wizard.text
+
+    editor = client.get(
+        "/docker/import/abc123def456/edit",
+        params={
+            "group_index": 0,
+            "name": "qBittorrent Main",
+            "description": "下载服务",
+            "widget_type": "qbittorrent",
+            "widget_url": "http://homepage.local:18080",
+        },
+    )
+    assert editor.status_code == 200
+    assert 'value="qBittorrent Main"' in editor.text
+    assert 'value="qbittorrent" list="widget-type-options"' in editor.text
+    assert 'value="http://homepage.local:18080"' in editor.text
 
 
 def test_backup_is_created() -> None:
@@ -161,6 +180,33 @@ def test_backup_is_created() -> None:
     assert response.status_code == 303
     backups = list((settings.data_dir / "backups").glob("*/widgets.yaml"))
     assert backups
+
+
+def test_backup_can_be_deleted_from_ui() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    current = (settings.config_dir / "widgets.yaml").read_text(encoding="utf-8")
+    response = client.post(
+        "/yaml/widgets.yaml",
+        data={"csrf": csrf, "masked": "1", "content": current + "\n"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    backups = store.list_backups()
+    assert backups
+    backup_id = backups[0]["id"]
+
+    page = client.get("/backups")
+    assert f'/backups/{backup_id}/delete' in page.text
+    assert "/backups/delete-all" in page.text
+
+    deleted = client.post(
+        f"/backups/{backup_id}/delete",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert deleted.status_code == 303
+    assert not (settings.data_dir / "backups" / backup_id).exists()
 
 
 def test_item_drag_same_group_to_end() -> None:
@@ -341,14 +387,20 @@ def test_unknown_service_widget_extra_secret_is_masked_and_preserved() -> None:
         path.write_text(original, encoding="utf-8")
 
 
-def test_theme_toggle_assets_are_present() -> None:
+def test_theme_menu_assets_are_present() -> None:
     client = TestClient(app)
     login(client)
     page = client.get("/services")
-    assert 'data-theme-toggle' in page.text
+    assert 'data-theme-menu-toggle' in page.text
+    assert 'data-theme-choice="light"' in page.text
+    assert 'data-theme-choice="dark"' in page.text
+    assert 'data-theme-choice="system"' in page.text
+    assert "切换浅色" not in page.text
     root = __import__("pathlib").Path(__file__).resolve().parents[1]
     assert 'html[data-theme="light"]' in (root / "app/static/app.css").read_text(encoding="utf-8")
-    assert "homepage-admin-theme" in (root / "app/static/app.js").read_text(encoding="utf-8")
+    js = (root / "app/static/app.js").read_text(encoding="utf-8")
+    assert "homepage-admin-theme" in js
+    assert "prefers-color-scheme" in js
 
 
 def test_dedupe_ipv4_ipv6_port_bindings() -> None:

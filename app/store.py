@@ -185,6 +185,16 @@ class HomepageStore:
         with self.audit_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
+    def _backup_path(self, backup_id: str) -> Path:
+        if not backup_id or backup_id != Path(backup_id).name or "/" in backup_id or ".." in backup_id:
+            raise ConfigError("无效备份 ID。")
+        path = self.backup_dir / backup_id
+        try:
+            path.resolve().relative_to(self.backup_dir.resolve())
+        except ValueError as exc:
+            raise ConfigError("无效备份 ID。") from exc
+        return path
+
     def list_backups(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         if not self.backup_dir.exists():
@@ -192,18 +202,41 @@ class HomepageStore:
         for directory in sorted(self.backup_dir.iterdir(), reverse=True):
             if not directory.is_dir():
                 continue
-            files = [x.name for x in directory.iterdir() if x.is_file()]
-            rows.append({"id": directory.name, "files": sorted(files)})
+            file_paths = sorted(x for x in directory.iterdir() if x.is_file())
+            files = [x.name for x in file_paths]
+            total_bytes = sum(x.stat().st_size for x in file_paths)
+            if total_bytes < 1024:
+                size_label = f"{total_bytes} B"
+            elif total_bytes < 1024 * 1024:
+                size_label = f"{total_bytes / 1024:.1f} KB"
+            else:
+                size_label = f"{total_bytes / (1024 * 1024):.1f} MB"
+            rows.append({"id": directory.name, "files": files, "total_bytes": total_bytes, "size_label": size_label})
         return rows
 
     def restore(self, backup_id: str, filename: str, actor: str) -> None:
-        if "/" in backup_id or ".." in backup_id:
-            raise ConfigError("无效备份 ID。")
-        source = self.backup_dir / backup_id / filename
+        source = self._backup_path(backup_id) / filename
         if not source.exists() or filename not in ALLOWED_FILES:
             raise ConfigError("备份文件不存在。")
         text = source.read_text(encoding="utf-8")
         self.write_text(filename, text, actor=actor, action=f"restore:{backup_id}")
+
+    def delete_backup(self, backup_id: str, actor: str) -> None:
+        target = self._backup_path(backup_id)
+        if not target.exists() or not target.is_dir():
+            raise ConfigError("备份不存在或已经删除。")
+        with self.locked():
+            shutil.rmtree(target)
+            self._audit(actor, f"delete backup:{backup_id}", "backups", None)
+
+    def delete_all_backups(self, actor: str) -> int:
+        with self.locked():
+            directories = [p for p in self.backup_dir.iterdir() if p.is_dir()]
+            for directory in directories:
+                shutil.rmtree(directory, ignore_errors=True)
+            if directories:
+                self._audit(actor, f"delete all backups:{len(directories)}", "backups", None)
+            return len(directories)
 
     def _prune_backups(self) -> None:
         limit = max(settings.backup_limit, 1)

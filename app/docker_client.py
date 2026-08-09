@@ -193,3 +193,33 @@ def infer_icon_and_widget(container: dict) -> tuple[str, str]:
 def public_host_from_url(homepage_url: str) -> str:
     parsed = urlparse(homepage_url)
     return parsed.hostname or "localhost"
+
+
+def infer_service_description(container: dict) -> str:
+    """Return a short, human-friendly description for common self-hosted images."""
+    haystack = f"{container.get('name','')} {container.get('image','')}".lower()
+    candidates = [
+        ("jellyfin", "影视媒体中心"),
+        ("qbittorrent", "qBittorrent 下载器"),
+        ("transmission", "Transmission 下载器"),
+        ("home-assistant", "Home Assistant 智能家居"),
+        ("homeassistant", "Home Assistant 智能家居"),
+        ("portainer", "Docker 容器管理"),
+        ("proxmox", "Proxmox 虚拟化管理"),
+        ("vaultwarden", "Vaultwarden 密码管理"),
+        ("nginx-proxy-manager", "Nginx Proxy Manager 反向代理"),
+        ("moviepilot", "MoviePilot 影视自动化"),
+        ("metube", "MeTube 视频下载"),
+        ("lsky", "Lsky Pro 图床管理"),
+        ("mkdocs", "MkDocs 文档站点"),
+        ("phpmyadmin", "phpMyAdmin 数据库管理"),
+        ("mysql", "MySQL 数据库"),
+        ("komari", "Komari 服务器监控"),
+        ("cookiecloud", "CookieCloud Cookie 同步"),
+        ("rustdesk", "RustDesk 远程桌面"),
+        ("1panel", "1Panel 服务器运维面板"),
+    ]
+    for needle, description in candidates:
+        if needle in haystack:
+            return description
+    return ""

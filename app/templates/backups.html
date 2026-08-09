@@ -1,14 +1,46 @@
 {% extends "base.html" %}
 {% block title %}备份回滚 · Homepage Admin{% endblock %}
 {% block content %}
-<section class="page-heading"><div><h1>备份回滚</h1><p>每次保存前都会备份原文件；恢复操作本身也会先备份当前版本。</p></div></section>
+<section class="page-heading">
+  <div>
+    <h1>备份回滚</h1>
+    <p>每次保存前都会备份原文件；恢复操作本身也会先备份当前版本。系统最多自动保留 {{ backup_limit }} 组备份。</p>
+  </div>
+  {% if backups %}
+  <div class="heading-actions">
+    <div class="backup-summary"><span>{{ backups|length }} 组备份</span></div>
+    <form method="post" action="/backups/delete-all" data-confirm="确认删除全部 {{ backups|length }} 组备份？此操作不可撤销。">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="button danger-outline" type="submit">清空全部备份</button>
+    </form>
+  </div>
+  {% endif %}
+</section>
 <div class="backup-list">
 {% for backup in backups %}
-  <section class="backup-card"><header><strong>{{ backup.id }}</strong><span>{{ backup.files|length }} 个文件</span></header><div class="backup-files">
-  {% for file in backup.files %}
-    <div><code>{{ file }}</code><form method="post" action="/backups/{{ backup.id }}/{{ file }}/restore" data-confirm="确认恢复 {{ file }} 到备份 {{ backup.id }}？"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button small secondary" type="submit">恢复</button></form></div>
-  {% endfor %}
-  </div></section>
+  <section class="backup-card">
+    <header>
+      <strong>{{ backup.id }}</strong>
+      <span class="backup-meta">{{ backup.files|length }} 个文件 · {{ backup.size_label }}</span>
+      <div class="backup-header-actions">
+        <form method="post" action="/backups/{{ backup.id }}/delete" data-confirm="确认删除备份 {{ backup.id }}？删除后无法从这一版本恢复。">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="button small danger-outline" type="submit">删除备份</button>
+        </form>
+      </div>
+    </header>
+    <div class="backup-files">
+    {% for file in backup.files %}
+      <div>
+        <code>{{ file }}</code>
+        <form method="post" action="/backups/{{ backup.id }}/{{ file }}/restore" data-confirm="确认恢复 {{ file }} 到备份 {{ backup.id }}？">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="button small secondary" type="submit">恢复</button>
+        </form>
+      </div>
+    {% endfor %}
+    </div>
+  </section>
 {% else %}
   <section class="empty-state"><div class="empty-icon">↶</div><h2>暂无备份</h2><p>第一次保存配置后，这里会出现自动备份。</p></section>
 {% endfor %}

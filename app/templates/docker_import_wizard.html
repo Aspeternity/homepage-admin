@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Docker 导入向导 · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading wizard-heading">
+  <div>
+    <a class="back-link" href="/docker">← 返回 Docker 发现</a>
+    <h1>Docker 导入向导</h1>
+    <p>先核对容器信息，再调整 Homepage 建议值，最后预览卡片与 YAML。这里不会直接保存；确认后进入完整服务编辑器。</p>
+  </div>
+</section>
+
+<div class="wizard-steps" aria-label="导入步骤">
+  <span class="active"><b>1</b>识别容器</span>
+  <span class="active"><b>2</b>调整建议</span>
+  <span class="active"><b>3</b>预览</span>
+  <span><b>4</b>完整编辑</span>
+</div>
+
+<form class="docker-import-wizard" method="get" action="/docker/import/{{ container.id[:12] }}/edit" data-import-wizard>
+  <section class="form-card wizard-container-card">
+    <div class="section-title-row">
+      <div>
+        <h2>{{ container.name }}</h2>
+        <p class="section-help">{{ container.image }}</p>
+      </div>
+      <span class="status-pill {{ 'ok' if container.state == 'running' else '' }}">{{ container.state or 'unknown' }}</span>
+    </div>
+    <div class="wizard-facts">
+      <div><span>运行状态</span><strong>{{ container.status or container.state or 'unknown' }}</strong></div>
+      <div><span>容器名称</span><code>{{ container.name }}</code></div>
+      <div><span>Docker Server</span><code>{{ values.server or '未配置' }}</code></div>
+      <div><span>发布端口</span><strong>{% if container.published_ports %}{% for p in container.published_ports %}{{ p.public }}→{{ p.private }}/{{ p.type }}{% if not loop.last %} · {% endif %}{% endfor %}{% else %}无宿主机映射{% endif %}</strong></div>
+    </div>
+  </section>
+
+  <div class="wizard-layout">
+    <section class="form-card wizard-editor-card">
+      <div class="section-title-row">
+        <div><h2>Homepage 建议</h2><p class="section-help">所有建议都可以修改。右侧预览会实时更新。</p></div>
+      </div>
+      <div class="form-grid two">
+        <label>服务名称
+          <input name="name" value="{{ values.name }}" required data-wizard-field="name">
+          {% if suggestion_sources.name %}<small class="field-source">来源：{{ suggestion_sources.name }}</small>{% endif %}
+        </label>
+        <label>所属分组
+          <select name="group_index" data-wizard-field="group">
+            {% for group in groups %}<option value="{{ loop.index0 }}" {% if loop.index0 == group_index %}selected{% endif %}>{{ group }}</option>{% endfor %}
+          </select>
+          {% if suggestion_sources.group %}<small class="field-source">来源：{{ suggestion_sources.group }}</small>{% endif %}
+        </label>
+        <label>访问地址
+          <input name="href" value="{{ values.href }}" placeholder="http://10.10.1.11:8080" data-wizard-field="href">
+          {% if suggestion_sources.href %}<small class="field-source">来源：{{ suggestion_sources.href }}</small>{% endif %}
+        </label>
+        <label>图标
+          <input name="icon" value="{{ values.icon }}" placeholder="sh-jellyfin / https://..." data-wizard-field="icon">
+          {% if suggestion_sources.icon %}<small class="field-source">来源：{{ suggestion_sources.icon }}</small>{% endif %}
+        </label>
+        <label class="span-2">简短说明
+          <input name="description" value="{{ values.description }}" placeholder="例如：影视媒体中心" data-wizard-field="description">
+          {% if suggestion_sources.description %}<small class="field-source">来源：{{ suggestion_sources.description }}</small>{% endif %}
+        </label>
+        <label>站点监控 URL
+          <input name="siteMonitor" value="{{ values.siteMonitor }}" placeholder="可留空" data-wizard-field="siteMonitor">
+          {% if suggestion_sources.siteMonitor %}<small class="field-source">来源：{{ suggestion_sources.siteMonitor }}</small>{% endif %}
+        </label>
+        <label>ICMP Ping 主机
+          <input name="ping" value="{{ values.ping }}" placeholder="可留空" data-wizard-field="ping">
+          {% if suggestion_sources.ping %}<small class="field-source">来源：{{ suggestion_sources.ping }}</small>{% endif %}
+        </label>
+        <label>Widget 类型
+          <input name="widget_type" value="{{ values.widget_type }}" list="wizard-widget-types" placeholder="可留空" data-wizard-field="widget_type">
+          <datalist id="wizard-widget-types">{% for type_id, schema in widget_catalog.items() %}<option value="{{ type_id }}">{{ schema.label }}</option>{% endfor %}</datalist>
+          {% if suggestion_sources.widget_type %}<small class="field-source">来源：{{ suggestion_sources.widget_type }}</small>{% endif %}
+        </label>
+        <label>Widget 地址
+          <input name="widget_url" value="{{ values.widget_fields.get('url', '') }}" placeholder="通常与访问地址相同" data-wizard-field="widget_url">
+          {% if suggestion_sources.widget_url %}<small class="field-source">来源：{{ suggestion_sources.widget_url }}</small>{% endif %}
+        </label>
+      </div>
+      <input type="hidden" value="{{ values.server }}" data-wizard-static="server">
+      <input type="hidden" value="{{ values.container }}" data-wizard-static="container">
+      <div class="wizard-notice">
+        <strong>凭据不会在这里猜测。</strong>
+        <span>Jellyfin、qBittorrent、Home Assistant 等 Widget 的 API Key / 用户名 / 密码，会在下一步完整编辑器中填写。</span>
+      </div>
+    </section>
+
+    <aside class="wizard-preview-stack">
+      <section class="form-card preview-card-panel">
+        <div class="section-title-row"><div><h2>卡片预览</h2><p class="section-help">模拟 Homepage 服务卡片的信息层级。</p></div></div>
+        <div class="homepage-card-preview">
+          <div class="preview-icon" data-preview-icon>H</div>
+          <div class="preview-copy">
+            <strong data-preview-name>{{ values.name }}</strong>
+            <span data-preview-description>{{ values.description or values.href or '暂无说明' }}</span>
+            <div class="preview-tags"><span data-preview-docker>Docker</span><span data-preview-widget {% if not values.widget_type %}hidden{% endif %}>Widget</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="form-card yaml-preview-panel">
+        <div class="section-title-row"><div><h2>YAML 预览</h2><p class="section-help">仅展示本向导中的非敏感字段。</p></div></div>
+        <pre class="wizard-yaml-preview"><code data-wizard-yaml></code></pre>
+      </section>
+    </aside>
+  </div>
+
+  <div class="sticky-actions wizard-actions">
+    <a class="button secondary" href="/docker">取消</a>
+    <button class="button primary" type="submit">继续到完整编辑器 →</button>
+  </div>
+</form>
+{% endblock %}

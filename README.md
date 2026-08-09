@@ -1,35 +1,44 @@
-# Homepage Admin v0.2.1
+# Homepage Admin v0.2.2
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是和 Homepage 挂载同一个配置目录，直接读写官方 YAML 文件。
 
-> v0.2.1 的重点是：**黑/白主题切换、Docker 发现体验优化，以及把 Homepage 和 Admin 统一到一个只读 Docker Socket Proxy**。
+> v0.2.2 的重点：**Docker 导入向导、右上角主题菜单、可删除的备份回滚记录**。
 
-## v0.2.1 新增 / 修复
+## v0.2.2 新增 / 修复
 
-- 新增 **深色 / 浅色主题切换**，主题偏好保存在浏览器 `localStorage`，刷新后保持。
-- 登录页、桌面侧栏、移动端顶部都可以切换主题。
-- Docker 端口映射去重：IPv4 / IPv6 返回的相同 `hostPort -> containerPort` 只显示一次。
-- Docker 发现使用容器名大小写不敏感匹配，已经写入 `services.yaml` 的容器会明确显示“已添加”。
-- 已添加容器会显示对应的 Homepage 分组 / 服务名。
-- 默认隐藏 `homepage-docker-proxy` 等内部基础设施容器，可手动显示。
-- `homepage-admin` 和 Homepage 本体会显示角色标签。
-- Docker 导入页增加“默认导入分组”选择，并在当前浏览器记住选择，避免总是落到第一个 `Widgets` 分组。
-- Docker 页显示只读代理健康状态。
-- `docker.yaml` 为空时，新建的 `local-docker` 默认使用只读代理：
+### Docker 导入向导
 
-  ```yaml
-  local-docker:
-    host: homepage-docker-proxy
-    port: 2375
-  ```
+Docker 发现页点击“添加到 Homepage”后，不再直接跳进完整服务表单，而是进入四步导入流程：
 
-- 如果当前仍是 `socket: /var/run/docker.sock`，Docker 页提供“一键切换为只读代理”。
-- v0.2.1 的 Compose 改用 Homepage 官方文档推荐的 `ghcr.io/tecnativa/docker-socket-proxy:latest`，`POST=0`，不向宿主机 / 局域网暴露 2375。
-- 保留 v0.2.0 自定义发现代理代码作为兼容路径，但新部署不再使用它。
+1. 识别容器：名称、镜像、运行状态、发布端口、Docker Server。
+2. 调整建议：自动推荐服务名、访问地址、图标、说明、分组、Widget 类型和 Widget URL。
+3. 实时预览：同时展示模拟 Homepage 卡片与非敏感 YAML 预览。
+4. 完整编辑：把向导中修改过的值带入原来的服务编辑器，再填写 API Key、用户名、密码及高级 YAML。
+
+推荐值会标注来源，例如：`Homepage Label`、`容器名称`、`发布端口`、`镜像识别`、`Docker 发现页选择`。
+
+内置常见服务说明识别包括 Jellyfin、qBittorrent、Transmission、Home Assistant、Portainer、Proxmox、Vaultwarden、MoviePilot、MeTube、Lsky Pro、MkDocs、MySQL、phpMyAdmin、Komari、CookieCloud、RustDesk、1Panel 等。
+
+### 右上角主题菜单
+
+- 桌面端移除左下角大号主题按钮，改为页面右上角小图标。
+- 点击图标弹出：**浅色模式 / 深色模式 / 跟随系统**。
+- 继续使用浏览器 `localStorage` 保存主题偏好。
+- 旧版已保存的 `light` / `dark` 偏好可直接沿用。
+- 移动端与登录页保留紧凑图标切换。
+
+### 备份回滚维护
+
+- 每组备份新增“删除备份”按钮。
+- 备份页新增“清空全部备份”。
+- 删除操作均要求 CSRF 校验和二次确认。
+- 页面显示当前备份组数量、每组文件数和占用空间。
+- 自动保留上限 `BACKUP_LIMIT` 仍然生效；默认最多 50 组。
+- 删除备份动作写入审计日志。
 
 ## Docker 安全架构
 
-v0.2.1 推荐结构：
+延续 v0.2.1 的共享只读代理结构：
 
 ```text
 /var/run/docker.sock
@@ -43,15 +52,13 @@ homepage-docker-proxy
   POST=0
         │
         ├─────────> Homepage
-        │           docker.yaml -> host: homepage-docker-proxy / port: 2375
+        │           docker.yaml -> homepage-docker-proxy:2375
         │
         └─────────> Homepage Admin
-                    Docker 发现
+                    Docker 发现 / 导入向导
 ```
 
-`homepage-docker-proxy` 不映射宿主机端口，只加入共享的 `homepage-tools` Docker 网络。
-
-Homepage 官方文档同样推荐 Docker Socket Proxy，而不是直接把 `/var/run/docker.sock` 交给 Homepage。
+`homepage-docker-proxy` 不映射宿主机端口，只加入共享 `homepage-tools` 网络。
 
 ## 仍然支持的核心功能
 
@@ -60,13 +67,11 @@ Homepage 官方文档同样推荐 Docker Socket Proxy，而不是直接把 `/var
 - Jellyfin、qBittorrent、Transmission、Minecraft、Home Assistant、Portainer、Proxmox 专属 Widget 表单
 - API Key / Token / Password 遮挡与保留
 - 高级 YAML 敏感值安全占位符
-- Docker 容器发现与一键预填
-- 自动备份、回滚、YAML 校验、原子写入、审计日志
+- Docker 容器发现、已添加识别、内部容器隐藏、端口去重
+- 自动备份、回滚、删除、YAML 校验、原子写入、审计日志
 - GitHub Actions 自动测试并发布 `amd64` / `arm64` GHCR 镜像
 
-## 你的当前部署参数
-
-项目中的 `docker-compose.ghcr.yml` / `docker-compose.portainer.yml` 已按当前环境预设：
+## 当前部署参数
 
 ```text
 镜像: ghcr.io/aspeternity/homepage-admin:latest
@@ -78,10 +83,10 @@ Admin UID:GID: 1000:1000
 共享 Docker 网络: homepage-tools
 ```
 
-从 v0.2.0 升级到 v0.2.1 请优先阅读：
+从 v0.2.1 升级请阅读：
 
 ```text
-UPGRADE_V0.2.1_ZH.md
+UPGRADE_V0.2.2_ZH.md
 ```
 
 ## 官方 Homepage 对应配置
@@ -97,12 +102,6 @@ Homepage Admin 仍以官方 YAML 作为唯一数据源：
 - `kubernetes.yaml`
 - `custom.css`
 - `custom.js`
-
-官方文档：
-
-- https://gethomepage.dev/configs/
-- https://gethomepage.dev/configs/docker/
-- https://gethomepage.dev/widgets/services/
 
 ## 本地开发
 
