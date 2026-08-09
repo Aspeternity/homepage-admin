@@ -1751,3 +1751,14 @@ def test_v038_proxmox_unbind_removes_only_proxmox_mapping() -> None:
         assert details["widget"]["key"] == "secret"
     finally:
         services_path.write_text(original, encoding="utf-8")
+
+
+def test_v039_proxmox_bound_actions_have_identical_button_sizing() -> None:
+    root = Path(__file__).resolve().parents[1]
+    css = (root / "app/static/app.css").read_text(encoding="utf-8")
+    template = (root / "app/templates/proxmox.html").read_text(encoding="utf-8")
+    assert 'class="proxmox-bound-actions"' in template
+    assert 'class="button secondary full"' in template
+    assert 'class="button danger-outline full"' in template
+    assert '.proxmox-bound-actions form { margin: 0; display: flex; min-width: 0; }' in css
+    assert '.proxmox-bound-actions form > .button { width: 100%; min-height: 44px; height: 100%; }' in css

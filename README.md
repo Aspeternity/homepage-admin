@@ -1,6 +1,11 @@
-# Homepage Admin v0.3.8
+# Homepage Admin v0.3.9
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
+
+
+## v0.3.9 修复
+
+- Proxmox 发现页已关联卡片中的“编辑服务 / 取消关联”统一为相同高度、宽度与拉伸规则，避免 `<a>` 与 `<form><button>` 在 CSS Grid 中因默认拉伸方式不同而视觉尺寸不一致。
 
 
 ## v0.3.8 修复

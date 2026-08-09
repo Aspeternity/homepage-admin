@@ -1,7 +1,7 @@
 .PHONY: test run build package
 
-VERSION ?= 0.3.8
-PROJECT_DIR := homepage-admin-v0.3.8
+VERSION ?= 0.3.9
+PROJECT_DIR := homepage-admin-v0.3.9
 
 test:
 	python -m pytest -q
