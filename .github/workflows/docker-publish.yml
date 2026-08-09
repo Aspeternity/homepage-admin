@@ -14,11 +14,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: homepage-admin-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Run tests
     runs-on: ubuntu-latest
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -40,7 +43,6 @@ jobs:
     needs: test
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       packages: write
@@ -48,6 +50,19 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Set up Python for official Widget Schema snapshot
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Generate bundled Homepage Widget Schema
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pip install -r requirements.txt
+          python scripts/sync_widget_schema.py --ref master --output app/bundled_widget_schema.json
 
       - name: Normalize GHCR image name
         id: image
