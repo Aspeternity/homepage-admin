@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ '新增服务' if mode == 'new' else '编辑服务' }} · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading"><div><a class="back-link" href="/services">← 返回服务管理</a><h1>{{ '新增服务' if mode == 'new' else '编辑服务' }}</h1><p>常用字段使用表单，Homepage 的其他字段仍可通过 YAML 片段保留。</p></div></section>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+<form class="editor-form" method="post" action="{% if mode == 'new' %}/services/item/create{% else %}/services/item/{{ group_index }}/{{ item_index }}/update{% endif %}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <section class="form-card">
+    <h2>基本信息</h2>
+    <div class="form-grid two">
+      <label>服务名称<input name="name" value="{{ values.name }}" placeholder="Jellyfin" required></label>
+      <label>所属分组<select name="group_index">{% for group in groups %}<option value="{{ loop.index0 }}" {% if loop.index0 == group_index %}selected{% endif %}>{{ group }}</option>{% endfor %}</select></label>
+      <label>访问地址<input name="href" value="{{ values.href }}" placeholder="https://jellyfin.example.com"></label>
+      <label>图标<input name="icon" value="{{ values.icon }}" placeholder="jellyfin.png 或 https://..."></label>
+      <label class="span-2">简短说明<input name="description" value="{{ values.description }}" placeholder="影视媒体中心"></label>
+      <label>打开方式<select name="target"><option value="">使用全局设置</option>{% for value in ['_blank','_self','_parent','_top'] %}<option value="{{ value }}" {% if values.target == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+      <label>站点监控 URL<input name="siteMonitor" value="{{ values.siteMonitor }}" placeholder="可使用内网地址"></label>
+      <label>ICMP Ping 主机<input name="ping" value="{{ values.ping }}" placeholder="10.10.1.11"></label>
+    </div>
+  </section>
+
+  <section class="form-card">
+    <h2>Docker 集成</h2>
+    <p class="section-help">对应 docker.yaml 中的 server 名称和实际容器名。</p>
+    <div class="form-grid two">
+      <label>Docker Server<input name="server" value="{{ values.server }}" placeholder="my-docker"></label>
+      <label>容器名称<input name="container" value="{{ values.container }}" placeholder="jellyfin"></label>
+    </div>
+  </section>
+
+  <section class="form-card">
+    <h2>服务 Widget</h2>
+    {% if values.multiple_widgets %}<div class="alert warning">该服务使用了多个 Widgets。现有 <code>widgets:</code> 已保留在“额外服务配置”中；第一版表单只直接编辑单个 <code>widget:</code>。</div>{% endif %}
+    <div class="form-grid two">
+      <label>Widget 类型<input name="widget_type" value="{{ values.widget_type }}" placeholder="jellyfin / minecraft / qbittorrent"></label>
+      <label>Widget 地址<input name="widget_url" value="{{ values.widget_url }}" placeholder="https://jellyfin.example.com"></label>
+      <label class="span-2">API Key<input type="password" name="widget_key" placeholder="{% if values.widget_has_key %}已保存；留空保持不变{% else %}没有则留空{% endif %}" autocomplete="new-password"></label>
+      <label class="span-2">Widget 其他配置（YAML 映射）<textarea name="widget_extra" rows="8" spellcheck="false" placeholder="enableBlocks: true&#10;enableNowPlaying: true">{{ values.widget_extra }}</textarea></label>
+    </div>
+  </section>
+
+  <section class="form-card">
+    <h2>额外服务配置</h2>
+    <p class="section-help">用于保存 <code>showStats</code>、<code>widgets</code>、<code>highlight</code> 等未做成表单的官方字段。</p>
+    <label>YAML 映射<textarea name="extra" rows="12" spellcheck="false">{{ values.extra }}</textarea></label>
+  </section>
+
+  <div class="sticky-actions"><a class="button secondary" href="/services">取消</a><button class="button primary" type="submit">保存服务</button></div>
+</form>
+{% endblock %}

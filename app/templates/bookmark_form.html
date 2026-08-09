@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ '新增书签' if mode == 'new' else '编辑书签' }} · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading"><div><a class="back-link" href="/bookmarks">← 返回书签管理</a><h1>{{ '新增书签' if mode == 'new' else '编辑书签' }}</h1><p>书签是轻量链接，适合 AI 工具、论坛和 PT 站点。</p></div></section>
+<form class="editor-form" method="post" action="{% if mode == 'new' %}/bookmarks/item/create{% else %}/bookmarks/item/{{ group_index }}/{{ item_index }}/update{% endif %}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <section class="form-card">
+    <h2>书签信息</h2>
+    <div class="form-grid two">
+      <label>名称<input name="name" value="{{ values.name }}" required placeholder="M-Team"></label>
+      <label>所属分组<select name="group_index">{% for group in groups %}<option value="{{ loop.index0 }}" {% if loop.index0 == group_index %}selected{% endif %}>{{ group }}</option>{% endfor %}</select></label>
+      <label class="span-2">访问地址<input name="href" value="{{ values.href }}" required placeholder="https://example.com"></label>
+      <label>缩写<input name="abbr" value="{{ values.abbr }}" maxlength="8" placeholder="MT"></label>
+      <label>图标<input name="icon" value="{{ values.icon }}" placeholder="图标优先于缩写"></label>
+      <label class="span-2">说明<input name="description" value="{{ values.description }}" placeholder="留空时 Homepage 显示主机名"></label>
+      <label class="span-2">额外配置（YAML 映射）<textarea name="extra" rows="8" spellcheck="false">{{ values.extra }}</textarea></label>
+    </div>
+  </section>
+  <div class="sticky-actions"><a class="button secondary" href="/bookmarks">取消</a><button class="button primary" type="submit">保存书签</button></div>
+</form>
+{% endblock %}

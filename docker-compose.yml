@@ -1,0 +1,30 @@
+services:
+  homepage-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: homepage-admin:0.1.1
+    container_name: homepage-admin
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env
+    volumes:
+      # Change the left path to the real Homepage config directory on your Docker VM.
+      - /opt/docker/homepage/config:/config
+      - /opt/docker/homepage-admin/data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3001/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -1,0 +1,11 @@
+---
+- greeting:
+    text_size: xl
+    text: Hello!
+- datetime:
+    text_size: 3xl
+    format:
+      timeStyle: short
+- search:
+    provider: google
+    focus: true

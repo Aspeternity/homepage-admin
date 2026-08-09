@@ -1,0 +1,11 @@
+---
+language: zh-CN
+title: My Homepage
+layout:
+  核心服务:
+    style: row
+    columns: 4
+    useEqualHeights: true
+  常用网站:
+    style: row
+    columns: 5

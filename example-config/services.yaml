@@ -1,0 +1,7 @@
+---
+- 核心服务:
+    - Homepage:
+        icon: homepage.png
+        href: http://localhost:3000
+        description: 服务导航首页
+        siteMonitor: http://homepage:3000

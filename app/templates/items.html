@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><h1>{{ title }}</h1><p>{{ subtitle }}</p></div>
+  <div class="heading-actions">
+    <button class="button secondary" type="button" data-dialog-open="new-group-dialog">新建分组</button>
+    <a class="button primary" href="/{{ kind }}/item/new">新增{{ '服务' if kind == 'services' else '书签' }}</a>
+  </div>
+</section>
+
+{% if not groups %}
+<section class="empty-state">
+  <div class="empty-icon">＋</div>
+  <h2>还没有可显示的分组</h2>
+  <p>先创建一个分组，然后添加{{ '服务' if kind == 'services' else '书签' }}。</p>
+  <button class="button primary" type="button" data-dialog-open="new-group-dialog">创建第一个分组</button>
+</section>
+{% endif %}
+
+<div class="groups-stack">
+{% for group in groups %}
+  <section class="group-panel">
+    <header class="group-header">
+      <div>
+        <h2>{{ group.name }}</h2>
+        <span class="count-badge">{{ group["items"]|length }} 项</span>
+      </div>
+      <div class="group-actions">
+        <form method="post" action="/{{ kind }}/group/{{ group.index }}/move">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="direction" value="up">
+          <button class="icon-button" type="submit" title="分组上移" {% if loop.first %}disabled{% endif %}>↑</button>
+        </form>
+        <form method="post" action="/{{ kind }}/group/{{ group.index }}/move">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="direction" value="down">
+          <button class="icon-button" type="submit" title="分组下移" {% if loop.last %}disabled{% endif %}>↓</button>
+        </form>
+        <button class="icon-button" type="button" title="重命名分组" data-dialog-open="rename-{{ kind }}-{{ group.index }}">✎</button>
+        <button class="icon-button danger-text" type="button" title="删除分组" data-dialog-open="delete-group-{{ kind }}-{{ group.index }}">⌫</button>
+      </div>
+    </header>
+
+    <div class="item-grid drop-zone" data-kind="{{ kind }}" data-group-index="{{ group.index }}">
+      {% for item in group["items"] %}
+      <article class="item-card" draggable="true" data-item-index="{{ item.index }}" data-group-index="{{ group.index }}">
+        <div class="item-card-main">
+          <div class="service-icon">
+            {% if item.meta.icon %}<img src="{{ item.meta.icon }}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">{% endif %}
+            <span {% if item.meta.icon %}style="display:none"{% endif %}>{{ item.name[:1]|upper }}</span>
+          </div>
+          <div class="item-copy">
+            <h3>{{ item.name }}</h3>
+            {% if item.nested %}
+              <p>嵌套分组 · 请使用高级编辑器</p>
+            {% else %}
+              <p>{{ item.meta.description or item.meta.href or '未填写说明或链接' }}</p>
+            {% endif %}
+            <div class="item-tags">
+              {% if item.meta.siteMonitor %}<span>状态监控</span>{% endif %}
+              {% if item.meta.widget %}<span>Widget</span>{% endif %}
+              {% if item.meta.server and item.meta.container %}<span>Docker</span>{% endif %}
+              {% if kind == 'bookmarks' and item.meta.abbr %}<span>{{ item.meta.abbr }}</span>{% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="item-actions">
+          {% if item.meta.href %}<a class="icon-button" href="{{ item.meta.href }}" target="_blank" rel="noopener" title="打开链接">↗</a>{% endif %}
+          {% if not item.nested %}<a class="icon-button" href="/{{ kind }}/item/{{ group.index }}/{{ item.index }}/edit" title="编辑">✎</a>{% endif %}
+          <form method="post" action="/{{ kind }}/item/{{ group.index }}/{{ item.index }}/duplicate">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><button class="icon-button" type="submit" title="复制">⧉</button>
+          </form>
+          <button class="icon-button danger-text" type="button" title="删除" data-dialog-open="delete-{{ kind }}-{{ group.index }}-{{ item.index }}">⌫</button>
+        </div>
+      </article>
+
+      <dialog id="delete-{{ kind }}-{{ group.index }}-{{ item.index }}" class="modal">
+        <form method="post" action="/{{ kind }}/item/{{ group.index }}/{{ item.index }}/delete">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <h3>删除“{{ item.name }}”？</h3>
+          <p>保存时会先自动备份原配置，可以在备份页回滚。</p>
+          <div class="modal-actions"><button type="button" class="button secondary" data-dialog-close>取消</button><button class="button danger" type="submit">确认删除</button></div>
+        </form>
+      </dialog>
+      {% endfor %}
+      <a class="add-card" href="/{{ kind }}/item/new?group={{ group.index }}">＋ 添加{{ '服务' if kind == 'services' else '书签' }}</a>
+    </div>
+  </section>
+
+  <dialog id="rename-{{ kind }}-{{ group.index }}" class="modal">
+    <form method="post" action="/{{ kind }}/group/{{ group.index }}/rename">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <h3>重命名分组</h3>
+      <label>分组名称<input name="name" value="{{ group.name }}" required></label>
+      <div class="modal-actions"><button type="button" class="button secondary" data-dialog-close>取消</button><button class="button primary" type="submit">保存</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="delete-group-{{ kind }}-{{ group.index }}" class="modal">
+    <form method="post" action="/{{ kind }}/group/{{ group.index }}/delete">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <h3>删除分组“{{ group.name }}”？</h3>
+      {% if group["items"] %}<p>该分组中有 {{ group["items"]|length }} 项。请输入 <strong>DELETE</strong> 确认整组删除。</p><label>确认文字<input name="confirm" autocomplete="off"></label>{% else %}<p>该分组为空，可以直接删除。</p>{% endif %}
+      <div class="modal-actions"><button type="button" class="button secondary" data-dialog-close>取消</button><button class="button danger" type="submit">删除分组</button></div>
+    </form>
+  </dialog>
+{% endfor %}
+</div>
+
+<dialog id="new-group-dialog" class="modal">
+  <form method="post" action="/{{ kind }}/group/create">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <h3>新建分组</h3>
+    <label>分组名称<input name="name" placeholder="例如：下载与媒体" required></label>
+    <p class="form-help">服务分组与书签分组不要重名。</p>
+    <div class="modal-actions"><button type="button" class="button secondary" data-dialog-close>取消</button><button class="button primary" type="submit">创建</button></div>
+  </form>
+</dialog>
+{% endblock %}

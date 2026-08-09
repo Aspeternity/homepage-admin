@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ '新增组件' if mode == 'new' else '编辑组件' }} · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading"><div><a class="back-link" href="/widgets">← 返回顶部组件</a><h1>{{ '新增组件' if mode == 'new' else '编辑组件' }}</h1><p>不同组件参数不同，因此第一版使用类型 + YAML 配置的通用编辑方式。</p></div></section>
+<form class="editor-form" method="post" action="{% if mode == 'new' %}/widgets/create{% else %}/widgets/{{ index }}/update{% endif %}">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <section class="form-card">
+    <div class="form-grid two">
+      <label>组件类型<input name="name" value="{{ name }}" required placeholder="greeting / datetime / resources / search"></label>
+      <label class="span-2">配置（YAML）<textarea name="config" rows="18" spellcheck="false">{{ config }}</textarea></label>
+    </div>
+  </section>
+  <div class="sticky-actions"><a class="button secondary" href="/widgets">取消</a><button class="button primary" type="submit">保存组件</button></div>
+</form>
+{% endblock %}

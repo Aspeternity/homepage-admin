@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}页面设置 · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading"><div><h1>页面设置</h1><p>管理标题、背景、主题、快速启动和分组布局。</p></div><a class="button secondary" href="{{ homepage_url }}" target="_blank" rel="noopener">查看 Homepage ↗</a></section>
+<form class="editor-form" method="post" action="/settings">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <section class="form-card">
+    <h2>基础设置</h2>
+    <div class="form-grid two">
+      <label>页面标题<input name="title" value="{{ values.title }}"></label>
+      <label>语言<input name="language" value="{{ values.language }}" placeholder="zh-CN"></label>
+      <label class="span-2">页面说明<input name="description" value="{{ values.description }}"></label>
+      <label class="span-2">Favicon<input name="favicon" value="{{ values.favicon }}" placeholder="https://... 或 /images/favicon.png"></label>
+      <label>主题<select name="theme"><option value="">允许页面切换</option><option value="light" {% if values.theme == 'light' %}selected{% endif %}>light</option><option value="dark" {% if values.theme == 'dark' %}selected{% endif %}>dark</option></select></label>
+      <label>配色<input name="color" value="{{ values.color }}" placeholder="slate / zinc / blue ..."></label>
+      <label>页头样式<select name="headerStyle"><option value="">默认</option>{% for x in ['underlined','boxed','clean'] %}<option value="{{ x }}" {% if values.headerStyle == x %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></label>
+      <label>默认链接目标<select name="target"><option value="">默认</option>{% for x in ['_blank','_self','_parent','_top'] %}<option value="{{ x }}" {% if values.target == x %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></label>
+      <label>状态样式<input name="statusStyle" value="{{ values.statusStyle }}" placeholder="dot / basic"></label>
+      <label>前缀图标样式<input name="iconStyle" value="{{ values.iconStyle }}" placeholder="theme / gradient"></label>
+      <label>卡片背景模糊<input name="cardBlur" value="{{ values.cardBlur }}" placeholder="xs / md / xl"></label>
+      <label class="checkbox"><input type="checkbox" name="fullWidth" {% if values.fullWidth %}checked{% endif %}>使用全宽布局</label>
+      <label class="checkbox"><input type="checkbox" name="hideVersion" {% if values.hideVersion %}checked{% endif %}>隐藏 Homepage 版本</label>
+    </div>
+  </section>
+
+  <section class="form-card">
+    <h2>背景图</h2>
+    <div class="form-grid two">
+      <label class="span-2">图片地址<input name="background_image" value="{{ values.background.image or '' }}" placeholder="https://... 或 /images/background.png"></label>
+      <label>模糊<input name="background_blur" value="{{ values.background.blur or '' }}" placeholder="sm / md / xl"></label>
+      <label>饱和度<input type="number" name="background_saturate" value="{{ values.background.saturate or '' }}" min="0" max="200"></label>
+      <label>亮度<input type="number" name="background_brightness" value="{{ values.background.brightness or '' }}" min="0" max="200"></label>
+      <label>透明度<input type="number" name="background_opacity" value="{{ values.background.opacity or '' }}" min="0" max="100"></label>
+    </div>
+    <p class="form-help">官方说明：背景滤镜与 <code>cardBlur</code> 不兼容，建议二选一。</p>
+  </section>
+
+  <section class="form-card">
+    <h2>快速启动</h2>
+    <div class="form-grid two"><label>搜索提供商<input name="quicklaunch_provider" value="{{ values.quicklaunch_provider }}" placeholder="google / baidu / bing / duckduckgo / brave"></label></div>
+  </section>
+
+  <section class="form-card">
+    <div class="section-heading"><div><h2>分组布局</h2><p class="section-help">顺序就是 Homepage 中的分组顺序。拖动暂未加入设置页，可用上下按钮管理服务和组件顺序。</p></div></div>
+    <div class="layout-table">
+      {% for row in values.layout %}
+      <details class="layout-row" open>
+        <summary><strong>{{ row.name }}</strong><span>{{ row.style or '默认布局' }}{% if row.columns %} · {{ row.columns }} 列{% endif %}</span></summary>
+        <input type="hidden" name="layout_name" value="{{ row.name }}">
+        <div class="form-grid four compact">
+          <label>布局<select name="layout_{{ loop.index0 }}_style"><option value="">默认</option><option value="row" {% if row.style == 'row' %}selected{% endif %}>row</option><option value="column" {% if row.style == 'column' %}selected{% endif %}>column</option></select></label>
+          <label>列数<input type="number" min="1" max="12" name="layout_{{ loop.index0 }}_columns" value="{{ row.columns }}"></label>
+          <label>标签页<input name="layout_{{ loop.index0 }}_tab" value="{{ row.tab }}"></label>
+          <label>分组图标<input name="layout_{{ loop.index0 }}_icon" value="{{ row.icon }}"></label>
+        </div>
+        <div class="checkbox-row">
+          <label class="checkbox"><input type="checkbox" name="layout_{{ loop.index0 }}_iconsOnly" {% if row.iconsOnly %}checked{% endif %}>仅图标</label>
+          <label class="checkbox"><input type="checkbox" name="layout_{{ loop.index0 }}_header" {% if row.header %}checked{% endif %}>显示标题</label>
+          <label class="checkbox"><input type="checkbox" name="layout_{{ loop.index0 }}_useEqualHeights" {% if row.useEqualHeights %}checked{% endif %}>等高卡片</label>
+          <label class="checkbox"><input type="checkbox" name="layout_{{ loop.index0 }}_collapsible" {% if row.collapsible %}checked{% endif %}>允许折叠</label>
+          <label class="checkbox"><input type="checkbox" name="layout_{{ loop.index0 }}_initiallyCollapsed" {% if row.initiallyCollapsed %}checked{% endif %}>默认折叠</label>
+        </div>
+        <label>额外布局字段<textarea name="layout_{{ loop.index0 }}_extra" rows="4" spellcheck="false">{{ row.extra }}</textarea></label>
+      </details>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="form-card"><h2>其他 settings.yaml 字段</h2><label>YAML 映射<textarea name="extra" rows="12" spellcheck="false">{{ values.extra }}</textarea></label></section>
+  <div class="sticky-actions"><a class="button secondary" href="/settings">放弃修改</a><button class="button primary" type="submit">保存设置</button></div>
+</form>
+{% endblock %}
