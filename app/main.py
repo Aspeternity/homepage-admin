@@ -34,7 +34,12 @@ from .secrets import SECRET_PLACEHOLDER, mask_secrets, restore_masked_secrets
 from .security import ensure_csrf, login_limiter, require_auth, verify_csrf, verify_password
 from .settings import settings
 from .store import ALLOWED_FILES, ConfigError, deep_plain, store
-from .proxmox_client import ProxmoxConnection, ProxmoxDiscoveryClient, ProxmoxDiscoveryError
+from .proxmox_client import (
+    ProxmoxConnection,
+    ProxmoxDiscoveryClient,
+    ProxmoxDiscoveryError,
+    normalize_proxmox_url,
+)
 from .widget_catalog import (
     WIDGET_CATALOG,
     catalog_categories,
@@ -1434,7 +1439,11 @@ def _proxmox_bindings() -> dict[tuple[str, int, str], dict[str, Any]]:
         except (TypeError, ValueError):
             continue
         if node:
-            bindings[(node, vmid_int, ptype)] = {k: v for k, v in service.items() if k != "details"}
+            record = {k: v for k, v in service.items() if k != "details"}
+            record["has_docker"] = bool(details.get("server") and details.get("container"))
+            record["docker_server"] = str(details.get("server") or "")
+            record["docker_container"] = str(details.get("container") or "")
+            bindings[(node, vmid_int, ptype)] = record
     return bindings
 
 
@@ -1454,19 +1463,49 @@ async def proxmox_page(
         except ProxmoxDiscoveryError as exc:
             error = str(exc)
     bindings = _proxmox_bindings()
+    physical_nodes: set[str] = set()
     for resource in resources:
-        # proxmoxNode must match the proxmox.yaml key, not necessarily the physical node label.
-        resource["binding"] = bindings.get((selected, int(resource["vmid"]), str(resource["type"])))
+        # Homepage's current per-VM endpoint uses proxmoxNode both as the
+        # proxmox.yaml key and as /nodes/{node}; bind to the physical node name.
+        bind_node = str(resource.get("node") or selected)
+        physical_nodes.add(bind_node)
+        resource["bind_node"] = bind_node
+        resource["connection_available"] = bind_node in connections
+        resource["binding"] = bindings.get((bind_node, int(resource["vmid"]), str(resource["type"])))
+
+    connection_rows = []
+    for name, conn in connections.items():
+        normalized = normalize_proxmox_url(conn.url)
+        connection_rows.append({
+            "name": name,
+            "url": conn.url,
+            "normalized_url": normalized,
+            "needs_url_normalization": bool(conn.url and conn.url != normalized),
+        })
+    selected_row = next((row for row in connection_rows if row["name"] == selected), None)
+    missing_node_connections = sorted(node for node in physical_nodes if node and node not in connections)
+
+    service_choices = []
+    for item in _service_choices():
+        details = item["details"]
+        row = {k: v for k, v in item.items() if k != "details"}
+        row["has_docker"] = bool(details.get("server") and details.get("container"))
+        row["docker_server"] = str(details.get("server") or "")
+        row["docker_container"] = str(details.get("container") or "")
+        service_choices.append(row)
+
     return templates.TemplateResponse(
         request,
         "proxmox.html",
         context(
             request,
             "proxmox",
-            connections=[{"name": name, "url": conn.url} for name, conn in connections.items()],
+            connections=connection_rows,
             selected=selected,
+            selected_connection=selected_row,
+            missing_node_connections=missing_node_connections,
             resources=resources,
-            service_choices=[{k: v for k, v in item.items() if k != "details"} for item in _service_choices()],
+            service_choices=service_choices,
             widget_candidates=_proxmox_widget_candidates(),
             error=error,
         ),
@@ -1489,7 +1528,7 @@ async def proxmox_import_connection(request: Request, _: None = Depends(auth_gua
         if not widget:
             raise ConfigError("该服务没有 Proxmox Widget。")
         node = str(widget.get("node") or "pve").strip()
-        url = str(widget.get("url") or "").strip()
+        url = normalize_proxmox_url(str(widget.get("url") or ""))
         token = str(widget.get("username") or "").strip()
         secret = str(widget.get("password") or "").strip()
         if not all([node, url, token, secret]):
@@ -1500,6 +1539,56 @@ async def proxmox_import_connection(request: Request, _: None = Depends(auth_gua
         return redirect(f"/proxmox?server={quote(node)}", ok=f"已从现有 Widget 导入 Proxmox 连接“{node}”。")
     except (ConfigError, IndexError, ValueError) as exc:
         return redirect("/proxmox", error=str(exc))
+
+
+@app.post("/proxmox/normalize-connection")
+async def proxmox_normalize_connection(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    server = str(form.get("server", "")).strip()
+    try:
+        data = store.load("proxmox.yaml")
+        config = data.get(server)
+        if not isinstance(config, dict):
+            raise ConfigError("Proxmox 连接不存在。")
+        current = str(config.get("url") or "").strip()
+        normalized = normalize_proxmox_url(current)
+        if not normalized:
+            raise ConfigError("Proxmox URL 为空。")
+        if current == normalized:
+            return redirect(f"/proxmox?server={quote(server)}", ok="该连接 URL 已符合 Homepage 要求。")
+        config["url"] = normalized
+        store.write_data("proxmox.yaml", data, actor(request), f"normalize proxmox url {server}")
+        return redirect(
+            f"/proxmox?server={quote(server)}",
+            ok=f"已修复“{server}”的 URL：去除末尾 /，Homepage 将正确拼接 /api2/json。",
+        )
+    except ConfigError as exc:
+        return redirect(f"/proxmox?server={quote(server)}" if server else "/proxmox", error=str(exc))
+
+
+@app.post("/proxmox/clear-docker")
+async def proxmox_clear_docker_binding(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    server = str(form.get("server", "")).strip()
+    try:
+        gi = int(str(form.get("group_index", "-1")))
+        ii = int(str(form.get("item_index", "-1")))
+        data = store.load("services.yaml")
+        _, items = first_pair(data[gi])
+        service_name, details = first_pair(items[ii])
+        if not isinstance(details, dict):
+            raise ConfigError("目标服务格式无效。")
+        details.pop("server", None)
+        details.pop("container", None)
+        store.write_data("services.yaml", data, actor(request), f"clear docker integration for {service_name}")
+        return redirect(
+            f"/proxmox?server={quote(server)}" if server else "/proxmox",
+            ok=f"已清除“{service_name}”的 Docker 集成；Proxmox VM/LXC 关联保持不变。",
+        )
+    except (ConfigError, IndexError, ValueError) as exc:
+        return redirect(f"/proxmox?server={quote(server)}" if server else "/proxmox", error=str(exc))
 
 
 @app.post("/proxmox/bind")
@@ -1527,6 +1616,9 @@ async def proxmox_bind_service(request: Request, _: None = Depends(auth_guard)) 
             details["proxmoxType"] = "lxc"
         else:
             details.pop("proxmoxType", None)
+        if str(form.get("clear_docker", "")) == "1":
+            details.pop("server", None)
+            details.pop("container", None)
         store.write_data("services.yaml", data, actor(request), f"bind service {service_name} to proxmox {server}/{vmid}")
         return redirect(f"/proxmox?server={quote(server)}", ok=f"已将“{service_name}”关联到 {ptype.upper()} {vmid}。")
     except (ConfigError, IndexError, ValueError) as exc:

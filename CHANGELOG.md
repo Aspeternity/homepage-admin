@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.7 - 2026-08-10
+
+- 修复 Proxmox 发现可成功但 Homepage per-VM 状态失败的配置差异：检测并一键移除 Proxmox URL 末尾 `/`。
+- Proxmox Widget 导入连接时自动规范化 URL。
+- VM/LXC 绑定使用 PVE 返回的真实节点名，并对缺少同名 `proxmox.yaml` 连接的节点显示警告、阻止错误绑定。
+- 检测同一服务同时配置 Docker 与 Proxmox；绑定时可清除 Docker 集成，已绑定服务也支持一键清理。
+- 服务编辑页增加 Docker + Proxmox 双重集成警告。
+
 ## v0.3.6 - 2026-08-10
 
 - 修复自动生成 Widget 字段因帮助文字有无不一致导致的视觉错位。

@@ -1,6 +1,15 @@
-# Homepage Admin v0.3.6
+# Homepage Admin v0.3.7
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
+
+
+## v0.3.7 修复
+
+- Proxmox 发现会检测 `proxmox.yaml` URL 末尾 `/`，并提供一键去除，避免 Homepage 拼接 `/api2/json` 时形成双斜杠。
+- 从 Proxmox Service Widget 导入连接时自动规范化 URL。
+- VM/LXC 绑定改为使用 PVE 返回的真实物理节点名；若 `proxmox.yaml` 缺少同名节点连接，会显示兼容性警告并阻止错误绑定。
+- 检测服务同时配置 Docker 与 Proxmox 的情况。Homepage 会同时渲染两套状态/资源，因此绑定时可选择清除 Docker 集成；已绑定服务也可在 Proxmox 发现页一键清除错误/过期 Docker 映射。
+- 服务编辑页在 Docker + Proxmox 同时存在时显示明确警告，并把字段文案改为“Proxmox 节点名”。
 
 ## v0.3.6 修复
 

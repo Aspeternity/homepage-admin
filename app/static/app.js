@@ -780,6 +780,33 @@
     refreshScheduleFields();
   }
 
+  // v0.3.7 Proxmox bind helper: surface Docker/Proxmox conflicts before saving.
+  document.querySelectorAll('[data-proxmox-bind-form]').forEach((form) => {
+    const select = form.querySelector('[data-proxmox-service-select]');
+    const group = form.querySelector('input[name="group_index"]');
+    const item = form.querySelector('input[name="item_index"]');
+    const conflict = form.querySelector('[data-proxmox-docker-conflict]');
+    const conflictLabel = form.querySelector('[data-proxmox-docker-label]');
+    const refresh = () => {
+      const option = select?.selectedOptions?.[0];
+      const parts = (select?.value || '').split(':');
+      if (group) group.value = parts[0] || '';
+      if (item) item.value = parts[1] || '';
+      const hasDocker = option?.dataset?.hasDocker === '1';
+      if (conflict) conflict.hidden = !hasDocker;
+      if (conflictLabel) conflictLabel.textContent = option?.dataset?.dockerLabel || '';
+    };
+    select?.addEventListener('change', refresh);
+    form.addEventListener('submit', (event) => {
+      refresh();
+      if (!group?.value || !item?.value) {
+        event.preventDefault();
+        window.alert('请选择要关联的 Homepage 服务');
+      }
+    });
+    refresh();
+  });
+
   // v0.3.2 global back-to-top control for long discovery / Widget pages.
   const backToTop = $('[data-back-to-top]');
   if (backToTop) {

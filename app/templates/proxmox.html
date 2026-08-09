@@ -10,7 +10,7 @@
 {% if not connections %}
 <section class="form-card">
   <h2>尚未配置 proxmox.yaml</h2>
-  <p class="section-help">你已经可以在 Service Widget 中使用 Proxmox Token；当前版本可以把现有 Proxmox Widget 的连接安全复制到 <code>proxmox.yaml</code>，无需再次粘贴 Secret。</p>
+  <p class="section-help">可以把现有 Proxmox Service Widget 的只读 Token 安全复制到 <code>proxmox.yaml</code>，无需再次粘贴 Secret。</p>
   {% if widget_candidates %}
   <div class="simple-list">
     {% for candidate in widget_candidates %}
@@ -25,26 +25,48 @@
 </section>
 {% else %}
 <section class="form-card proxmox-toolbar">
-  <div><strong>Proxmox Server</strong><p class="section-help">服务中的 <code>proxmoxNode</code> 必须匹配这里的 Server 名称。</p></div>
+  <div><strong>Proxmox 节点 / 连接</strong><p class="section-help"><code>proxmoxNode</code> 会同时用于选择 <code>proxmox.yaml</code> 连接和请求 PVE 的 <code>/nodes/&lt;node&gt;</code>，因此名称应与 PVE 实际节点名一致。</p></div>
   <form method="get" action="/proxmox"><select name="server" onchange="this.form.submit()">{% for conn in connections %}<option value="{{ conn.name }}" {% if conn.name == selected %}selected{% endif %}>{{ conn.name }} · {{ conn.url }}</option>{% endfor %}</select></form>
 </section>
+
+{% if selected_connection and selected_connection.needs_url_normalization %}
+<div class="alert warning proxmox-config-warning">
+  <div><strong>检测到 Proxmox URL 末尾包含 /</strong><br>Admin 发现功能会自动兼容，但 Homepage 会自行拼接 <code>/api2/json</code>。官方排错建议 URL 不要以 <code>/</code> 结尾；当前值可能生成双斜杠 API 地址。</div>
+  <form method="post" action="/proxmox/normalize-connection"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="server" value="{{ selected }}"><button class="button secondary small" type="submit">一键修复 URL</button></form>
+</div>
+{% endif %}
+
+{% if missing_node_connections %}
+<div class="alert warning"><strong>发现未配置同名连接的实际 PVE 节点：</strong> {{ missing_node_connections|join(', ') }}。这些 VM/LXC 暂不建议绑定；请先在 <code>proxmox.yaml</code> 为实际节点名增加连接。</div>
+{% endif %}
 
 <div class="proxmox-grid">
 {% for vm in resources %}
   <article class="proxmox-card {% if vm.binding %}configured{% endif %}">
     <header><div><div class="docker-name-row"><h3>{{ vm.name }}</h3><span class="state-dot {{ 'online' if vm.status == 'running' else 'offline' }}"></span></div><p>{{ vm.type|upper }} {{ vm.vmid }} · {{ vm.node }}</p></div><span class="status-pill {{ 'ok' if vm.status == 'running' else '' }}">{{ vm.status }}</span></header>
     <div class="proxmox-metrics"><div><span>CPU</span><strong>{{ vm.cpu_percent }}%</strong></div><div><span>内存</span><strong>{{ vm.memory_percent }}%</strong></div><div><span>VMID</span><strong>{{ vm.vmid }}</strong></div></div>
+    {% if not vm.connection_available %}
+      <div class="proxmox-inline-warning">实际节点 <code>{{ vm.bind_node }}</code> 没有同名 <code>proxmox.yaml</code> 连接，不能安全生成 Homepage per-VM 关联。</div>
+    {% endif %}
     {% if vm.binding %}
       <div class="configured-box">已关联：<strong>{{ vm.binding.group }} / {{ vm.binding.name }}</strong></div>
-      <a class="button secondary full" href="/services/item/{{ vm.binding.group_index }}/{{ vm.binding.item_index }}/edit">编辑服务</a>
-    {% else %}
-      <form method="post" action="/proxmox/bind" class="proxmox-bind-form">
-        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="server" value="{{ selected }}"><input type="hidden" name="vmid" value="{{ vm.vmid }}"><input type="hidden" name="type" value="{{ vm.type }}">
-        <select name="service_ref" data-proxmox-service-select onchange="const [g,i]=this.value.split(':'); this.form.group_index.value=g||''; this.form.item_index.value=i||''"><option value="">选择已有服务...</option>{% for service in service_choices %}<option value="{{ service.group_index }}:{{ service.item_index }}">{{ service.group }} / {{ service.name }}</option>{% endfor %}</select>
-        <input type="hidden" name="group_index"><input type="hidden" name="item_index">
-        <button class="button primary" type="submit" onclick="if(!this.form.group_index.value){alert('请选择要关联的 Homepage 服务'); return false;}">关联已有服务</button>
+      {% if vm.binding.has_docker %}
+      <div class="proxmox-inline-warning">该服务还配置了 Docker：<code>{{ vm.binding.docker_server }} / {{ vm.binding.docker_container }}</code>。Homepage 会同时渲染 Docker 与 Proxmox 两套状态/资源。</div>
+      <form method="post" action="/proxmox/clear-docker" class="proxmox-bind-form">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="server" value="{{ selected }}"><input type="hidden" name="group_index" value="{{ vm.binding.group_index }}"><input type="hidden" name="item_index" value="{{ vm.binding.item_index }}">
+        <button class="button danger-outline full" type="submit">清除该服务的 Docker 集成</button>
       </form>
-      <a class="button secondary full" href="/services/item/new?name={{ vm.name|urlencode }}&proxmox_node={{ selected|urlencode }}&proxmox_vmid={{ vm.vmid }}&proxmox_type={{ vm.type }}">以此 VM/LXC 新建服务</a>
+      {% endif %}
+      <a class="button secondary full" href="/services/item/{{ vm.binding.group_index }}/{{ vm.binding.item_index }}/edit">编辑服务</a>
+    {% elif vm.connection_available %}
+      <form method="post" action="/proxmox/bind" class="proxmox-bind-form" data-proxmox-bind-form>
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="server" value="{{ vm.bind_node }}"><input type="hidden" name="vmid" value="{{ vm.vmid }}"><input type="hidden" name="type" value="{{ vm.type }}">
+        <select name="service_ref" data-proxmox-service-select><option value="">选择已有服务...</option>{% for service in service_choices %}<option value="{{ service.group_index }}:{{ service.item_index }}" data-has-docker="{{ '1' if service.has_docker else '0' }}" data-docker-label="{{ service.docker_server }} / {{ service.docker_container }}">{{ service.group }} / {{ service.name }}</option>{% endfor %}</select>
+        <input type="hidden" name="group_index"><input type="hidden" name="item_index">
+        <label class="proxmox-clear-docker-option" data-proxmox-docker-conflict hidden><input type="checkbox" name="clear_docker" value="1" checked><span>目标服务已有 Docker 集成（<code data-proxmox-docker-label></code>）；关联时同时清除，避免 Homepage 渲染两套状态。</span></label>
+        <button class="button primary" type="submit">关联已有服务</button>
+      </form>
+      <a class="button secondary full" href="/services/item/new?name={{ vm.name|urlencode }}&proxmox_node={{ vm.bind_node|urlencode }}&proxmox_vmid={{ vm.vmid }}&proxmox_type={{ vm.type }}">以此 VM/LXC 新建服务</a>
     {% endif %}
   </article>
 {% else %}

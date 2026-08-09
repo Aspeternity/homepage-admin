@@ -48,8 +48,11 @@
 
   <section class="form-card">
     <div class="section-title-row"><div><h2>Proxmox VM / LXC 集成</h2><p class="section-help">对应 <code>proxmox.yaml</code>。绑定后 Homepage 可在服务卡片上显示该 VM/LXC 的 CPU 与内存。</p></div><a href="/proxmox">Proxmox 发现 ↗</a></div>
+    {% if values.server and values.container and values.proxmoxNode and values.proxmoxVMID %}
+    <div class="alert warning service-runtime-conflict"><strong>检测到双重运行状态集成：</strong> 当前服务同时配置 Docker（<code>{{ values.server }} / {{ values.container }}</code>）和 Proxmox（<code>{{ values.proxmoxNode }} / {{ values.proxmoxVMID }}</code>）。Homepage 会同时渲染两套状态与资源；如果这个服务代表 PVE VM/LXC，请清空上方 Docker Server 与容器名称。</div>
+    {% endif %}
     <div class="form-grid three">
-      <label>Proxmox Node / Server<input name="proxmoxNode" value="{{ values.proxmoxNode }}" placeholder="asp-pve"></label>
+      <label>Proxmox 节点名<input name="proxmoxNode" value="{{ values.proxmoxNode }}" placeholder="asp-pve"><small class="field-help">应与 PVE 实际节点名及 proxmox.yaml 键名一致。</small></label>
       <label>VMID<input name="proxmoxVMID" value="{{ values.proxmoxVMID }}" inputmode="numeric" placeholder="100"></label>
       <label>类型<select name="proxmoxType"><option value="" {% if not values.proxmoxType %}selected{% endif %}>QEMU VM（默认）</option><option value="qemu" {% if values.proxmoxType == 'qemu' %}selected{% endif %}>qemu</option><option value="lxc" {% if values.proxmoxType == 'lxc' %}selected{% endif %}>lxc</option></select></label>
     </div>

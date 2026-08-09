@@ -1420,3 +1420,224 @@ def test_v036_schema_page_has_ajax_progress_ui() -> None:
     assert 'data-schema-sync-progress' in html
     assert 'data-schema-sync-bar' in html
     assert '/api/widget-schema/sync/start' in (Path(__file__).resolve().parents[1] / "app" / "static" / "app.js").read_text(encoding="utf-8")
+
+
+def test_v037_proxmox_import_normalizes_trailing_slash() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    services_path = settings.config_dir / "services.yaml"
+    proxmox_path = settings.config_dir / "proxmox.yaml"
+    services_original = services_path.read_text(encoding="utf-8")
+    proxmox_original = proxmox_path.read_text(encoding="utf-8")
+    try:
+        services_path.write_text(
+            '''---
+- Widgets:
+    - Proxmox VE:
+        widget:
+          type: proxmox
+          url: https://pve.example/
+          username: homepage@pve!homepage
+          password: token-secret
+          node: asp-pve
+''',
+            encoding="utf-8",
+        )
+        proxmox_path.write_text("---\n", encoding="utf-8")
+        response = client.post(
+            "/proxmox/import-connection",
+            data={"csrf": csrf, "group_index": "0", "item_index": "0"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        proxmox = YAML(typ="safe").load(proxmox_path.read_text(encoding="utf-8"))
+        assert proxmox["asp-pve"]["url"] == "https://pve.example"
+    finally:
+        services_path.write_text(services_original, encoding="utf-8")
+        proxmox_path.write_text(proxmox_original, encoding="utf-8")
+
+
+def test_v037_proxmox_page_warns_and_can_normalize_existing_url(monkeypatch) -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    csrf = login(client)
+    proxmox_path = settings.config_dir / "proxmox.yaml"
+    original = proxmox_path.read_text(encoding="utf-8")
+    try:
+        proxmox_path.write_text(
+            '''---
+asp-pve:
+  url: https://pve.example/
+  token: homepage@pve!homepage
+  secret: token-secret
+''',
+            encoding="utf-8",
+        )
+
+        async def fake_discover(connection):
+            return [{
+                "vmid": 100,
+                "name": "HomeAssistant",
+                "type": "qemu",
+                "node": "asp-pve",
+                "status": "running",
+                "cpu_percent": 1.2,
+                "memory_percent": 91.9,
+            }]
+
+        monkeypatch.setattr(main_module.proxmox_discovery, "discover", fake_discover)
+        page = client.get("/proxmox?server=asp-pve")
+        assert page.status_code == 200
+        assert "检测到 Proxmox URL 末尾包含 /" in page.text
+        assert "一键修复 URL" in page.text
+
+        response = client.post(
+            "/proxmox/normalize-connection",
+            data={"csrf": csrf, "server": "asp-pve"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        proxmox = YAML(typ="safe").load(proxmox_path.read_text(encoding="utf-8"))
+        assert proxmox["asp-pve"]["url"] == "https://pve.example"
+    finally:
+        proxmox_path.write_text(original, encoding="utf-8")
+
+
+def test_v037_proxmox_uses_physical_node_for_binding_and_flags_missing_connection(monkeypatch) -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    login(client)
+    proxmox_path = settings.config_dir / "proxmox.yaml"
+    original = proxmox_path.read_text(encoding="utf-8")
+    try:
+        proxmox_path.write_text(
+            '''---
+cluster-entry:
+  url: https://pve.example
+  token: homepage@pve!homepage
+  secret: token-secret
+''',
+            encoding="utf-8",
+        )
+
+        async def fake_discover(connection):
+            return [{
+                "vmid": 101,
+                "name": "Reverse-Proxy",
+                "type": "qemu",
+                "node": "asp-pve",
+                "status": "running",
+                "cpu_percent": 0.5,
+                "memory_percent": 68.0,
+            }]
+
+        monkeypatch.setattr(main_module.proxmox_discovery, "discover", fake_discover)
+        page = client.get("/proxmox?server=cluster-entry")
+        assert page.status_code == 200
+        assert "发现未配置同名连接的实际 PVE 节点" in page.text
+        assert "asp-pve" in page.text
+        assert "不能安全生成 Homepage per-VM 关联" in page.text
+        assert 'name="server" value="asp-pve"' not in page.text
+    finally:
+        proxmox_path.write_text(original, encoding="utf-8")
+
+
+def test_v037_proxmox_binding_can_clear_existing_docker_integration(monkeypatch) -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    csrf = login(client)
+    services_path = settings.config_dir / "services.yaml"
+    proxmox_path = settings.config_dir / "proxmox.yaml"
+    services_original = services_path.read_text(encoding="utf-8")
+    proxmox_original = proxmox_path.read_text(encoding="utf-8")
+    try:
+        services_path.write_text(
+            '''---
+- Widgets:
+    - Home Assistant:
+        href: https://home.example
+        server: local-docker
+        container: jellyfin
+        widget:
+          type: homeassistant
+          url: https://home.example
+          key: secret
+''',
+            encoding="utf-8",
+        )
+        proxmox_path.write_text(
+            '''---
+asp-pve:
+  url: https://pve.example
+  token: homepage@pve!homepage
+  secret: token-secret
+''',
+            encoding="utf-8",
+        )
+
+        async def fake_discover(connection):
+            return [{
+                "vmid": 100,
+                "name": "HomeAssistant",
+                "type": "qemu",
+                "node": "asp-pve",
+                "status": "running",
+                "cpu_percent": 1.2,
+                "memory_percent": 91.9,
+            }]
+
+        monkeypatch.setattr(main_module.proxmox_discovery, "discover", fake_discover)
+        page = client.get("/proxmox?server=asp-pve")
+        assert 'data-has-docker="1"' in page.text
+
+        response = client.post(
+            "/proxmox/bind",
+            data={
+                "csrf": csrf,
+                "server": "asp-pve",
+                "group_index": "0",
+                "item_index": "0",
+                "vmid": "100",
+                "type": "qemu",
+                "clear_docker": "1",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(services_path.read_text(encoding="utf-8"))
+        details = data[0]["Widgets"][0]["Home Assistant"]
+        assert details["proxmoxNode"] == "asp-pve"
+        assert details["proxmoxVMID"] == 100
+        assert "server" not in details
+        assert "container" not in details
+    finally:
+        services_path.write_text(services_original, encoding="utf-8")
+        proxmox_path.write_text(proxmox_original, encoding="utf-8")
+
+
+def test_v037_service_editor_warns_when_docker_and_proxmox_are_both_configured() -> None:
+    client = TestClient(app)
+    login(client)
+    services_path = settings.config_dir / "services.yaml"
+    original = services_path.read_text(encoding="utf-8")
+    try:
+        services_path.write_text(
+            '''---
+- Widgets:
+    - Home Assistant:
+        server: local-docker
+        container: jellyfin
+        proxmoxNode: asp-pve
+        proxmoxVMID: 100
+''',
+            encoding="utf-8",
+        )
+        page = client.get("/services/item/0/0/edit")
+        assert page.status_code == 200
+        assert "检测到双重运行状态集成" in page.text
+        assert "local-docker / jellyfin" in page.text
+    finally:
+        services_path.write_text(original, encoding="utf-8")

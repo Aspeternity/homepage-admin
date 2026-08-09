@@ -10,6 +10,11 @@ class ProxmoxDiscoveryError(RuntimeError):
     pass
 
 
+def normalize_proxmox_url(value: str) -> str:
+    """Return the base Proxmox URL Homepage expects (no trailing slash)."""
+    return str(value or "").strip().rstrip("/")
+
+
 @dataclass
 class ProxmoxConnection:
     name: str
@@ -27,7 +32,7 @@ class ProxmoxDiscoveryClient:
         self.timeout = timeout
 
     async def discover(self, connection: ProxmoxConnection) -> list[dict[str, Any]]:
-        base = connection.url.rstrip("/")
+        base = normalize_proxmox_url(connection.url)
         if not base:
             raise ProxmoxDiscoveryError("Proxmox URL 为空。")
         try:
