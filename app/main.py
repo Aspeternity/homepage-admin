@@ -1008,7 +1008,7 @@ def docker_page(
     proxy_healthy = False
     hidden_internal_count = 0
     if not docker_discovery.enabled():
-        error = error or "Docker 容器发现未启用。请使用 v0.2.3 的 Compose（包含共享只读 Docker Proxy）。"
+        error = error or "Docker 容器发现未启用。请使用 v0.2.4 的 Compose（包含共享只读 Docker Proxy）。"
     else:
         proxy_healthy = docker_discovery.ping()
         try:
@@ -1401,38 +1401,62 @@ async def save_settings(request: Request, _: None = Depends(auth_guard)) -> Redi
             value = str(form.get(key, "")).strip()
             if value:
                 data[key] = value
+            elif key in old and old.get(key) == "":
+                # Preserve an explicitly-empty value when the form is unchanged.
+                # Some Homepage options distinguish an empty value from an absent key.
+                data[key] = ""
         if form.get("fullWidth"):
             data["fullWidth"] = True
+        elif "fullWidth" in old and old.get("fullWidth") is False:
+            data["fullWidth"] = False
         if form.get("hideVersion"):
             data["hideVersion"] = True
+        elif "hideVersion" in old and old.get("hideVersion") is False:
+            data["hideVersion"] = False
 
         old_background = old.get("background", CommentedMap())
         if isinstance(old_background, str):
             old_background = CommentedMap({"image": old_background})
         background = copy.deepcopy(old_background) if isinstance(old_background, dict) else CommentedMap()
-        for known_key in ["image", "blur", "saturate", "brightness", "opacity"]:
-            background.pop(known_key, None)
+
         image = str(form.get("background_image", "")).strip()
         if image:
             background["image"] = image
-        for key in ["blur", "saturate", "brightness", "opacity"]:
+        else:
+            background.pop("image", None)
+
+        # Homepage accepts blur: "" as a real filter value.  A blank HTML input
+        # therefore cannot blindly mean "delete blur" when the existing YAML
+        # explicitly contains an empty string.  Preserve that exact state on a
+        # no-op save; clearing a non-empty blur value still removes the key.
+        blur_value = str(form.get("background_blur", "")).strip()
+        if blur_value:
+            background["blur"] = blur_value
+        elif isinstance(old_background, dict) and "blur" in old_background and old_background.get("blur") == "":
+            background["blur"] = ""
+        else:
+            background.pop("blur", None)
+
+        for key in ["saturate", "brightness", "opacity"]:
             value = str(form.get(f"background_{key}", "")).strip()
             if value:
-                if key in {"saturate", "brightness", "opacity"}:
-                    try:
-                        background[key] = int(value)
-                    except ValueError:
-                        raise ConfigError(f"背景 {key} 必须是整数。")
-                else:
-                    background[key] = value
+                try:
+                    background[key] = int(value)
+                except ValueError:
+                    raise ConfigError(f"背景 {key} 必须是整数。")
+            else:
+                background.pop(key, None)
         if background:
             data["background"] = background
 
         provider = str(form.get("quicklaunch_provider", "")).strip()
+        existing_ql = old.get("quicklaunch") if isinstance(old.get("quicklaunch"), dict) else CommentedMap()
+        ql = copy.deepcopy(existing_ql)
         if provider:
-            existing_ql = old.get("quicklaunch") if isinstance(old.get("quicklaunch"), dict) else CommentedMap()
-            ql = copy.deepcopy(existing_ql)
             ql["provider"] = provider
+        else:
+            ql.pop("provider", None)
+        if ql:
             data["quicklaunch"] = ql
 
         layout_names = form.getlist("layout_name")
@@ -1491,6 +1515,12 @@ async def save_settings(request: Request, _: None = Depends(auth_guard)) -> Redi
         for key, value in extra.items():
             if key not in data:
                 data[key] = value
+
+        # A true no-op must not rewrite settings.yaml.  Besides avoiding a noisy
+        # backup, this preserves comments and intentionally-empty YAML values.
+        if old == data:
+            return redirect("/settings", ok="未检测到设置变化：settings.yaml 未写入，也没有生成新备份。")
+
         store.write_data("settings.yaml", data, actor(request), "update settings")
         return redirect("/settings", ok="页面设置已保存。请在 Homepage 右下角点击刷新图标使设置重新生成。")
     except ConfigError as exc:

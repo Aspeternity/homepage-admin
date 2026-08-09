@@ -519,7 +519,7 @@ def test_service_profile_recommends_existing_group() -> None:
     assert recommend_group_index(["Widgets", "群晖NAS", "内网Tools"], profile) == 2
 
 
-def test_v023_wizard_alignment_and_auto_group_assets_are_present() -> None:
+def test_v024_wizard_alignment_and_auto_group_assets_are_present() -> None:
     root = __import__("pathlib").Path(__file__).resolve().parents[1]
     css = (root / "app/static/app.css").read_text(encoding="utf-8")
     js = (root / "app/static/app.js").read_text(encoding="utf-8")
@@ -531,3 +531,132 @@ def test_v023_wizard_alignment_and_auto_group_assets_are_present() -> None:
     assert "智能推荐（按服务类型）" in docker_template
     assert "识别为：{{ service_profile.kind }}" in wizard_template
     assert "data-preview-icon-image" in wizard_template
+
+
+def test_v024_lsky_and_unlisted_selfhst_icons_use_verified_mdi_fallbacks() -> None:
+    from app.docker_client import infer_service_profile
+
+    lsky = infer_service_profile({"name": "Lsky-pro", "image": "halcyonazure/lsky-pro-docker:latest"})
+    komari = infer_service_profile({"name": "Komari", "image": "ghcr.io/komari-monitor/komari:latest"})
+    moviepilot = infer_service_profile({"name": "MoviePilot", "image": "jxxghp/moviepilot:latest"})
+    assert lsky["icon"] == "mdi-image-multiple"
+    assert komari["icon"] == "mdi-server-network"
+    assert moviepilot["icon"] == "mdi-movie-open"
+    assert not lsky["icon"].startswith("sh-lsky")
+    assert not komari["icon"].startswith("sh-komari")
+    assert not moviepilot["icon"].startswith("sh-moviepilot")
+
+
+def test_v024_settings_noop_preserves_explicit_empty_background_blur() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "settings.yaml"
+    original = path.read_text(encoding="utf-8")
+    backup_root = settings.data_dir / "backups"
+    try:
+        text = '''---
+# keep this comment
+language: zh-CN
+title: ASP Homepage
+logpath: /
+hideVersion: true
+favicon: https://example.invalid/favicon.png
+layout:
+  Widgets:
+    useEqualHeights: true
+    style: row
+    columns: 4
+quicklaunch:
+  provider: google # keep provider comment
+headerStyle: underlined
+background:
+  image: https://example.invalid/background.jpg
+  blur: "" # an explicit empty value is meaningful to Homepage
+  saturate: 70
+  brightness: 95
+  opacity: 80
+providers:
+  weatherapi: provider-secret
+'''
+        path.write_text(text, encoding="utf-8")
+        before_backups = {p.name for p in backup_root.iterdir() if p.is_dir()} if backup_root.exists() else set()
+        masked_extra = mask_secrets({"logpath": "/", "providers": {"weatherapi": "provider-secret"}})
+        response = client.post(
+            "/settings",
+            data={
+                "csrf": csrf,
+                "language": "zh-CN",
+                "title": "ASP Homepage",
+                "favicon": "https://example.invalid/favicon.png",
+                "headerStyle": "underlined",
+                "hideVersion": "on",
+                "background_image": "https://example.invalid/background.jpg",
+                "background_blur": "",
+                "background_saturate": "70",
+                "background_brightness": "95",
+                "background_opacity": "80",
+                "quicklaunch_provider": "google",
+                "layout_name": "Widgets",
+                "layout_0_style": "row",
+                "layout_0_columns": "4",
+                "layout_0_header": "on",
+                "layout_0_useEqualHeights": "on",
+                "layout_0_extra": "",
+                "extra": store.dump_fragment(masked_extra),
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert "settings.yaml" in response.headers["location"] or response.headers["location"].startswith("/settings")
+        assert path.read_text(encoding="utf-8") == text
+        parsed = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        assert "blur" in parsed["background"]
+        assert parsed["background"]["blur"] == ""
+        after_backups = {p.name for p in backup_root.iterdir() if p.is_dir()} if backup_root.exists() else set()
+        assert after_backups == before_backups
+    finally:
+        path.write_text(original, encoding="utf-8")
+
+
+def test_v024_settings_background_zero_values_render_and_survive() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "settings.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        path.write_text(
+            '''---
+title: Zero Test
+background:
+  image: /images/bg.jpg
+  saturate: 0
+  brightness: 0
+  opacity: 0
+''',
+            encoding="utf-8",
+        )
+        page = client.get("/settings")
+        assert page.status_code == 200
+        assert 'name="background_saturate" value="0"' in page.text
+        assert 'name="background_brightness" value="0"' in page.text
+        assert 'name="background_opacity" value="0"' in page.text
+        response = client.post(
+            "/settings",
+            data={
+                "csrf": csrf,
+                "title": "Zero Test",
+                "background_image": "/images/bg.jpg",
+                "background_saturate": "0",
+                "background_brightness": "0",
+                "background_opacity": "0",
+                "extra": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        parsed = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        assert parsed["background"]["saturate"] == 0
+        assert parsed["background"]["brightness"] == 0
+        assert parsed["background"]["opacity"] == 0
+    finally:
+        path.write_text(original, encoding="utf-8")

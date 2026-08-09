@@ -27,12 +27,12 @@
     <h2>背景图</h2>
     <div class="form-grid two">
       <label class="span-2">图片地址<input name="background_image" value="{{ values.background.image or '' }}" placeholder="https://... 或 /images/background.png"></label>
-      <label>模糊<input name="background_blur" value="{{ values.background.blur or '' }}" placeholder="sm / md / xl"></label>
-      <label>饱和度<input type="number" name="background_saturate" value="{{ values.background.saturate or '' }}" min="0" max="200"></label>
-      <label>亮度<input type="number" name="background_brightness" value="{{ values.background.brightness or '' }}" min="0" max="200"></label>
-      <label>透明度<input type="number" name="background_opacity" value="{{ values.background.opacity or '' }}" min="0" max="100"></label>
+      <label>模糊<input name="background_blur" value="{{ values.background.get('blur', '') }}" placeholder="sm / md / xl；留空会保留现有 blur: &quot;&quot;"></label>
+      <label>饱和度<input type="number" name="background_saturate" value="{{ values.background.get('saturate', '') }}" min="0" max="200"></label>
+      <label>亮度<input type="number" name="background_brightness" value="{{ values.background.get('brightness', '') }}" min="0" max="200"></label>
+      <label>透明度<input type="number" name="background_opacity" value="{{ values.background.get('opacity', '') }}" min="0" max="100"></label>
     </div>
-    <p class="form-help">官方说明：背景滤镜与 <code>cardBlur</code> 不兼容，建议二选一。</p>
+    <p class="form-help">官方说明：背景滤镜与 <code>cardBlur</code> 不兼容，建议二选一。<br><strong>注意：</strong>Homepage 的 <code>blur: &quot;&quot;</code> 是有效配置；v0.2.4 会在未修改时原样保留，不再误删。</p>
   </section>
 
   <section class="form-card">

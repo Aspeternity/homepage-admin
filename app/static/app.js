@@ -359,13 +359,19 @@
       if (previewIcon) previewIcon.title = icon || '默认首字母图标';
       if (previewIconImage && previewIconFallback) {
         let imageUrl = '';
+        let mdiPreview = false;
         if (/^https?:\/\//i.test(icon)) imageUrl = icon;
         else if (/^sh-[a-z0-9._-]+$/i.test(icon)) {
           const slug = icon.slice(3).toLowerCase();
           imageUrl = `https://cdn.jsdelivr.net/gh/selfhst/icons/png/${encodeURIComponent(slug)}.png`;
+        } else if (/^mdi-[a-z0-9._-]+$/i.test(icon)) {
+          const slug = icon.slice(4).toLowerCase();
+          imageUrl = `https://cdn.jsdelivr.net/npm/@mdi/svg@7.4.47/svg/${encodeURIComponent(slug)}.svg`;
+          mdiPreview = true;
         }
+        previewIconImage.classList.toggle('mdi-preview', mdiPreview);
         previewIconFallback.textContent = icon
-          ? icon.replace(/^sh-/, '').slice(0, 2).toUpperCase()
+          ? icon.replace(/^(sh|mdi)-/, '').slice(0, 2).toUpperCase()
           : name.slice(0, 1).toUpperCase();
         previewIconImage.onerror = () => {
           previewIconImage.hidden = true;

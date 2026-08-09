@@ -1,40 +1,37 @@
-# Homepage Admin v0.2.3
+# Homepage Admin v0.2.4
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是和 Homepage 挂载同一个配置目录，直接读写官方 YAML 文件。
 
-> v0.2.3 的重点：**修复 Docker 导入向导字段错位、增强智能推荐与卡片预览、备份保留数量可在后台配置**。
+> v0.2.4 的重点：**修复页面设置“无修改保存”破坏背景滤镜、修正无效 Docker 图标推荐，并继续强化导入向导与备份策略。**
 
-## v0.2.3 新增 / 修复
+## v0.2.4 新增 / 修复
 
-### Docker 导入向导体验优化
+### 页面设置改为更安全的无损保存
 
-- 修复“访问地址”和“图标”等输入框因为来源提示数量不同而上下错位的问题。
-- 向导顶部新增服务识别信息：`识别为` + `置信度`。
-- Docker 发现页默认分组策略改为 `智能推荐（按服务类型）`；仍可手动固定到指定分组。
-- `homepage.group` Label 继续拥有最高优先级。
-- 常见服务按类型推荐现有分组，例如服务器监控 / 管理面板优先匹配 `内网Tools`，影音 / 下载类优先匹配 `群晖NAS` 等已有分组。
-- 扩展常见服务图标建议，并保留原有说明、发布端口、Widget 类型与 Widget URL 推断。
-- 卡片预览支持直接预览 HTTP(S) 图标与 `sh-*` 图标；图片失败时自动回退为文字图标。
-- YAML 预览继续只展示非敏感字段；API Key / Token / Password 仍在完整编辑器中填写。
+- 修复 `settings.yaml` 中 `background.blur: ""` 被网页表单误当成“空值并删除”的问题。
+- Homepage 官方将 `blur: ""` 作为有效背景滤镜值；v0.2.4 会在未修改时保留这个显式空字符串。
+- 如果页面设置没有任何实际变化，点击“保存设置”将不再重写 `settings.yaml`，也不会生成无意义的新备份。
+- `saturate: 0`、`brightness: 0`、`opacity: 0` 等合法数值不会再因为 Python/Jinja 的假值判断而显示为空或被删除。
+- 背景、快速启动等对象中的未知/额外字段继续保留。
 
-### 备份保留数量可配置
+### Docker 导入图标推荐修正
 
-- `备份回滚` 页面新增 `自动保留策略`。
-- 可在 UI 中设置保留 `1–500` 组备份，不再只能依赖固定的 `BACKUP_LIMIT=50`。
-- 设置保存在 `/data/admin-settings.json`，因此容器重建后仍保留。
-- 如果降低上限，保存后立即删除最旧的超额备份。
-- 支持一键 `恢复默认`，回到环境变量 `BACKUP_LIMIT`（默认 50）。
-- 单个删除、清空全部、恢复备份与审计日志功能继续保留。
+- 不再为 Lsky Pro 推荐不存在的 `sh-lskypro`。
+- Lsky Pro 改用已验证存在的 `mdi-image-multiple`。
+- Komari 改用 `mdi-server-network`。
+- MoviePilot 改用 `mdi-movie-open`。
+- 向导卡片预览新增 `mdi-*` 图标预览支持；URL / `sh-*` / `mdi-*` 都可预览，加载失败会回退到文字占位。
 
-### 延续 v0.2.2 的主题体验
+### 延续 v0.2.3 的体验优化
 
-- 右上角紧凑主题图标。
-- 浅色 / 深色 / 跟随系统。
-- 浏览器记住主题偏好。
+- Docker 导入向导字段保持严格纵向对齐。
+- 自动识别服务类型与置信度，并按类型智能推荐现有 Homepage 分组。
+- 备份回滚页可配置自动保留数量（1–500 组），设置持久化到 `/data/admin-settings.json`。
+- 仍支持单个删除、清空全部、回滚、自动清理旧备份。
 
 ## Docker 安全架构
 
-延续 v0.2.1+ 的共享只读代理结构：
+延续 v0.2.1 以来的共享只读代理结构：
 
 ```text
 /var/run/docker.sock
@@ -63,9 +60,10 @@ homepage-docker-proxy
 - Jellyfin、qBittorrent、Transmission、Minecraft、Home Assistant、Portainer、Proxmox 专属 Widget 表单
 - API Key / Token / Password 遮挡与保留
 - 高级 YAML 敏感值安全占位符
-- Docker 容器发现、已添加识别、系统组件隐藏、端口去重
-- Docker 四步导入向导、服务类型识别、智能分组、卡片与 YAML 预览
-- 自动备份、回滚、删除、可配置保留数量、YAML 校验、原子写入、审计日志
+- Docker 容器发现、导入向导、已添加识别、系统组件隐藏、端口去重
+- 智能服务类型识别、分组推荐、卡片 / YAML 实时预览
+- 自动备份、可配置保留数量、回滚、删除、YAML 校验、原子写入、审计日志
+- 右上角浅色 / 深色 / 跟随系统主题菜单
 - GitHub Actions 自动测试并发布 `amd64` / `arm64` GHCR 镜像
 
 ## 当前部署参数
@@ -80,15 +78,15 @@ Admin UID:GID: 1000:1000
 共享 Docker 网络: homepage-tools
 ```
 
-从 v0.2.2 升级请阅读：
+从 v0.2.3 升级请阅读：
 
 ```text
-UPGRADE_V0.2.3_ZH.md
+UPGRADE_V0.2.4_ZH.md
 ```
 
-## Homepage 配置文件
+## 官方 Homepage 对应配置
 
-Homepage Admin 仍以 YAML / CSS / JS 文件作为数据源：
+Homepage Admin 仍以官方 YAML 作为唯一数据源：
 
 - `services.yaml`
 - `bookmarks.yaml`
