@@ -442,7 +442,7 @@ WIDGET_CATALOG: dict[str, dict[str, Any]] = copy.deepcopy(BUILTIN_WIDGET_CATALOG
 _SCHEMA_LOCK = threading.RLock()
 _SCHEMA_STATE: dict[str, Any] = {
     "source": "bundled",
-    "ref": getattr(settings, "widget_schema_ref", "master"),
+    "ref": getattr(settings, "widget_schema_ref", "dev"),
     "synced_at": None,
     "document_count": 0,
     "widget_count": len(WIDGET_CATALOG),
@@ -542,7 +542,7 @@ def sync_widget_schema(*, force: bool = True) -> dict[str, Any]:
             return widget_schema_status()
         try:
             widgets, meta = fetch_official_widget_schemas(
-                ref=getattr(settings, "widget_schema_ref", "master"),
+                ref=getattr(settings, "widget_schema_ref", "dev"),
                 timeout=float(getattr(settings, "widget_schema_timeout", 8.0)),
                 workers=int(getattr(settings, "widget_schema_workers", 10)),
             )
@@ -600,7 +600,7 @@ def import_widget_schema_json(raw: str) -> dict[str, Any]:
         raise ValueError("Schema 数量或格式异常，至少需要 20 个 Widget 映射。")
     meta.update({
         "source": "manual-import",
-        "ref": str(meta.get("ref") or getattr(settings, "widget_schema_ref", "master")),
+        "ref": str(meta.get("ref") or getattr(settings, "widget_schema_ref", "dev")),
         "synced_at": str(meta.get("synced_at") or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")),
         "widget_count": len(widgets),
         "last_error": "",
@@ -627,7 +627,7 @@ def reset_widget_schema_cache() -> dict[str, Any]:
 
     state = {
         "source": "bundled-fallback",
-        "ref": getattr(settings, "widget_schema_ref", "master"),
+        "ref": getattr(settings, "widget_schema_ref", "dev"),
         "synced_at": None,
         "document_count": 0,
         "registry_count": 0,

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.3 - 2026-08-10
+
+- Fix Widget Schema runtime synchronization default ref from obsolete `master` to Homepage upstream `dev`.
+- Align runtime, CLI sync script, `.env.example`, fallback metadata, and GitHub Actions on the same `dev` ref.
+- Keep build-time cross-repository sync unauthenticated instead of sending this repository's scoped `GITHUB_TOKEN`.
+- Add regression coverage so manual / automatic Schema sync cannot silently fall back to `master`.
+
 ## v0.3.2 - 2026-08-10
 
 - 新增 Homepage 官方 Widget Schema 同步引擎：解析官方 Service Widget 文档 YAML 示例、Allowed fields 与 `src/widgets/widgets.js` 注册表。

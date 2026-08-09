@@ -1,4 +1,4 @@
-# Homepage Admin v0.3.2
+# Homepage Admin v0.3.3
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 

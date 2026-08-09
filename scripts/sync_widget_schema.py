@@ -18,7 +18,7 @@ from app.widget_schema_sync import fetch_official_widget_schemas
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate Homepage official Widget Schema snapshot")
     parser.add_argument("--output", default="app/bundled_widget_schema.json")
-    parser.add_argument("--ref", default="master")
+    parser.add_argument("--ref", default="dev")
     args = parser.parse_args()
     widgets, meta = fetch_official_widget_schemas(ref=args.ref, timeout=12.0, workers=12)
     if len(widgets) < 50:

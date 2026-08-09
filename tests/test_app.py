@@ -1147,3 +1147,21 @@ title: Nested Demo
     assert fields["key"]["kind"] == "secret"
     assert fields["refreshInterval"]["kind"] == "number"
     assert fields["refreshInterval"]["required"] is False
+
+
+def test_v033_widget_schema_default_ref_is_dev() -> None:
+    from app.settings import settings
+    assert settings.widget_schema_ref == "dev"
+
+
+def test_v033_sync_cli_default_ref_is_dev() -> None:
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "scripts" / "sync_widget_schema.py").read_text(encoding="utf-8")
+    assert 'parser.add_argument("--ref", default="dev")' in source
+    assert 'default="master"' not in source
+
+
+def test_v033_no_master_fallback_in_widget_catalog() -> None:
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "app" / "widget_catalog.py").read_text(encoding="utf-8")
+    assert 'widget_schema_ref", "master"' not in source
