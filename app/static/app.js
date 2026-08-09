@@ -413,4 +413,243 @@
     renderWizard();
   }
 
+
+  // v0.3.0 Widget Center filters.
+  const widgetSearch = $('[data-widget-search]');
+  const widgetCategory = $('[data-widget-category]');
+  if (widgetSearch || widgetCategory) {
+    const filterWidgetCenter = () => {
+      const query = (widgetSearch?.value || '').trim().toLowerCase();
+      const category = widgetCategory?.value || '';
+      let visible = 0;
+      $$('[data-widget-card]').forEach((card) => {
+        const matchesText = !query || (card.dataset.widgetName || '').includes(query);
+        const matchesCategory = !category || card.dataset.widgetCategory === category;
+        card.hidden = !(matchesText && matchesCategory);
+        if (!card.hidden) visible += 1;
+      });
+      const empty = $('[data-widget-center-empty]');
+      if (empty) empty.hidden = visible !== 0;
+    };
+    widgetSearch?.addEventListener('input', filterWidgetCenter);
+    widgetCategory?.addEventListener('change', filterWidgetCenter);
+    filterWidgetCenter();
+  }
+
+  // v0.3.0 metadata-driven multi-widget editor.
+  const serviceEditor = $('[data-service-editor]');
+  if (serviceEditor) {
+    let catalog = {};
+    try { catalog = JSON.parse($('#widget-catalog-data')?.textContent || '{}'); } catch (_) {}
+    const list = $('[data-service-widgets]', serviceEditor);
+    const empty = $('[data-widget-empty]', serviceEditor);
+    const slotsInput = $('[data-widget-slots]', serviceEditor);
+    const template = $('#service-widget-template');
+    const sourceGroup = serviceEditor.querySelector('[name="source_group_index"]')?.value || '0';
+    const sourceItem = serviceEditor.querySelector('[name="source_item_index"]')?.value || '';
+    let nextSlot = Math.max(0, ...$$('[data-service-widget]', serviceEditor).map((block) => Number(block.dataset.slot) + 1));
+
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+
+    const syncWidgetSlots = () => {
+      const blocks = $$('[data-service-widget]', serviceEditor);
+      if (slotsInput) slotsInput.value = blocks.map((block) => block.dataset.slot).join(',');
+      if (empty) empty.hidden = blocks.length > 0;
+      blocks.forEach((block, index) => {
+        const small = block.querySelector('.service-widget-head small');
+        if (small) small.textContent = `Widget #${index + 1}`;
+      });
+    };
+
+    const initialData = (block) => {
+      const script = $('[data-widget-initial]', block);
+      try { return JSON.parse(script?.textContent || '{}'); } catch (_) { return {}; }
+    };
+
+    const renderWidgetFields = (block, initial = null) => {
+      const slot = block.dataset.slot;
+      const typeInput = $('[data-widget-type]', block);
+      const type = (typeInput?.value || '').trim().toLowerCase();
+      const schema = catalog[type];
+      const container = $('[data-widget-dynamic-fields]', block);
+      const title = $('[data-widget-title]', block);
+      if (!container) return;
+      if (title) title.textContent = schema?.label || type || '新 Widget';
+      if (!schema) {
+        container.innerHTML = type
+          ? '<div class="alert warning">该类型尚未加入 Widget 中心。可在“Widget 其他配置”里继续使用 YAML；连接测试不可用。</div>'
+          : '<div class="widget-schema-placeholder">选择 Widget 类型后显示专属字段。</div>';
+        return;
+      }
+      const values = initial?.fields || {};
+      const secretSaved = initial?.secret_saved || {};
+      const selectedFields = new Set(initial?.selected_fields || []);
+      const fields = schema.fields || [];
+      const rows = fields.map((field) => {
+        const name = String(field.name || '');
+        const label = escapeHtml(field.label || name);
+        const value = values[name] ?? '';
+        const required = field.required ? '<em class="required-mark">必填</em>' : '';
+        const baseName = `widgets_${slot}_field_${name}`;
+        if (field.kind === 'secret') {
+          const placeholder = secretSaved[name] ? '已保存；留空保持原值' : (field.placeholder || '没有则留空');
+          return `<label>${label}${required}<input type="password" name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}" autocomplete="new-password"></label>`;
+        }
+        if (field.kind === 'bool') {
+          const current = value === true ? 'true' : value === false ? 'false' : '';
+          return `<label>${label}${required}<select name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}"><option value="" ${current === '' ? 'selected' : ''}>使用 Homepage 默认值</option><option value="true" ${current === 'true' ? 'selected' : ''}>true</option><option value="false" ${current === 'false' ? 'selected' : ''}>false</option></select></label>`;
+        }
+        if (field.kind === 'yaml') {
+          return `<label class="span-2">${label}${required}<textarea name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" rows="${Number(field.rows || 6)}" spellcheck="false" placeholder="${escapeHtml(field.placeholder || '')}">${escapeHtml(value)}</textarea></label>`;
+        }
+        if (field.kind === 'select') {
+          const options = (field.options || []).map((option) => `<option value="${escapeHtml(option)}" ${String(value) === String(option) ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('');
+          return `<label>${label}${required}<select name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}"><option value="">使用默认值</option>${options}</select></label>`;
+        }
+        const inputMode = field.kind === 'number' ? ' inputmode="numeric"' : '';
+        return `<label>${label}${required}<input name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(field.placeholder || '')}"${inputMode}></label>`;
+      }).join('');
+      const allowed = schema.allowed_fields || [];
+      const fieldPicker = allowed.length ? `<div class="widget-field-picker span-2"><div class="field-picker-head"><strong>显示字段</strong><span>Homepage 最多显示 4 项；不选择则使用官方默认字段。</span></div><div class="checkbox-row">${allowed.map((name) => `<label class="checkbox compact-check"><input type="checkbox" name="widgets_${slot}_fields" value="${escapeHtml(name)}" ${selectedFields.has(name) ? 'checked' : ''}><span>${escapeHtml(name)}</span></label>`).join('')}</div></div>` : '';
+      const notice = schema.notice ? `<div class="alert info span-2">${escapeHtml(schema.notice)}</div>` : '';
+      container.innerHTML = `<div class="widget-schema-head"><div><strong>${escapeHtml(schema.label)}</strong><span class="role-pill">${escapeHtml(schema.category || 'Widget')}</span></div><a href="${escapeHtml(schema.docs || '#')}" target="_blank" rel="noopener">官方文档 ↗</a></div><div class="form-grid two">${rows}${fieldPicker}${notice}</div>`;
+    };
+
+    const collectWidgetConfig = (block) => {
+      const config = {};
+      $$('[data-widget-field-name]', block).forEach((input) => { config[input.dataset.widgetFieldName] = input.value; });
+      return config;
+    };
+
+    const bindWidgetBlock = (block, initial = null) => {
+      const typeInput = $('[data-widget-type]', block);
+      const testButton = $('[data-widget-test]', block);
+      const result = $('[data-widget-test-result]', block);
+      renderWidgetFields(block, initial || initialData(block));
+      typeInput?.addEventListener('change', () => renderWidgetFields(block, { fields: {}, secret_saved: {}, selected_fields: [] }));
+      typeInput?.addEventListener('input', () => {
+        const type = typeInput.value.trim().toLowerCase();
+        if (catalog[type]) renderWidgetFields(block, { fields: {}, secret_saved: {}, selected_fields: [] });
+      });
+      $('[data-widget-remove]', block)?.addEventListener('click', () => { block.remove(); syncWidgetSlots(); });
+      $('[data-widget-up]', block)?.addEventListener('click', () => {
+        const previous = block.previousElementSibling;
+        if (previous) list.insertBefore(block, previous);
+        syncWidgetSlots();
+      });
+      $('[data-widget-down]', block)?.addEventListener('click', () => {
+        const next = block.nextElementSibling;
+        if (next) list.insertBefore(next, block);
+        syncWidgetSlots();
+      });
+      testButton?.addEventListener('click', async () => {
+        const type = (typeInput?.value || '').trim().toLowerCase();
+        if (!type) { window.alert('请先选择 Widget 类型。'); return; }
+        testButton.disabled = true;
+        testButton.textContent = '测试中...';
+        if (result) { result.hidden = false; result.className = 'widget-test-result testing'; result.textContent = '正在从 Homepage Admin 容器测试 API 连接...'; }
+        try {
+          const response = await fetch('/api/widgets/test', {
+            method: 'POST',
+            headers: {'content-type': 'application/json', 'x-csrf-token': csrf()},
+            body: JSON.stringify({
+              type,
+              config: collectWidgetConfig(block),
+              original_index: Number($('[data-widget-original-index]', block)?.value || -1),
+              group_index: Number(sourceGroup || 0),
+              item_index: sourceItem,
+            }),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || '连接测试失败');
+          const metrics = (data.metrics || []).map((metric) => `<span><b>${escapeHtml(metric.label)}</b>${escapeHtml(metric.value)}</span>`).join('');
+          if (result) { result.className = 'widget-test-result success'; result.innerHTML = `<strong>✓ ${escapeHtml(data.message)}</strong>${metrics ? `<div class="test-metrics">${metrics}</div>` : ''}<small>测试级别：${escapeHtml(data.level || 'deep')}</small>`; }
+        } catch (error) {
+          if (result) { result.className = 'widget-test-result danger'; result.innerHTML = `<strong>✕ ${escapeHtml(error.message)}</strong>`; }
+        } finally {
+          testButton.disabled = false;
+          testButton.textContent = '测试连接';
+        }
+      });
+    };
+
+    $$('[data-service-widget]', serviceEditor).forEach((block) => bindWidgetBlock(block));
+    $('[data-widget-add]', serviceEditor)?.addEventListener('click', () => {
+      if (!template || !list) return;
+      const slot = nextSlot++;
+      const html = template.innerHTML.replaceAll('__INDEX__', String(slot));
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = html.trim();
+      const block = wrapper.firstElementChild;
+      list.appendChild(block);
+      bindWidgetBlock(block, {type:'', fields:{}, secret_saved:{}, selected_fields:[], extra:'', original_index:-1});
+      syncWidgetSlots();
+      $('[data-widget-type]', block)?.focus();
+    });
+    syncWidgetSlots();
+
+    // Save-before-diff flow. New secret values are posted to the preview endpoint, but the
+    // returned diff is generated from masked YAML and never echoes them back.
+    const dialog = $('[data-diff-dialog]');
+    const output = $('[data-diff-output]', dialog || document);
+    let bypassDiff = false;
+    const previewDiff = async () => {
+      syncWidgetSlots();
+      if (output) output.textContent = '正在生成...';
+      dialog?.showModal();
+      try {
+        const response = await fetch('/api/services/preview', { method: 'POST', body: new FormData(serviceEditor) });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || '无法生成变更预览');
+        if (output) output.textContent = data.diff;
+        dialog?.classList.toggle('no-change', !data.changed);
+      } catch (error) {
+        if (output) output.textContent = `预览失败：${error.message}`;
+      }
+    };
+    $('[data-service-preview]', serviceEditor)?.addEventListener('click', previewDiff);
+    serviceEditor.addEventListener('submit', (event) => {
+      if (bypassDiff) return;
+      event.preventDefault();
+      previewDiff();
+    });
+    $$('[data-diff-close]', dialog || document).forEach((button) => button.addEventListener('click', () => dialog?.close()));
+    $('[data-diff-confirm]', dialog || document)?.addEventListener('click', () => {
+      bypassDiff = true;
+      syncWidgetSlots();
+      dialog?.close();
+      serviceEditor.submit();
+    });
+  }
+
+
+  // v0.3.0 advanced editor save-before-diff.
+  const yamlDiffForm = $('[data-yaml-diff-form]');
+  if (yamlDiffForm) {
+    const dialog = $('[data-yaml-diff-dialog]');
+    const output = $('[data-yaml-diff-output]', dialog || document);
+    const filename = yamlDiffForm.dataset.yamlFilename;
+    let bypass = false;
+    const preview = async () => {
+      if (output) output.textContent = '正在校验并生成 Diff...';
+      dialog?.showModal();
+      try {
+        const response = await fetch(`/api/yaml/${encodeURIComponent(filename)}/diff`, {method:'POST', body:new FormData(yamlDiffForm)});
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || '预览失败');
+        if (output) output.textContent = data.diff;
+      } catch (error) {
+        if (output) output.textContent = `预览失败：${error.message}`;
+      }
+    };
+    $('[data-yaml-preview]', yamlDiffForm)?.addEventListener('click', preview);
+    yamlDiffForm.addEventListener('submit', (event) => {
+      if (bypass) return;
+      event.preventDefault();
+      preview();
+    });
+    $$('[data-yaml-diff-close]', dialog || document).forEach((button) => button.addEventListener('click', () => dialog?.close()));
+    $('[data-yaml-diff-confirm]', dialog || document)?.addEventListener('click', () => { bypass = true; dialog?.close(); yamlDiffForm.submit(); });
+  }
+
 })();

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Widget 中心 · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><h1>Widget 中心</h1><p>从常用 Homepage 原生 Service Widget 中选择，表单字段由元数据动态生成。官方目前支持 100+ Service Widgets；这里优先收录家庭实验室常用类型。</p></div>
+  <div class="heading-actions"><a class="button primary" href="/services/item/new">空白新增服务</a></div>
+</section>
+
+<section class="form-card widget-center-toolbar">
+  <label>搜索 Widget<input type="search" placeholder="Proxmox / NAS / 下载 / 监控..." data-widget-search></label>
+  <label>分类<select data-widget-category><option value="">全部分类</option>{% for category in categories %}<option value="{{ category }}">{{ category }}</option>{% endfor %}</select></label>
+</section>
+
+<div class="widget-center-grid" data-widget-center-grid>
+{% for type_id, schema in widget_catalog.items() %}
+  <article class="widget-catalog-card" data-widget-card data-widget-name="{{ (type_id ~ ' ' ~ schema.label ~ ' ' ~ schema.description)|lower }}" data-widget-category="{{ schema.category }}">
+    <header>
+      <div class="widget-catalog-icon">{{ schema.label[:1] }}</div>
+      <div><h3>{{ schema.label }}</h3><code>{{ type_id }}</code></div>
+      <span class="role-pill">{{ schema.category }}</span>
+    </header>
+    <p>{{ schema.description }}</p>
+    <div class="widget-catalog-meta">
+      <span>{{ schema.fields|length }} 个配置字段</span>
+      {% if schema.allowed_fields %}<span>{{ schema.allowed_fields|length }} 个可选展示字段</span>{% endif %}
+      <span>{% if schema.test == 'config' %}配置校验{% elif schema.test == 'basic' %}基础连通测试{% else %}API 深度测试{% endif %}</span>
+    </div>
+    {% if schema.notice %}<div class="widget-catalog-notice">{{ schema.notice }}</div>{% endif %}
+    <footer><a href="{{ schema.docs }}" target="_blank" rel="noopener">官方文档 ↗</a><a class="button primary small" href="/services/item/new?widget={{ type_id }}">使用此 Widget</a></footer>
+  </article>
+{% endfor %}
+</div>
+<div class="empty-state" data-widget-center-empty hidden>没有符合当前筛选条件的 Widget。</div>
+{% endblock %}

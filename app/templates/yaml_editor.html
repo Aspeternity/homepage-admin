@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %}高级编辑 · Homepage Admin{% endblock %}
+{% block title %}高级编辑 · Homepage Admin<dialog class="modal diff-modal" data-yaml-diff-dialog><div class="diff-modal-inner"><div class="section-title-row"><div><h3>保存前变更预览</h3><p>YAML 中的敏感字段会被掩码。</p></div><button class="icon-button" type="button" data-yaml-diff-close>×</button></div><pre class="diff-preview"><code data-yaml-diff-output>正在生成...</code></pre><div class="modal-actions"><button class="button secondary" type="button" data-yaml-diff-close>继续编辑</button><button class="button primary" type="button" data-yaml-diff-confirm>确认保存</button></div></div></dialog>
+{% endblock %}
 {% block content %}
 <section class="page-heading">
   <div><h1>高级编辑</h1><p>保存前会校验 YAML，写入前自动备份并使用原子替换。</p></div>
@@ -19,10 +20,11 @@
 <div class="alert warning">当前正在显示真实敏感值。不要截图、复制到公开 Issue 或把页面内容粘贴到公开仓库。</div>
 {% endif %}
 <div class="file-tabs">{% for file in files %}<a class="file-tab {% if file == filename %}active{% endif %}" href="/yaml/{{ file }}">{{ file }}</a>{% endfor %}</div>
-<form class="yaml-form" method="post" action="/yaml/{{ filename }}">
+<form class="yaml-form" method="post" action="/yaml/{{ filename }}" data-yaml-diff-form data-yaml-filename="{{ filename }}">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <input type="hidden" name="masked" value="{{ '1' if masked else '0' }}">
   <textarea class="code-editor" name="content" spellcheck="false" aria-label="{{ filename }} 内容">{{ text }}</textarea>
-  <div class="sticky-actions"><span class="muted">当前文件：{{ filename }}</span><button class="button primary" type="submit">校验并保存</button></div>
+  <div class="sticky-actions"><span class="muted">当前文件：{{ filename }}</span><button class="button secondary" type="button" data-yaml-preview>预览变更</button><button class="button primary" type="submit">校验并保存</button></div>
 </form>
+<dialog class="modal diff-modal" data-yaml-diff-dialog><div class="diff-modal-inner"><div class="section-title-row"><div><h3>保存前变更预览</h3><p>YAML 中的敏感字段会被掩码。</p></div><button class="icon-button" type="button" data-yaml-diff-close>×</button></div><pre class="diff-preview"><code data-yaml-diff-output>正在生成...</code></pre><div class="modal-actions"><button class="button secondary" type="button" data-yaml-diff-close>继续编辑</button><button class="button primary" type="button" data-yaml-diff-confirm>确认保存</button></div></div></dialog>
 {% endblock %}

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Proxmox 发现 · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><h1>Proxmox 发现</h1><p>从 <code>proxmox.yaml</code> 读取只读连接，发现 QEMU VM / LXC，并把它们关联到现有 Homepage 服务。</p></div>
+  <div class="heading-actions"><a class="button secondary" href="/yaml/proxmox.yaml">高级编辑 proxmox.yaml</a></div>
+</section>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+{% if not connections %}
+<section class="form-card">
+  <h2>尚未配置 proxmox.yaml</h2>
+  <p class="section-help">你已经可以在 Service Widget 中使用 Proxmox Token；v0.3.0 可以把现有 Proxmox Widget 的连接安全复制到 <code>proxmox.yaml</code>，无需再次粘贴 Secret。</p>
+  {% if widget_candidates %}
+  <div class="simple-list">
+    {% for candidate in widget_candidates %}
+    <div class="list-row">
+      <span class="list-index">P</span>
+      <div class="list-copy"><h3>{{ candidate.name }}</h3><pre>{{ candidate.group }} · {{ candidate.url }} · node={{ candidate.node }}</pre></div>
+      <form method="post" action="/proxmox/import-connection"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="group_index" value="{{ candidate.group_index }}"><input type="hidden" name="item_index" value="{{ candidate.item_index }}"><button class="button primary" type="submit">从此 Widget 导入</button></form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}<div class="empty-state">没有找到可导入的 Proxmox Widget。可以先在高级编辑里配置 <code>proxmox.yaml</code>。</div>{% endif %}
+</section>
+{% else %}
+<section class="form-card proxmox-toolbar">
+  <div><strong>Proxmox Server</strong><p class="section-help">服务中的 <code>proxmoxNode</code> 必须匹配这里的 Server 名称。</p></div>
+  <form method="get" action="/proxmox"><select name="server" onchange="this.form.submit()">{% for conn in connections %}<option value="{{ conn.name }}" {% if conn.name == selected %}selected{% endif %}>{{ conn.name }} · {{ conn.url }}</option>{% endfor %}</select></form>
+</section>
+
+<div class="proxmox-grid">
+{% for vm in resources %}
+  <article class="proxmox-card {% if vm.binding %}configured{% endif %}">
+    <header><div><div class="docker-name-row"><h3>{{ vm.name }}</h3><span class="state-dot {{ 'online' if vm.status == 'running' else 'offline' }}"></span></div><p>{{ vm.type|upper }} {{ vm.vmid }} · {{ vm.node }}</p></div><span class="status-pill {{ 'ok' if vm.status == 'running' else '' }}">{{ vm.status }}</span></header>
+    <div class="proxmox-metrics"><div><span>CPU</span><strong>{{ vm.cpu_percent }}%</strong></div><div><span>内存</span><strong>{{ vm.memory_percent }}%</strong></div><div><span>VMID</span><strong>{{ vm.vmid }}</strong></div></div>
+    {% if vm.binding %}
+      <div class="configured-box">已关联：<strong>{{ vm.binding.group }} / {{ vm.binding.name }}</strong></div>
+      <a class="button secondary full" href="/services/item/{{ vm.binding.group_index }}/{{ vm.binding.item_index }}/edit">编辑服务</a>
+    {% else %}
+      <form method="post" action="/proxmox/bind" class="proxmox-bind-form">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="server" value="{{ selected }}"><input type="hidden" name="vmid" value="{{ vm.vmid }}"><input type="hidden" name="type" value="{{ vm.type }}">
+        <select name="service_ref" data-proxmox-service-select onchange="const [g,i]=this.value.split(':'); this.form.group_index.value=g||''; this.form.item_index.value=i||''"><option value="">选择已有服务...</option>{% for service in service_choices %}<option value="{{ service.group_index }}:{{ service.item_index }}">{{ service.group }} / {{ service.name }}</option>{% endfor %}</select>
+        <input type="hidden" name="group_index"><input type="hidden" name="item_index">
+        <button class="button primary" type="submit" onclick="if(!this.form.group_index.value){alert('请选择要关联的 Homepage 服务'); return false;}">关联已有服务</button>
+      </form>
+      <a class="button secondary full" href="/services/item/new?name={{ vm.name|urlencode }}&proxmox_node={{ selected|urlencode }}&proxmox_vmid={{ vm.vmid }}&proxmox_type={{ vm.type }}">以此 VM/LXC 新建服务</a>
+    {% endif %}
+  </article>
+{% else %}
+  <div class="empty-state span-all">当前连接没有发现 QEMU VM / LXC，或 Token 没有读取资源的权限。</div>
+{% endfor %}
+</div>
+{% endif %}
+{% endblock %}

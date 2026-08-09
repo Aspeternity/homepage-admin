@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import difflib
 import json
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,9 @@ from .secrets import SECRET_PLACEHOLDER, mask_secrets, restore_masked_secrets
 from .security import ensure_csrf, login_limiter, require_auth, verify_csrf, verify_password
 from .settings import settings
 from .store import ALLOWED_FILES, ConfigError, deep_plain, store
-from .widget_catalog import WIDGET_CATALOG, catalog_field_names, catalog_secret_names
+from .proxmox_client import ProxmoxConnection, ProxmoxDiscoveryClient, ProxmoxDiscoveryError
+from .widget_catalog import WIDGET_CATALOG, catalog_categories, catalog_field_names, catalog_secret_names, public_catalog
+from .widget_tester import WidgetTestError, test_widget
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -47,6 +50,7 @@ if settings.allowed_hosts and settings.allowed_hosts != ("*",):
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 docker_discovery = DockerDiscoveryClient(settings.docker_discovery_url)
+proxmox_discovery = ProxmoxDiscoveryClient()
 
 
 @app.middleware("http")
@@ -519,6 +523,11 @@ def empty_service_values() -> dict[str, Any]:
         "ping": "",
         "server": "",
         "container": "",
+        "proxmoxNode": "",
+        "proxmoxVMID": "",
+        "proxmoxType": "",
+        "widgets": [],
+        # Legacy mirror used by the Docker import wizard and old links.
         "widget_type": "",
         "widget_fields": {},
         "widget_secret_saved": {},
@@ -526,6 +535,39 @@ def empty_service_values() -> dict[str, Any]:
         "extra": "",
         "multiple_widgets": False,
     }
+
+
+def _widget_form_value(widget: dict[str, Any], original_index: int) -> dict[str, Any]:
+    widget_type = str(widget.get("type", ""))
+    values: dict[str, Any] = {
+        "type": widget_type,
+        "fields": {},
+        "secret_saved": {},
+        "selected_fields": list(widget.get("fields") or []) if isinstance(widget.get("fields"), list) else [],
+        "extra": "",
+        "original_index": original_index,
+    }
+    known_widget = catalog_field_names(widget_type)
+    for key in known_widget:
+        if key == "fields" or key not in widget:
+            continue
+        if key in catalog_secret_names(widget_type):
+            values["secret_saved"][key] = bool(widget.get(key))
+            continue
+        field_schema = next(
+            (f for f in WIDGET_CATALOG.get(widget_type, {}).get("fields", []) if f.get("name") == key),
+            {},
+        )
+        value = widget.get(key)
+        if field_schema.get("kind") == "yaml":
+            values["fields"][key] = store.dump_fragment(value) if value not in (None, "") else ""
+        else:
+            values["fields"][key] = value
+    extra = CommentedMap(
+        (k, copy.deepcopy(v)) for k, v in widget.items() if k not in known_widget | {"type"}
+    )
+    values["extra"] = store.dump_fragment(mask_secrets(extra)) if extra else ""
+    return values
 
 
 def service_form_values(data: list[Any], group_index: int, item_index: int | None) -> dict[str, Any]:
@@ -537,38 +579,53 @@ def service_form_values(data: list[Any], group_index: int, item_index: int | Non
     if not isinstance(details, dict):
         raise ConfigError("嵌套分组暂不支持表单编辑，请使用高级 YAML 编辑器。")
     values["name"] = name
-    known = {"icon", "href", "description", "target", "siteMonitor", "ping", "server", "container"}
+    known = {
+        "icon", "href", "description", "target", "siteMonitor", "ping", "server", "container",
+        "proxmoxNode", "proxmoxVMID", "proxmoxType",
+    }
     for key in known:
         values[key] = details.get(key, "")
-    extra = CommentedMap((k, copy.deepcopy(v)) for k, v in details.items() if k not in known | {"widget"})
-    if "widgets" in details:
-        values["multiple_widgets"] = True
-    widget = details.get("widget")
-    if isinstance(widget, dict):
-        widget_type = str(widget.get("type", ""))
-        values["widget_type"] = widget_type
-        known_widget = catalog_field_names(widget_type) | {"url"}
-        for key in known_widget:
-            if key not in widget:
-                continue
-            if key in catalog_secret_names(widget_type):
-                values["widget_secret_saved"][key] = bool(widget.get(key))
-                continue
-            field_schema = next(
-                (f for f in WIDGET_CATALOG.get(widget_type, {}).get("fields", []) if f.get("name") == key),
-                {},
-            )
-            value = widget.get(key)
-            if field_schema.get("kind") == "yaml":
-                values["widget_fields"][key] = store.dump_fragment(value) if value not in (None, "") else ""
-            else:
-                values["widget_fields"][key] = value
-        widget_extra = CommentedMap(
-            (k, copy.deepcopy(v)) for k, v in widget.items() if k not in known_widget | {"type"}
-        )
-        values["widget_extra"] = store.dump_fragment(mask_secrets(widget_extra)) if widget_extra else ""
+
+    widgets_raw: list[dict[str, Any]] = []
+    if isinstance(details.get("widgets"), list):
+        widgets_raw = [widget for widget in details.get("widgets", []) if isinstance(widget, dict)]
+    elif isinstance(details.get("widget"), dict):
+        widgets_raw = [details["widget"]]
+    values["widgets"] = [_widget_form_value(widget, index) for index, widget in enumerate(widgets_raw)]
+    values["multiple_widgets"] = len(values["widgets"]) > 1
+    if values["widgets"]:
+        first = values["widgets"][0]
+        values["widget_type"] = first["type"]
+        values["widget_fields"] = first["fields"]
+        values["widget_secret_saved"] = first["secret_saved"]
+        values["widget_extra"] = first["extra"]
+
+    extra = CommentedMap(
+        (k, copy.deepcopy(v))
+        for k, v in details.items()
+        if k not in known | {"widget", "widgets"}
+    )
     values["extra"] = store.dump_fragment(mask_secrets(extra)) if extra else ""
     return values
+
+
+def _ensure_widget_values(values: dict[str, Any]) -> None:
+    """Convert Docker/import legacy first-widget values into v0.3.0 widgets list."""
+    if values.get("widgets"):
+        return
+    widget_type = str(values.get("widget_type") or "").strip()
+    if not widget_type:
+        return
+    values["widgets"] = [
+        {
+            "type": widget_type,
+            "fields": copy.deepcopy(values.get("widget_fields") or {}),
+            "secret_saved": copy.deepcopy(values.get("widget_secret_saved") or {}),
+            "selected_fields": [],
+            "extra": values.get("widget_extra", ""),
+            "original_index": -1,
+        }
+    ]
 
 
 def render_service_form(
@@ -582,6 +639,7 @@ def render_service_form(
     error: str | None = None,
     docker_source: str | None = None,
 ) -> HTMLResponse:
+    _ensure_widget_values(values)
     return templates.TemplateResponse(
         request,
         "service_form.html",
@@ -595,13 +653,23 @@ def render_service_form(
             values=values,
             error=error,
             widget_catalog=WIDGET_CATALOG,
+            widget_catalog_json=json.dumps(public_catalog(), ensure_ascii=False),
             docker_source=docker_source,
         ),
     )
 
 
 @app.get("/services/item/new", response_class=HTMLResponse)
-def new_service(request: Request, group: int = 0, _: None = Depends(auth_guard)) -> HTMLResponse:
+def new_service(
+    request: Request,
+    group: int = 0,
+    widget: str = "",
+    proxmox_node: str = "",
+    proxmox_vmid: str = "",
+    proxmox_type: str = "",
+    name: str = "",
+    _: None = Depends(auth_guard),
+) -> HTMLResponse:
     try:
         data = store.load("services.yaml")
         names = group_names("services.yaml")
@@ -609,6 +677,14 @@ def new_service(request: Request, group: int = 0, _: None = Depends(auth_guard))
             return redirect("/services", error="请先创建一个服务分组。")
         group = min(max(group, 0), len(names) - 1)
         values = service_form_values(data, group, None)
+        if widget and widget in WIDGET_CATALOG:
+            values["widgets"] = [{"type": widget, "fields": {}, "secret_saved": {}, "selected_fields": [], "extra": "", "original_index": -1}]
+        if name:
+            values["name"] = name
+        if proxmox_node and proxmox_vmid:
+            values["proxmoxNode"] = proxmox_node
+            values["proxmoxVMID"] = proxmox_vmid
+            values["proxmoxType"] = proxmox_type or "qemu"
         error = None
     except ConfigError as exc:
         names, values, error = [], {}, str(exc)
@@ -664,103 +740,236 @@ def _coerce_widget_field(kind: str, raw: str) -> Any:
     return raw.strip() or None
 
 
+def _old_widgets(details: dict[str, Any]) -> list[dict[str, Any]]:
+    if isinstance(details.get("widgets"), list):
+        return [item for item in details["widgets"] if isinstance(item, dict)]
+    if isinstance(details.get("widget"), dict):
+        return [details["widget"]]
+    return []
+
+
+def _parse_widget_slot(form: Any, slot: str, old_widgets: list[dict[str, Any]], *, legacy: bool = False) -> CommentedMap | None:
+    prefix = "" if legacy else f"widgets_{slot}_"
+    type_key = "widget_type" if legacy else prefix + "type"
+    widget_type = str(form.get(type_key, "")).strip().lower()
+    if not widget_type:
+        return None
+    schema = WIDGET_CATALOG.get(widget_type, {})
+    schema_fields = list(schema.get("fields", []))
+    if not any(field.get("name") == "url" for field in schema_fields):
+        schema_fields.insert(0, {"name": "url", "kind": "text"})
+
+    original_index = -1
+    if not legacy:
+        try:
+            original_index = int(str(form.get(prefix + "original_index", "-1")))
+        except ValueError:
+            original_index = -1
+    elif old_widgets:
+        original_index = 0
+    old_widget = old_widgets[original_index] if 0 <= original_index < len(old_widgets) else {}
+    old_type = str(old_widget.get("type", "")) if isinstance(old_widget, dict) else ""
+
+    widget = CommentedMap({"type": widget_type})
+    for field in schema_fields:
+        field_name = str(field.get("name", ""))
+        if not field_name:
+            continue
+        kind = str(field.get("kind", "text"))
+        form_key = f"widget_field_{field_name}" if legacy else prefix + f"field_{field_name}"
+        raw = str(form.get(form_key, ""))
+        if kind == "secret":
+            if raw.strip():
+                widget[field_name] = raw.strip()
+            elif old_type == widget_type and field_name in old_widget:
+                widget[field_name] = copy.deepcopy(old_widget[field_name])
+            continue
+        value = _coerce_widget_field(kind, raw)
+        if value is not None:
+            widget[field_name] = value
+
+    if not legacy:
+        selected = [str(value) for value in form.getlist(prefix + "fields") if str(value).strip()]
+    else:
+        selected = [str(value) for value in form.getlist("widget_fields_selection") if str(value).strip()]
+    allowed = set(schema.get("allowed_fields") or [])
+    selected = [value for value in selected if not allowed or value in allowed]
+    if selected:
+        widget["fields"] = CommentedSeq(selected[:4])
+
+    extra_key = "widget_extra" if legacy else prefix + "extra"
+    widget_extra = store.parse_fragment(str(form.get(extra_key, "")), dict)
+    if old_type == widget_type and old_widget:
+        try:
+            widget_extra = restore_masked_secrets(widget_extra, old_widget)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+    for key, value in widget_extra.items():
+        if key not in widget and key != "type":
+            widget[key] = value
+    return widget
+
+
+def _build_service_change(form: Any, group_index: int, item_index: int | None) -> tuple[list[Any], str]:
+    data = store.load("services.yaml")
+    target_group = int(str(form.get("group_index", group_index)))
+    if target_group < 0 or target_group >= len(data):
+        raise ConfigError("目标分组不存在。")
+    name = str(form.get("name", "")).strip()
+    if not name:
+        raise ConfigError("服务名称不能为空。")
+
+    old_details: dict[str, Any] = {}
+    if item_index is not None:
+        _, old_items = first_pair(data[group_index])
+        _, loaded_old_details = first_pair(old_items[item_index])
+        if isinstance(loaded_old_details, dict):
+            old_details = loaded_old_details
+    old_widgets = _old_widgets(old_details)
+
+    details = CommentedMap()
+    field_order = [
+        "icon", "href", "description", "target", "siteMonitor", "ping", "server", "container",
+        "proxmoxNode", "proxmoxVMID", "proxmoxType",
+    ]
+    for key in field_order:
+        value = str(form.get(key, "")).strip()
+        if value:
+            if key == "proxmoxVMID":
+                try:
+                    details[key] = int(value)
+                except ValueError as exc:
+                    raise ConfigError("Proxmox VMID 必须是整数。") from exc
+            else:
+                details[key] = value
+
+    extra = store.parse_fragment(str(form.get("extra", "")), dict)
+    if old_details:
+        try:
+            extra = restore_masked_secrets(extra, old_details)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+    for key, value in extra.items():
+        if key in details or key in {"widget", "widgets"}:
+            continue
+        details[key] = value
+
+    slots = [part for part in str(form.get("widget_slots", "")).split(",") if part.strip()]
+    widgets: list[CommentedMap] = []
+    if slots:
+        for slot in slots:
+            parsed = _parse_widget_slot(form, slot.strip(), old_widgets)
+            if parsed is not None:
+                widgets.append(parsed)
+    elif str(form.get("widget_type", "")).strip():
+        # Backwards compatible with v0.2.x form submissions and external tests.
+        parsed = _parse_widget_slot(form, "legacy", old_widgets, legacy=True)
+        if parsed is not None:
+            widgets.append(parsed)
+
+    if len(widgets) == 1:
+        details["widget"] = widgets[0]
+    elif len(widgets) > 1:
+        details["widgets"] = CommentedSeq(widgets)
+
+    new_entry = CommentedMap({name: details})
+    if item_index is None:
+        _, target_items = first_pair(data[target_group])
+        target_items.append(new_entry)
+    else:
+        _, source_items = first_pair(data[group_index])
+        if target_group == group_index:
+            source_items[item_index] = new_entry
+        else:
+            del source_items[item_index]
+            _, target_items = first_pair(data[target_group])
+            target_items.append(new_entry)
+    return data, name
+
+
 async def save_service(request: Request, group_index: int, item_index: int | None) -> RedirectResponse:
     form = await request.form()
     verify_csrf(request, str(form.get("csrf", "")))
     try:
-        data = store.load("services.yaml")
-        target_group = int(str(form.get("group_index", group_index)))
-        if target_group < 0 or target_group >= len(data):
-            raise ConfigError("目标分组不存在。")
-        name = str(form.get("name", "")).strip()
-        if not name:
-            raise ConfigError("服务名称不能为空。")
-        old_details: dict[str, Any] = {}
-        old_widget: dict[str, Any] = {}
-        old_widget_type = ""
-        if item_index is not None:
-            _, old_items = first_pair(data[group_index])
-            _, loaded_old_details = first_pair(old_items[item_index])
-            if isinstance(loaded_old_details, dict):
-                old_details = loaded_old_details
-                if isinstance(old_details.get("widget"), dict):
-                    old_widget = old_details["widget"]
-                    old_widget_type = str(old_widget.get("type", ""))
-
-        details = CommentedMap()
-        field_order = ["icon", "href", "description", "target", "siteMonitor", "ping", "server", "container"]
-        for key in field_order:
-            value = str(form.get(key, "")).strip()
-            if value:
-                details[key] = value
-        extra = store.parse_fragment(str(form.get("extra", "")), dict)
-        if old_details:
-            try:
-                extra = restore_masked_secrets(extra, old_details)
-            except ValueError as exc:
-                raise ConfigError(str(exc)) from exc
-        for key, value in extra.items():
-            if key in details or key == "widget":
-                continue
-            details[key] = value
-
-        widget_type = str(form.get("widget_type", "")).strip()
-        widget_extra_text = str(form.get("widget_extra", ""))
-        schema = WIDGET_CATALOG.get(widget_type, {})
-        schema_fields = list(schema.get("fields", []))
-        # URL remains editable for unsupported widget types too.
-        if not any(field.get("name") == "url" for field in schema_fields):
-            schema_fields.insert(0, {"name": "url", "kind": "text"})
-
-        widget = CommentedMap()
-        if widget_type:
-            widget["type"] = widget_type
-        for field in schema_fields:
-            field_name = str(field.get("name", ""))
-            if not field_name:
-                continue
-            kind = str(field.get("kind", "text"))
-            raw = str(form.get(f"widget_field_{field_name}", ""))
-            if kind == "secret":
-                if raw.strip():
-                    widget[field_name] = raw.strip()
-                elif old_widget_type == widget_type and field_name in old_widget:
-                    widget[field_name] = copy.deepcopy(old_widget[field_name])
-                continue
-            value = _coerce_widget_field(kind, raw)
-            if value is not None:
-                widget[field_name] = value
-
-        widget_extra = store.parse_fragment(widget_extra_text, dict)
-        if old_widget_type == widget_type and old_widget:
-            try:
-                widget_extra = restore_masked_secrets(widget_extra, old_widget)
-            except ValueError as exc:
-                raise ConfigError(str(exc)) from exc
-        for key, value in widget_extra.items():
-            if key not in widget and key != "type":
-                widget[key] = value
-        if widget_type or len(widget) > 0:
-            details["widget"] = widget
-
-        new_entry = CommentedMap({name: details})
-        if item_index is None:
-            _, target_items = first_pair(data[target_group])
-            target_items.append(new_entry)
-            action = f"create service {name}"
-        else:
-            _, source_items = first_pair(data[group_index])
-            if target_group == group_index:
-                source_items[item_index] = new_entry
-            else:
-                del source_items[item_index]
-                _, target_items = first_pair(data[target_group])
-                target_items.append(new_entry)
-            action = f"update service {name}"
+        before = deep_plain(store.load("services.yaml"))
+        data, name = _build_service_change(form, group_index, item_index)
+        if deep_plain(data) == before:
+            return redirect("/services", ok=f"服务“{name}”没有实际变化，未写入配置，也没有生成备份。")
+        action = f"create service {name}" if item_index is None else f"update service {name}"
         store.write_data("services.yaml", data, actor(request), action)
         return redirect("/services", ok=f"服务“{name}”已保存。")
     except (ConfigError, IndexError, ValueError) as exc:
         return redirect("/services", error=str(exc))
+
+
+@app.post("/api/services/preview")
+async def preview_service_change(request: Request, _: None = Depends(auth_guard)) -> JSONResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        group_index = int(str(form.get("source_group_index", form.get("group_index", 0))))
+        item_raw = str(form.get("source_item_index", "")).strip()
+        item_index = int(item_raw) if item_raw else None
+        current = store.load("services.yaml")
+        proposed, _ = _build_service_change(form, group_index, item_index)
+        before = store.dump(mask_secrets(current)).splitlines()
+        after = store.dump(mask_secrets(proposed)).splitlines()
+        diff = "\n".join(
+            difflib.unified_diff(before, after, fromfile="services.yaml · 当前", tofile="services.yaml · 保存后", lineterm="")
+        )
+        return JSONResponse({"ok": True, "changed": before != after, "diff": diff or "无实际变化。"})
+    except (ConfigError, IndexError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@app.post("/api/widgets/test")
+async def test_widget_connection(request: Request, _: None = Depends(auth_guard)) -> JSONResponse:
+    payload = await request.json()
+    verify_csrf(request, request.headers.get("x-csrf-token", ""))
+    widget_type = str(payload.get("type", "")).strip().lower()
+    raw_config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+    try:
+        config: dict[str, Any] = {}
+        schema = WIDGET_CATALOG.get(widget_type, {})
+        for field in schema.get("fields", []):
+            name = str(field.get("name", ""))
+            if not name:
+                continue
+            raw = raw_config.get(name, "")
+            kind = str(field.get("kind", "text"))
+            if kind == "secret":
+                if str(raw).strip():
+                    config[name] = str(raw).strip()
+                continue
+            if kind == "yaml" and isinstance(raw, str):
+                value = _coerce_widget_field("yaml", raw)
+            else:
+                value = _coerce_widget_field(kind, str(raw))
+            if value is not None:
+                config[name] = value
+
+        # Reuse an already-saved secret without sending it to the browser.
+        item_raw = str(payload.get("item_index", "")).strip()
+        original_index = int(payload.get("original_index", -1))
+        if item_raw and original_index >= 0:
+            gi = int(payload.get("group_index", 0))
+            ii = int(item_raw)
+            data = store.load("services.yaml")
+            _, items = first_pair(data[gi])
+            _, details = first_pair(items[ii])
+            if isinstance(details, dict):
+                old_widgets = _old_widgets(details)
+                if original_index < len(old_widgets):
+                    old_widget = old_widgets[original_index]
+                    if str(old_widget.get("type", "")).lower() == widget_type:
+                        for secret_name in catalog_secret_names(widget_type):
+                            if secret_name not in config and old_widget.get(secret_name):
+                                config[secret_name] = old_widget[secret_name]
+
+        result = await test_widget(widget_type, config)
+        return JSONResponse({"ok": True, **result})
+    except (WidgetTestError, ConfigError, IndexError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
 
 @app.post("/services/item/create")
@@ -996,6 +1205,187 @@ async def reorder_group(kind: str, request: Request, _: None = Depends(auth_guar
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
 
+
+def _service_choices() -> list[dict[str, Any]]:
+    choices: list[dict[str, Any]] = []
+    data = store.load("services.yaml")
+    for gi, group_entry in enumerate(data):
+        group_name, items = first_pair(group_entry)
+        if not isinstance(items, list):
+            continue
+        for ii, item in enumerate(items):
+            try:
+                name, details = first_pair(item)
+            except ConfigError:
+                continue
+            if not isinstance(details, dict):
+                continue
+            choices.append({"group_index": gi, "item_index": ii, "group": group_name, "name": name, "details": details})
+    return choices
+
+
+@app.get("/widget-center", response_class=HTMLResponse)
+def widget_center_page(request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "widget_center.html",
+        context(
+            request,
+            "widget-center",
+            widget_catalog=WIDGET_CATALOG,
+            categories=catalog_categories(),
+        ),
+    )
+
+
+def _proxmox_connections() -> dict[str, ProxmoxConnection]:
+    data = store.load("proxmox.yaml")
+    connections: dict[str, ProxmoxConnection] = {}
+    for name, config in data.items():
+        if not isinstance(config, dict):
+            continue
+        url = str(config.get("url") or "").strip()
+        token = str(config.get("token") or "").strip()
+        secret = str(config.get("secret") or "").strip()
+        if url and token and secret:
+            connections[str(name)] = ProxmoxConnection(str(name), url, token, secret)
+    return connections
+
+
+def _proxmox_widget_candidates() -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for service in _service_choices():
+        details = service["details"]
+        widgets = _old_widgets(details)
+        for widget in widgets:
+            if str(widget.get("type", "")).lower() != "proxmox":
+                continue
+            if widget.get("url") and widget.get("username") and widget.get("password"):
+                candidates.append(
+                    {
+                        "group_index": service["group_index"],
+                        "item_index": service["item_index"],
+                        "group": service["group"],
+                        "name": service["name"],
+                        "node": str(widget.get("node") or "pve"),
+                        "url": str(widget.get("url")),
+                    }
+                )
+            break
+    return candidates
+
+
+def _proxmox_bindings() -> dict[tuple[str, int, str], dict[str, Any]]:
+    bindings: dict[tuple[str, int, str], dict[str, Any]] = {}
+    for service in _service_choices():
+        details = service["details"]
+        node = str(details.get("proxmoxNode") or "")
+        vmid = details.get("proxmoxVMID")
+        ptype = str(details.get("proxmoxType") or "qemu")
+        try:
+            vmid_int = int(vmid)
+        except (TypeError, ValueError):
+            continue
+        if node:
+            bindings[(node, vmid_int, ptype)] = {k: v for k, v in service.items() if k != "details"}
+    return bindings
+
+
+@app.get("/proxmox", response_class=HTMLResponse)
+async def proxmox_page(
+    request: Request,
+    server: str = "",
+    _: None = Depends(auth_guard),
+) -> HTMLResponse:
+    error = None
+    resources: list[dict[str, Any]] = []
+    connections = _proxmox_connections()
+    selected = server if server in connections else (next(iter(connections), ""))
+    if selected:
+        try:
+            resources = await proxmox_discovery.discover(connections[selected])
+        except ProxmoxDiscoveryError as exc:
+            error = str(exc)
+    bindings = _proxmox_bindings()
+    for resource in resources:
+        # proxmoxNode must match the proxmox.yaml key, not necessarily the physical node label.
+        resource["binding"] = bindings.get((selected, int(resource["vmid"]), str(resource["type"])))
+    return templates.TemplateResponse(
+        request,
+        "proxmox.html",
+        context(
+            request,
+            "proxmox",
+            connections=[{"name": name, "url": conn.url} for name, conn in connections.items()],
+            selected=selected,
+            resources=resources,
+            service_choices=[{k: v for k, v in item.items() if k != "details"} for item in _service_choices()],
+            widget_candidates=_proxmox_widget_candidates(),
+            error=error,
+        ),
+    )
+
+
+@app.post("/proxmox/import-connection")
+async def proxmox_import_connection(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        gi = int(str(form.get("group_index", "-1")))
+        ii = int(str(form.get("item_index", "-1")))
+        data = store.load("services.yaml")
+        _, items = first_pair(data[gi])
+        _, details = first_pair(items[ii])
+        if not isinstance(details, dict):
+            raise ConfigError("服务配置格式无效。")
+        widget = next((item for item in _old_widgets(details) if str(item.get("type", "")).lower() == "proxmox"), None)
+        if not widget:
+            raise ConfigError("该服务没有 Proxmox Widget。")
+        node = str(widget.get("node") or "pve").strip()
+        url = str(widget.get("url") or "").strip()
+        token = str(widget.get("username") or "").strip()
+        secret = str(widget.get("password") or "").strip()
+        if not all([node, url, token, secret]):
+            raise ConfigError("Proxmox Widget 缺少 node/url/token/secret，无法导入。")
+        proxmox = store.load("proxmox.yaml")
+        proxmox[node] = CommentedMap({"url": url, "token": token, "secret": secret})
+        store.write_data("proxmox.yaml", proxmox, actor(request), f"import proxmox connection {node}")
+        return redirect(f"/proxmox?server={quote(node)}", ok=f"已从现有 Widget 导入 Proxmox 连接“{node}”。")
+    except (ConfigError, IndexError, ValueError) as exc:
+        return redirect("/proxmox", error=str(exc))
+
+
+@app.post("/proxmox/bind")
+async def proxmox_bind_service(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    server = str(form.get("server", "")).strip()
+    try:
+        if server not in _proxmox_connections():
+            raise ConfigError("Proxmox Server 不存在。")
+        gi = int(str(form.get("group_index", "-1")))
+        ii = int(str(form.get("item_index", "-1")))
+        vmid = int(str(form.get("vmid", "0")))
+        ptype = str(form.get("type", "qemu"))
+        if ptype not in {"qemu", "lxc"}:
+            raise ConfigError("Proxmox 类型必须是 qemu 或 lxc。")
+        data = store.load("services.yaml")
+        _, items = first_pair(data[gi])
+        service_name, details = first_pair(items[ii])
+        if not isinstance(details, dict):
+            raise ConfigError("目标服务格式无效。")
+        details["proxmoxNode"] = server
+        details["proxmoxVMID"] = vmid
+        if ptype == "lxc":
+            details["proxmoxType"] = "lxc"
+        else:
+            details.pop("proxmoxType", None)
+        store.write_data("services.yaml", data, actor(request), f"bind service {service_name} to proxmox {server}/{vmid}")
+        return redirect(f"/proxmox?server={quote(server)}", ok=f"已将“{service_name}”关联到 {ptype.upper()} {vmid}。")
+    except (ConfigError, IndexError, ValueError) as exc:
+        return redirect(f"/proxmox?server={quote(server)}" if server else "/proxmox", error=str(exc))
+
+
 @app.get("/docker", response_class=HTMLResponse)
 def docker_page(
     request: Request,
@@ -1008,7 +1398,7 @@ def docker_page(
     proxy_healthy = False
     hidden_internal_count = 0
     if not docker_discovery.enabled():
-        error = error or "Docker 容器发现未启用。请使用 v0.2.4 的 Compose（包含共享只读 Docker Proxy）。"
+        error = error or "Docker 容器发现未启用。请使用当前 Compose（包含共享只读 Docker Proxy）。"
     else:
         proxy_healthy = docker_discovery.ping()
         try:
@@ -1705,6 +2095,36 @@ def yaml_editor(request: Request, filename: str, _: None = Depends(auth_guard)) 
     )
 
 
+@app.post("/api/yaml/{filename}/diff")
+async def preview_yaml_diff(filename: str, request: Request, _: None = Depends(auth_guard)) -> JSONResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    text = str(form.get("content", ""))
+    masked = str(form.get("masked", "")) == "1"
+    try:
+        current_text = store.read_text(filename)
+        if filename.endswith((".yaml", ".yml")):
+            current = store.load(filename)
+            edited = store.validate_text(filename, text)
+            if masked:
+                try:
+                    proposed = restore_masked_secrets(edited, current)
+                except ValueError as exc:
+                    raise ConfigError(str(exc)) from exc
+            else:
+                proposed = edited
+            before = store.dump(mask_secrets(current)).splitlines()
+            after = store.dump(mask_secrets(proposed)).splitlines()
+        else:
+            store.validate_text(filename, text)
+            before = current_text.splitlines()
+            after = text.splitlines()
+        diff = "\n".join(difflib.unified_diff(before, after, fromfile=f"{filename} · 当前", tofile=f"{filename} · 保存后", lineterm=""))
+        return JSONResponse({"ok": True, "changed": before != after, "diff": diff or "无实际变化。"})
+    except ConfigError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
 @app.post("/yaml/{filename}")
 async def save_yaml(filename: str, request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
     form = await request.form()
@@ -1719,8 +2139,16 @@ async def save_yaml(filename: str, request: Request, _: None = Depends(auth_guar
                 restored = restore_masked_secrets(edited, original)
             except ValueError as exc:
                 raise ConfigError(str(exc)) from exc
+            if deep_plain(restored) == deep_plain(original):
+                suffix = "" if masked else "?reveal=1"
+                separator = "&" if suffix else "?"
+                return RedirectResponse(f"/yaml/{filename}{suffix}{separator}ok={quote(filename + ' 没有实际变化，未写入，也没有生成备份。')}", status_code=303)
             store.write_data(filename, restored, actor(request), "advanced editor save (masked)")
         else:
+            if text == store.read_text(filename):
+                suffix = "" if masked else "?reveal=1"
+                separator = "&" if suffix else "?"
+                return RedirectResponse(f"/yaml/{filename}{suffix}{separator}ok={quote(filename + ' 没有实际变化，未写入，也没有生成备份。')}", status_code=303)
             store.write_text(filename, text, actor(request), "advanced editor save")
         suffix = "" if masked else "?reveal=1"
         separator = "&" if suffix else "?"

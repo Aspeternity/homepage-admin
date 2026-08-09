@@ -2,15 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
-# Curated first-party Homepage widget forms for the services most relevant to homelab users.
-# Unknown/unsupported fields are still preserved in the YAML "extra" editor.
+# Homepage Admin keeps a curated, metadata-driven subset of Homepage's 100+ service
+# widgets. The editor is generated from this catalog, so adding support normally only
+# requires metadata rather than a new template.
 WIDGET_CATALOG: dict[str, dict[str, Any]] = {
     "jellyfin": {
         "label": "Jellyfin",
+        "category": "媒体",
+        "description": "影视媒体库与当前播放统计。",
         "docs": "https://gethomepage.dev/widgets/services/jellyfin/",
+        "icon": "jellyfin.png",
+        "test": "jellyfin",
+        "allowed_fields": ["movies", "series", "episodes", "songs"],
         "fields": [
-            {"name": "url", "label": "服务器地址", "kind": "text", "placeholder": "https://jellyfin.example.com"},
-            {"name": "key", "label": "API Key", "kind": "secret"},
+            {"name": "url", "label": "服务器地址", "kind": "text", "placeholder": "https://jellyfin.example.com", "required": True},
+            {"name": "key", "label": "API Key", "kind": "secret", "required": True},
             {"name": "version", "label": "Widget API 版本", "kind": "number", "placeholder": "1 或 2"},
             {"name": "enableBlocks", "label": "启用媒体统计块", "kind": "bool"},
             {"name": "enableNowPlaying", "label": "显示正在播放", "kind": "bool"},
@@ -20,11 +26,60 @@ WIDGET_CATALOG: dict[str, dict[str, Any]] = {
             {"name": "expandOneStreamToTwoRows", "label": "单流展开两行", "kind": "bool"},
         ],
     },
+    "portainer": {
+        "label": "Portainer",
+        "category": "基础设施",
+        "description": "Docker / Kubernetes Environment 容器统计。",
+        "docs": "https://gethomepage.dev/widgets/services/portainer/",
+        "icon": "portainer.png",
+        "test": "portainer",
+        "allowed_fields": ["running", "stopped", "total"],
+        "fields": [
+            {"name": "url", "label": "Portainer 地址", "kind": "text", "placeholder": "https://portainer:9443", "required": True},
+            {"name": "env", "label": "Environment ID", "kind": "number", "placeholder": "1", "required": True},
+            {"name": "kubernetes", "label": "Kubernetes 模式", "kind": "bool"},
+            {"name": "key", "label": "API Key", "kind": "secret", "required": True},
+        ],
+    },
+    "proxmox": {
+        "label": "Proxmox VE",
+        "category": "基础设施",
+        "description": "PVE 集群 VM、LXC、CPU 与内存统计。",
+        "docs": "https://gethomepage.dev/widgets/services/proxmox/",
+        "icon": "proxmox.png",
+        "test": "proxmox",
+        "allowed_fields": ["vms", "lxc", "resources.cpu", "resources.mem"],
+        "fields": [
+            {"name": "url", "label": "Proxmox 地址", "kind": "text", "placeholder": "https://pve:8006", "required": True},
+            {"name": "username", "label": "API Token ID", "kind": "text", "placeholder": "api@pam!homepage", "required": True},
+            {"name": "password", "label": "Token Secret", "kind": "secret", "required": True},
+            {"name": "node", "label": "节点（可选）", "kind": "text", "placeholder": "pve"},
+        ],
+    },
+    "homeassistant": {
+        "label": "Home Assistant",
+        "category": "智能家居",
+        "description": "人员、灯光、开关或自定义实体状态。",
+        "docs": "https://gethomepage.dev/widgets/services/homeassistant/",
+        "icon": "home-assistant.png",
+        "test": "homeassistant",
+        "allowed_fields": ["people_home", "lights_on", "switches_on"],
+        "fields": [
+            {"name": "url", "label": "Home Assistant 地址", "kind": "text", "placeholder": "http://homeassistant:8123", "required": True},
+            {"name": "key", "label": "长期访问令牌", "kind": "secret", "required": True},
+            {"name": "custom", "label": "自定义状态 / 模板", "kind": "yaml", "rows": 7, "placeholder": "- state: sensor.total_power\n- template: '{{ states.light|selectattr(\"state\",\"equalto\",\"on\")|list|length }}'"},
+        ],
+    },
     "qbittorrent": {
         "label": "qBittorrent",
+        "category": "下载",
+        "description": "下载、上传、做种与活动任务统计。",
         "docs": "https://gethomepage.dev/widgets/services/qbittorrent/",
+        "icon": "qbittorrent.png",
+        "test": "qbittorrent",
+        "allowed_fields": ["leech", "download", "seed", "upload"],
         "fields": [
-            {"name": "url", "label": "WebUI 地址", "kind": "text", "placeholder": "http://qbittorrent:8080"},
+            {"name": "url", "label": "WebUI 地址", "kind": "text", "placeholder": "http://qbittorrent:8080", "required": True},
             {"name": "username", "label": "用户名", "kind": "text"},
             {"name": "password", "label": "密码", "kind": "secret"},
             {"name": "enableLeechProgress", "label": "显示下载进度", "kind": "bool"},
@@ -33,48 +88,147 @@ WIDGET_CATALOG: dict[str, dict[str, Any]] = {
     },
     "transmission": {
         "label": "Transmission",
+        "category": "下载",
+        "description": "Transmission 下载 / 做种 / 传输统计。",
         "docs": "https://gethomepage.dev/widgets/services/transmission/",
+        "icon": "transmission.png",
+        "test": "transmission",
+        "allowed_fields": ["leech", "download", "seed", "upload"],
         "fields": [
-            {"name": "url", "label": "Web 地址", "kind": "text", "placeholder": "http://transmission:9091"},
+            {"name": "url", "label": "Web 地址", "kind": "text", "placeholder": "http://transmission:9091", "required": True},
             {"name": "username", "label": "用户名", "kind": "text"},
             {"name": "password", "label": "密码", "kind": "secret"},
             {"name": "rpcUrl", "label": "RPC 路径", "kind": "text", "placeholder": "/transmission/"},
         ],
     },
+    "diskstation": {
+        "label": "Synology DiskStation",
+        "category": "存储",
+        "description": "DSM 在线时间、卷可用空间、CPU 与内存。",
+        "docs": "https://gethomepage.dev/widgets/services/diskstation/",
+        "icon": "synology.png",
+        "test": "basic",
+        "allowed_fields": ["uptime", "volumeAvailable", "resources.cpu", "resources.mem"],
+        "fields": [
+            {"name": "url", "label": "DSM 地址", "kind": "text", "placeholder": "https://nas:5001", "required": True},
+            {"name": "username", "label": "用户名", "kind": "text", "required": True},
+            {"name": "password", "label": "密码", "kind": "secret", "required": True},
+            {"name": "volume", "label": "卷（可选）", "kind": "text", "placeholder": "volume_1"},
+        ],
+        "notice": "Homepage 官方 DiskStation Widget 获取系统指标时要求 DSM Administrators 组账号；建议创建权限受限的专用账号。",
+    },
+    "openwrt": {
+        "label": "OpenWRT / ImmortalWRT",
+        "category": "网络",
+        "description": "OpenWRT/ImmortalWRT 系统与网络接口信息。",
+        "docs": "https://gethomepage.dev/widgets/services/openwrt/",
+        "icon": "openwrt.png",
+        "test": "basic",
+        "fields": [
+            {"name": "url", "label": "路由器地址", "kind": "text", "placeholder": "http://192.168.1.1", "required": True},
+            {"name": "username", "label": "RPC 用户名", "kind": "text", "placeholder": "homepage", "required": True},
+            {"name": "password", "label": "RPC 密码", "kind": "secret", "required": True},
+            {"name": "interfaceName", "label": "接口（可选）", "kind": "text", "placeholder": "eth0"},
+        ],
+        "notice": "需要按 Homepage 官方文档为 rpcd 创建只读 ACL 与专用用户。",
+    },
     "minecraft": {
         "label": "Minecraft",
+        "category": "游戏",
+        "description": "Minecraft 服务器在线状态与玩家信息。",
         "docs": "https://gethomepage.dev/widgets/services/minecraft/",
+        "icon": "minecraft.png",
+        "test": "config",
         "fields": [
-            {"name": "url", "label": "服务器地址", "kind": "text", "placeholder": "udp://10.10.1.254:25565"},
+            {"name": "url", "label": "服务器地址", "kind": "text", "placeholder": "udp://10.10.1.254:25565", "required": True},
         ],
     },
-    "homeassistant": {
-        "label": "Home Assistant",
-        "docs": "https://gethomepage.dev/widgets/services/homeassistant/",
+    "gamedig": {
+        "label": "GameDig",
+        "category": "游戏",
+        "description": "通过 GameDig 查询多种游戏服务器状态。",
+        "docs": "https://gethomepage.dev/widgets/services/gamedig/",
+        "icon": "mdi-gamepad-variant",
+        "test": "config",
+        "allowed_fields": ["status", "name", "map", "currentPlayers", "players", "maxPlayers", "bots", "ping"],
         "fields": [
-            {"name": "url", "label": "Home Assistant 地址", "kind": "text", "placeholder": "http://homeassistant:8123"},
-            {"name": "key", "label": "长期访问令牌", "kind": "secret"},
-            {"name": "custom", "label": "自定义状态 / 模板", "kind": "yaml", "rows": 7, "placeholder": "- state: sensor.total_power\n- template: '{{ states.light|selectattr(\"state\",\"equalto\",\"on\")|list|length }}'"},
+            {"name": "serverType", "label": "GameDig Server Type", "kind": "text", "placeholder": "minecraft", "required": True},
+            {"name": "url", "label": "服务器地址", "kind": "text", "placeholder": "udp://server:port", "required": True},
+            {"name": "gameToken", "label": "Game Token（可选）", "kind": "secret"},
         ],
     },
-    "portainer": {
-        "label": "Portainer",
-        "docs": "https://gethomepage.dev/widgets/services/portainer/",
+    "glances": {
+        "label": "Glances",
+        "category": "监控",
+        "description": "主机 CPU、内存、磁盘、网络、进程和传感器。",
+        "docs": "https://gethomepage.dev/widgets/services/glances/",
+        "icon": "glances.png",
+        "test": "glances",
         "fields": [
-            {"name": "url", "label": "Portainer 地址", "kind": "text", "placeholder": "https://portainer:9443"},
-            {"name": "env", "label": "Environment ID", "kind": "number", "placeholder": "1"},
-            {"name": "kubernetes", "label": "Kubernetes 模式", "kind": "bool"},
-            {"name": "key", "label": "API Key", "kind": "secret"},
+            {"name": "url", "label": "Glances 地址", "kind": "text", "placeholder": "http://host:61208", "required": True},
+            {"name": "username", "label": "用户名（可选）", "kind": "text"},
+            {"name": "password", "label": "密码（可选）", "kind": "secret"},
+            {"name": "version", "label": "Glances API 版本", "kind": "number", "placeholder": "4（Glances v4+）"},
+            {"name": "metric", "label": "Metric", "kind": "text", "placeholder": "info / cpu / memory / network:eth0", "required": True},
+            {"name": "chart", "label": "显示图表", "kind": "bool"},
+            {"name": "refreshInterval", "label": "刷新间隔 ms", "kind": "number", "placeholder": "5000"},
+            {"name": "pointsLimit", "label": "图表点数", "kind": "number", "placeholder": "15"},
         ],
     },
-    "proxmox": {
-        "label": "Proxmox",
-        "docs": "https://gethomepage.dev/widgets/services/proxmox/",
+    "uptimekuma": {
+        "label": "Uptime Kuma",
+        "category": "监控",
+        "description": "Uptime Kuma 状态页监控摘要。",
+        "docs": "https://gethomepage.dev/widgets/services/uptimekuma/",
+        "icon": "uptime-kuma.png",
+        "test": "basic",
         "fields": [
-            {"name": "url", "label": "Proxmox 地址", "kind": "text", "placeholder": "https://pve:8006"},
-            {"name": "username", "label": "API Token ID", "kind": "text", "placeholder": "api@pam!homepage"},
-            {"name": "password", "label": "Token Secret", "kind": "secret"},
-            {"name": "node", "label": "节点（可选）", "kind": "text", "placeholder": "pve"},
+            {"name": "url", "label": "Uptime Kuma 地址", "kind": "text", "placeholder": "http://uptime-kuma:3001", "required": True},
+            {"name": "slug", "label": "Status Page Slug", "kind": "text", "placeholder": "status", "required": True},
+        ],
+    },
+    "nginxproxymanager": {
+        "label": "NGINX Proxy Manager",
+        "category": "网络",
+        "description": "NPM 代理主机、证书等统计。",
+        "docs": "https://gethomepage.dev/widgets/services/nginx-proxy-manager/",
+        "icon": "nginx-proxy-manager.png",
+        "test": "basic",
+        "fields": [
+            {"name": "url", "label": "NPM 地址", "kind": "text", "placeholder": "http://npm:81", "required": True},
+            {"name": "username", "label": "用户名", "kind": "text", "required": True},
+            {"name": "password", "label": "密码", "kind": "secret", "required": True},
+        ],
+    },
+    "grafana": {
+        "label": "Grafana",
+        "category": "监控",
+        "description": "Grafana Dashboard、数据源与告警统计。",
+        "docs": "https://gethomepage.dev/widgets/services/grafana/",
+        "icon": "grafana.png",
+        "test": "basic",
+        "allowed_fields": ["dashboards", "datasources", "totalalerts", "alertstriggered"],
+        "fields": [
+            {"name": "url", "label": "Grafana 地址", "kind": "text", "placeholder": "http://grafana:3000", "required": True},
+            {"name": "username", "label": "用户名", "kind": "text", "required": True},
+            {"name": "password", "label": "密码", "kind": "secret", "required": True},
+            {"name": "version", "label": "Widget 版本", "kind": "number", "placeholder": "2"},
+        ],
+    },
+    "customapi": {
+        "label": "Custom API",
+        "category": "通用",
+        "description": "把任意 JSON HTTP API 映射成 Homepage 指标卡片。",
+        "docs": "https://gethomepage.dev/widgets/services/customapi/",
+        "icon": "mdi-api",
+        "test": "customapi",
+        "fields": [
+            {"name": "url", "label": "API 地址", "kind": "text", "placeholder": "https://service/api/status", "required": True},
+            {"name": "method", "label": "HTTP 方法", "kind": "select", "options": ["GET", "POST"], "placeholder": "GET"},
+            {"name": "headers", "label": "Headers", "kind": "yaml", "rows": 5, "placeholder": "Authorization: Bearer xxx"},
+            {"name": "requestBody", "label": "Request Body", "kind": "yaml", "rows": 5, "placeholder": "query: status"},
+            {"name": "mappings", "label": "Mappings", "kind": "yaml", "rows": 9, "placeholder": "- field: data.total\n  label: Total\n  format: number"},
+            {"name": "refreshInterval", "label": "刷新间隔 ms", "kind": "number", "placeholder": "10000"},
         ],
     },
 }
@@ -82,7 +236,7 @@ WIDGET_CATALOG: dict[str, dict[str, Any]] = {
 
 def catalog_field_names(widget_type: str) -> set[str]:
     schema = WIDGET_CATALOG.get(widget_type, {})
-    return {str(field["name"]) for field in schema.get("fields", [])}
+    return {str(field["name"]) for field in schema.get("fields", [])} | {"fields"}
 
 
 def catalog_secret_names(widget_type: str) -> set[str]:
@@ -92,3 +246,14 @@ def catalog_secret_names(widget_type: str) -> set[str]:
         for field in schema.get("fields", [])
         if field.get("kind") == "secret"
     }
+
+
+def catalog_categories() -> list[str]:
+    preferred = ["基础设施", "智能家居", "存储", "网络", "媒体", "下载", "监控", "游戏", "通用"]
+    present = {str(schema.get("category", "其他")) for schema in WIDGET_CATALOG.values()}
+    return [name for name in preferred if name in present] + sorted(present - set(preferred))
+
+
+def public_catalog() -> dict[str, dict[str, Any]]:
+    """Browser-safe catalog metadata (contains schemas, never user secrets)."""
+    return WIDGET_CATALOG

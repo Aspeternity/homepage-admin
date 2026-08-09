@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.3.0 - 2026-08-09
+
+### Widget 与服务编辑
+
+- 新增 Widget 中心，可搜索、按分类过滤并从模板直接创建服务。
+- Widget 编辑器改为元数据驱动，新增 Widget 类型通常只需扩展 `widget_catalog.py`。
+- 一个服务支持多个 Service Widget；单个 Widget 保持 `widget:` 兼容，多 Widget 使用 `widgets:`。
+- 对常用 Widget 提供可视化 `fields` 选择，最多选择 4 个展示字段。
+- 编辑已有服务时敏感字段继续不回显；留空保存会复用旧值。
+
+### 连接测试
+
+- 服务 Widget 新增“测试连接”。
+- Jellyfin、Portainer、Proxmox、Home Assistant、qBittorrent、Transmission、Glances、Custom API 提供 API 深度测试与可读错误信息。
+- 其他已收录 HTTP Widget 提供基础连通测试；Minecraft / GameDig 提供配置校验。
+- 已保存 Secret 可由服务端直接用于连接测试，不会重新发送到浏览器。
+
+### Proxmox 发现
+
+- 新增 Proxmox 发现页面，从 `proxmox.yaml` 读取连接并列出 QEMU / LXC、VMID、状态、CPU 与内存。
+- 可把 VM/LXC 绑定到已有 Homepage 服务，或以资源信息预填新服务。
+- 可从已有 Proxmox Service Widget 在服务端导入 `proxmox.yaml` 连接，无需再次暴露 Token Secret。
+
+### 保存安全
+
+- 服务编辑器新增保存前统一 Diff。
+- 高级 YAML 编辑器新增保存前 Diff。
+- Diff 中敏感字段始终掩码。
+- 服务 / 高级 YAML 没有实际变化时不写文件、不创建备份。
+
+### 架构
+
+- v0.3.0 不引入 MySQL 依赖，Homepage YAML 继续作为唯一配置源；管理偏好使用现有 `/data` 持久化。
+- 保持 v0.2.1 以来的共享只读 Docker Proxy 架构，无需重新迁移 HomePage Stack。
+
 ## v0.2.4 - 2026-08-09
 
 ### 修复

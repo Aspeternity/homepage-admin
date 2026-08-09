@@ -27,7 +27,7 @@ def test_login_and_main_pages() -> None:
     assert client.get("/healthz").status_code == 200
     assert client.get("/services", follow_redirects=False).status_code == 303
     login(client)
-    for path in ["/services", "/bookmarks", "/settings", "/widgets", "/docker", "/yaml/services.yaml", "/backups"]:
+    for path in ["/services", "/bookmarks", "/settings", "/widgets", "/widget-center", "/docker", "/proxmox", "/yaml/services.yaml", "/backups"]:
         assert client.get(path).status_code == 200
 
 
@@ -37,7 +37,7 @@ def test_service_secret_is_not_rendered_and_is_preserved() -> None:
     edit = client.get("/services/item/0/0/edit")
     assert edit.status_code == 200
     assert "super-secret-key" not in edit.text
-    assert "已保存；留空保持原值" in edit.text
+    assert '"secret_saved": {"key": true}' in edit.text
 
     response = client.post(
         "/services/item/0/0/update",
@@ -171,10 +171,16 @@ def test_docker_import_wizard_and_detailed_editor(monkeypatch) -> None:
 def test_backup_is_created() -> None:
     client = TestClient(app)
     csrf = login(client)
-    current = (settings.config_dir / "widgets.yaml").read_text(encoding="utf-8")
+    path = settings.config_dir / "widgets.yaml"
+    current = path.read_text(encoding="utf-8")
+    parsed = YAML(typ="safe").load(current) or []
+    parsed.append({"datetime": {"format": {"timeStyle": "short"}}})
+    from io import StringIO
+    stream = StringIO()
+    YAML().dump(parsed, stream)
     response = client.post(
         "/yaml/widgets.yaml",
-        data={"csrf": csrf, "masked": "1", "content": current + "\n"},
+        data={"csrf": csrf, "masked": "1", "content": stream.getvalue()},
         follow_redirects=False,
     )
     assert response.status_code == 303
@@ -660,3 +666,252 @@ background:
         assert parsed["background"]["opacity"] == 0
     finally:
         path.write_text(original, encoding="utf-8")
+
+
+def test_v030_multi_widget_save_writes_widgets_list_and_preserves_secret() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "services.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        response = client.post(
+            "/services/item/0/0/update",
+            data={
+                "csrf": csrf,
+                "source_group_index": "0",
+                "source_item_index": "0",
+                "name": "Jellyfin",
+                "group_index": "0",
+                "icon": "jellyfin.png",
+                "href": "https://jellyfin.example",
+                "widget_slots": "0,1",
+                "widgets_0_original_index": "0",
+                "widgets_0_type": "jellyfin",
+                "widgets_0_field_url": "https://jellyfin.example",
+                "widgets_0_field_key": "",
+                "widgets_0_fields": ["movies", "series"],
+                "widgets_0_extra": "",
+                "widgets_1_original_index": "-1",
+                "widgets_1_type": "portainer",
+                "widgets_1_field_url": "http://portainer:9000",
+                "widgets_1_field_env": "1",
+                "widgets_1_field_key": "new-portainer-secret",
+                "widgets_1_fields": ["running", "total"],
+                "widgets_1_extra": "",
+                "extra": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        details = data[0]["Core"][0]["Jellyfin"]
+        assert "widget" not in details
+        assert len(details["widgets"]) == 2
+        assert details["widgets"][0]["type"] == "jellyfin"
+        assert details["widgets"][0]["key"] == "super-secret-key"
+        assert details["widgets"][0]["fields"] == ["movies", "series"]
+        assert details["widgets"][1]["type"] == "portainer"
+        assert details["widgets"][1]["key"] == "new-portainer-secret"
+        assert details["widgets"][1]["env"] == 1
+    finally:
+        path.write_text(original, encoding="utf-8")
+
+
+def test_v030_service_preview_masks_new_secret_and_returns_diff() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    response = client.post(
+        "/api/services/preview",
+        data={
+            "csrf": csrf,
+            "source_group_index": "0",
+            "source_item_index": "0",
+            "name": "Jellyfin",
+            "group_index": "0",
+            "href": "https://jellyfin.example/new",
+            "widget_slots": "0",
+            "widgets_0_original_index": "0",
+            "widgets_0_type": "jellyfin",
+            "widgets_0_field_url": "https://jellyfin.example/new",
+            "widgets_0_field_key": "brand-new-secret-value",
+            "widgets_0_extra": "",
+            "extra": "",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["changed"] is True
+    assert "services.yaml" in payload["diff"]
+    assert "brand-new-secret-value" not in payload["diff"]
+    assert SECRET_PREFIX in payload["diff"]
+
+
+def test_v030_widget_center_has_metadata_driven_catalog() -> None:
+    client = TestClient(app)
+    login(client)
+    page = client.get("/widget-center")
+    assert page.status_code == 200
+    assert "Widget 中心" in page.text
+    assert "Proxmox VE" in page.text
+    assert "Home Assistant" in page.text
+    assert "Synology DiskStation" in page.text
+    assert "Custom API" in page.text
+    assert "data-widget-search" in page.text
+    assert "data-widget-category" in page.text
+    assert "/services/item/new?widget=proxmox" in page.text
+
+
+def test_v030_widget_test_reuses_saved_secret_without_echoing_it(monkeypatch) -> None:
+    from app import main as main_module
+
+    captured = {}
+
+    async def fake_test(widget_type, config):
+        captured["type"] = widget_type
+        captured["config"] = dict(config)
+        return {"message": "连接正常", "level": "deep", "metrics": [{"label": "Test", "value": "OK"}]}
+
+    monkeypatch.setattr(main_module, "test_widget", fake_test)
+    client = TestClient(app)
+    csrf = login(client)
+    response = client.post(
+        "/api/widgets/test",
+        headers={"x-csrf-token": csrf},
+        json={
+            "type": "jellyfin",
+            "config": {"url": "https://jellyfin.example"},
+            "group_index": 0,
+            "item_index": "0",
+            "original_index": 0,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert captured["type"] == "jellyfin"
+    assert captured["config"]["key"] == "super-secret-key"
+    assert "super-secret-key" not in response.text
+
+
+def test_v030_proxmox_can_import_existing_widget_connection_and_discover(monkeypatch) -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    csrf = login(client)
+    services_path = settings.config_dir / "services.yaml"
+    proxmox_path = settings.config_dir / "proxmox.yaml"
+    services_original = services_path.read_text(encoding="utf-8")
+    proxmox_original = proxmox_path.read_text(encoding="utf-8")
+    try:
+        services_path.write_text(
+            '''---
+- Widgets:
+    - Proxmox VE:
+        href: https://10.10.1.2:8006
+        widget:
+          type: proxmox
+          url: https://10.10.1.2:8006
+          username: homepage@pve!homepage
+          password: proxmox-token-secret
+          node: asp-pve
+''',
+            encoding="utf-8",
+        )
+        proxmox_path.write_text("---\n", encoding="utf-8")
+        page = client.get("/proxmox")
+        assert page.status_code == 200
+        assert "从此 Widget 导入" in page.text
+        assert "proxmox-token-secret" not in page.text
+
+        imported = client.post(
+            "/proxmox/import-connection",
+            data={"csrf": csrf, "group_index": "0", "item_index": "0"},
+            follow_redirects=False,
+        )
+        assert imported.status_code == 303
+        proxmox = YAML(typ="safe").load(proxmox_path.read_text(encoding="utf-8"))
+        assert proxmox["asp-pve"]["url"] == "https://10.10.1.2:8006"
+        assert proxmox["asp-pve"]["token"] == "homepage@pve!homepage"
+        assert proxmox["asp-pve"]["secret"] == "proxmox-token-secret"
+
+        async def fake_discover(connection):
+            assert connection.name == "asp-pve"
+            assert connection.secret == "proxmox-token-secret"
+            return [{
+                "vmid": 100,
+                "name": "HomeAssistant",
+                "type": "qemu",
+                "node": "asp-pve",
+                "status": "running",
+                "cpu_percent": 4,
+                "memory_percent": 32,
+            }]
+
+        monkeypatch.setattr(main_module.proxmox_discovery, "discover", fake_discover)
+        discovered = client.get("/proxmox?server=asp-pve")
+        assert discovered.status_code == 200
+        assert "HomeAssistant" in discovered.text
+        assert "QEMU 100" in discovered.text
+        assert "以此 VM/LXC 新建服务" in discovered.text
+        assert "proxmox-token-secret" not in discovered.text
+    finally:
+        services_path.write_text(services_original, encoding="utf-8")
+        proxmox_path.write_text(proxmox_original, encoding="utf-8")
+
+
+def test_v030_proxmox_bind_sets_service_mapping() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    services_path = settings.config_dir / "services.yaml"
+    proxmox_path = settings.config_dir / "proxmox.yaml"
+    services_original = services_path.read_text(encoding="utf-8")
+    proxmox_original = proxmox_path.read_text(encoding="utf-8")
+    try:
+        proxmox_path.write_text(
+            '''---
+asp-pve:
+  url: https://10.10.1.2:8006
+  token: homepage@pve!homepage
+  secret: proxmox-token-secret
+''',
+            encoding="utf-8",
+        )
+        response = client.post(
+            "/proxmox/bind",
+            data={
+                "csrf": csrf,
+                "server": "asp-pve",
+                "group_index": "0",
+                "item_index": "0",
+                "vmid": "104",
+                "type": "qemu",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(services_path.read_text(encoding="utf-8"))
+        details = data[0]["Core"][0]["Jellyfin"]
+        assert details["proxmoxNode"] == "asp-pve"
+        assert details["proxmoxVMID"] == 104
+        assert "proxmoxType" not in details
+    finally:
+        services_path.write_text(services_original, encoding="utf-8")
+        proxmox_path.write_text(proxmox_original, encoding="utf-8")
+
+
+def test_v030_advanced_yaml_noop_does_not_create_backup() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "widgets.yaml"
+    current = path.read_text(encoding="utf-8")
+    backup_root = settings.data_dir / "backups"
+    before = {p.name for p in backup_root.iterdir() if p.is_dir()} if backup_root.exists() else set()
+    response = client.post(
+        "/yaml/widgets.yaml",
+        data={"csrf": csrf, "masked": "1", "content": current},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    after = {p.name for p in backup_root.iterdir() if p.is_dir()} if backup_root.exists() else set()
+    assert after == before

@@ -58,8 +58,9 @@
             {% endif %}
             <div class="item-tags">
               {% if item.meta.siteMonitor %}<span>状态监控</span>{% endif %}
-              {% if item.meta.widget %}<span>Widget</span>{% endif %}
+              {% if item.meta.widget %}<span>Widget</span>{% elif item.meta.widgets %}<span>{{ item.meta.widgets|length }} Widgets</span>{% endif %}
               {% if item.meta.server and item.meta.container %}<span>Docker</span>{% endif %}
+              {% if item.meta.proxmoxNode and item.meta.proxmoxVMID %}<span>Proxmox</span>{% endif %}
               {% if kind == 'bookmarks' and item.meta.abbr %}<span>{{ item.meta.abbr }}</span>{% endif %}
             </div>
           </div>
