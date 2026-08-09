@@ -294,6 +294,67 @@ def configured_docker_containers() -> dict[tuple[str, str], list[dict[str, str]]
     return configured
 
 
+def docker_server_references(server_name: str) -> list[dict[str, Any]]:
+    """Return services that currently depend on a Homepage Docker server."""
+    target = str(server_name or "").strip().casefold()
+    if not target:
+        return []
+    try:
+        data = store.load("services.yaml")
+    except ConfigError:
+        return []
+    rows: list[dict[str, Any]] = []
+    for group_index, group_entry in enumerate(data):
+        try:
+            group_name, items = first_pair(group_entry)
+        except ConfigError:
+            continue
+        if not isinstance(items, list):
+            continue
+        for item_index, entry in enumerate(items):
+            try:
+                service_name, details = first_pair(entry)
+            except ConfigError:
+                continue
+            if not isinstance(details, dict):
+                continue
+            if str(details.get("server") or "").strip().casefold() != target:
+                continue
+            rows.append({
+                "group_index": group_index,
+                "item_index": item_index,
+                "group": str(group_name),
+                "service": str(service_name),
+                "container": str(details.get("container") or ""),
+            })
+    return rows
+
+
+def _clear_docker_server_references(data: list[Any], server_name: str) -> int:
+    target = str(server_name or "").strip().casefold()
+    changed = 0
+    for group_entry in data:
+        try:
+            _, items = first_pair(group_entry)
+        except ConfigError:
+            continue
+        if not isinstance(items, list):
+            continue
+        for entry in items:
+            try:
+                _, details = first_pair(entry)
+            except ConfigError:
+                continue
+            if not isinstance(details, dict):
+                continue
+            if str(details.get("server") or "").strip().casefold() != target:
+                continue
+            details.pop("server", None)
+            details.pop("container", None)
+            changed += 1
+    return changed
+
+
 def homepage_docker_servers() -> dict[str, dict[str, Any]]:
     try:
         data = store.load("docker.yaml")
@@ -420,6 +481,10 @@ def docker_discovery_hosts() -> list[dict[str, Any]]:
                 "source": "custom",
                 "source_label": "Admin 自定义 · 已映射 docker.yaml",
                 "editable": True,
+                "manageable": True,
+                "edit_kind": "custom",
+                "has_custom": True,
+                "has_yaml": True,
                 "yaml_configured": True,
                 "yaml_mode": server.get("mode"),
                 "client": DockerDiscoveryClient(custom["url"]),
@@ -435,7 +500,11 @@ def docker_discovery_hosts() -> list[dict[str, Any]]:
                 "public_host": public_host,
                 "source": "docker.yaml",
                 "source_label": "docker.yaml 自动发现",
-                "editable": False,
+                "editable": True,
+                "manageable": True,
+                "edit_kind": "yaml",
+                "has_custom": False,
+                "has_yaml": True,
                 "yaml_configured": True,
                 "yaml_mode": server.get("mode"),
                 "client": _docker_client_from_yaml(server),
@@ -452,6 +521,10 @@ def docker_discovery_hosts() -> list[dict[str, Any]]:
             "source": "custom",
             "source_label": "Admin 自定义 · docker.yaml 未配置",
             "editable": True,
+            "manageable": True,
+            "edit_kind": "custom",
+            "has_custom": True,
+            "has_yaml": False,
             "yaml_configured": False,
             "yaml_mode": "none",
             "client": DockerDiscoveryClient(custom["url"]),
@@ -482,6 +555,10 @@ def docker_discovery_hosts() -> list[dict[str, Any]]:
                     "source": "environment",
                     "source_label": "DOCKER_DISCOVERY_URL",
                     "editable": False,
+                    "manageable": False,
+                    "edit_kind": "",
+                    "has_custom": False,
+                    "has_yaml": server_name in servers,
                     "yaml_configured": server_name in servers,
                     "yaml_mode": servers.get(server_name, {}).get("mode", "none"),
                     "client": client,
@@ -539,6 +616,45 @@ def sync_custom_docker_host_to_homepage(host: dict[str, str], user: str) -> bool
     data[server_name] = cfg
     store.write_data("docker.yaml", data, user, f"add docker server {server_name} from discovery host")
     return True
+
+
+def update_homepage_docker_server(server_name: str, payload: dict[str, str], user: str) -> None:
+    data = store.load("docker.yaml")
+    if not isinstance(data, dict):
+        raise ConfigError("docker.yaml 必须是对象映射。")
+    if server_name not in data or not isinstance(data.get(server_name), dict):
+        raise ConfigError(f"docker.yaml 中不存在 Server“{server_name}”。")
+    mode = str(payload.get("mode") or "remote").strip().lower()
+    cfg = data[server_name]
+    if mode == "socket":
+        socket_path = str(payload.get("socket") or "").strip()
+        if not socket_path.startswith("/") or any(ch in socket_path for ch in "\r\n"):
+            raise ConfigError("Socket 路径必须是绝对路径，例如 /var/run/docker.sock。")
+        cfg["socket"] = socket_path
+        cfg.pop("host", None)
+        cfg.pop("port", None)
+        cfg.pop("protocol", None)
+    elif mode == "remote":
+        host = str(payload.get("host") or "").strip()
+        if not host or "://" in host or any(ch.isspace() for ch in host) or any(ch in host for ch in "/?#"):
+            raise ConfigError("Docker Host 只能填写主机名或 IP，不要包含协议、路径或空格。")
+        try:
+            port = int(str(payload.get("port") or "2375"))
+        except ValueError as exc:
+            raise ConfigError("Docker Port 必须是数字。") from exc
+        if port < 1 or port > 65535:
+            raise ConfigError("Docker Port 必须在 1-65535 之间。")
+        protocol = str(payload.get("protocol") or "http").strip().lower()
+        if protocol not in {"http", "https"}:
+            raise ConfigError("Docker Protocol 只能是 http 或 https。")
+        cfg["host"] = host
+        cfg["port"] = port
+        cfg["protocol"] = protocol
+        cfg.pop("socket", None)
+    else:
+        raise ConfigError("Docker Server 模式必须是 remote 或 socket。")
+    # Preserve headers, tls and any future Homepage keys that the visual editor does not understand.
+    store.write_data("docker.yaml", data, user, f"edit docker server {server_name}")
 
 
 def recommended_import_group(names: list[str]) -> int:
@@ -1981,6 +2097,10 @@ def docker_hosts_page(
     _: None = Depends(auth_guard),
 ) -> HTMLResponse:
     hosts = docker_discovery_hosts()
+    for item in hosts:
+        refs = docker_server_references(str(item.get("homepage_server") or ""))
+        item["reference_count"] = len(refs)
+        item["reference_preview"] = refs[:4]
     editable = next((item for item in hosts if str(item.get("id")) == str(edit or "") and item.get("editable")), None)
     form_values = {
         "id": "",
@@ -1989,8 +2109,23 @@ def docker_hosts_page(
         "homepage_server": "",
         "public_host": "",
     }
-    if editable:
+    yaml_form_values = {"server_name": "", "mode": "remote", "host": "", "port": "2375", "protocol": "http", "socket": ""}
+    edit_kind = str(editable.get("edit_kind") or "") if editable else ""
+    if editable and edit_kind == "custom":
         form_values.update({key: str(editable.get(key) or "") for key in form_values})
+    elif editable and edit_kind == "yaml":
+        server_name = str(editable.get("homepage_server") or "")
+        server = homepage_docker_servers().get(server_name, {})
+        yaml_form_values.update({
+            "server_name": server_name,
+            "mode": str(server.get("mode") or "remote"),
+            "host": str(server.get("host") or ""),
+            "port": str(server.get("port") or "2375"),
+            "protocol": str(server.get("protocol") or "http"),
+            "socket": str(server.get("socket") or ""),
+            "has_headers": bool(server.get("has_headers")),
+            "has_tls": bool(server.get("has_tls")),
+        })
     return templates.TemplateResponse(
         request,
         "docker_hosts.html",
@@ -2001,7 +2136,9 @@ def docker_hosts_page(
             docker_servers=list(homepage_docker_servers().keys()),
             default_server_info=docker_server_info(),
             edit_host=_docker_host_safe(editable) if editable else None,
+            edit_kind=edit_kind,
             form_values=form_values,
+            yaml_form_values=yaml_form_values,
             error=request.query_params.get("error"),
             ok=request.query_params.get("ok"),
         ),
@@ -2066,6 +2203,114 @@ async def docker_host_save(request: Request, _: None = Depends(auth_guard)) -> R
         return redirect("/docker/hosts", ok=f"已保存 Docker 主机“{saved['name']}”{sync_note}。")
     except ConfigError as exc:
         return redirect("/docker/hosts", error=str(exc))
+
+
+@app.post("/docker/hosts/yaml-save")
+async def docker_yaml_host_save(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    server_name = str(form.get("server_name", "")).strip()
+    try:
+        update_homepage_docker_server(
+            server_name,
+            {
+                "mode": str(form.get("mode", "remote")),
+                "host": str(form.get("host", "")),
+                "port": str(form.get("port", "")),
+                "protocol": str(form.get("protocol", "http")),
+                "socket": str(form.get("socket", "")),
+            },
+            actor(request),
+        )
+        return redirect("/docker/hosts", ok=f"已更新 docker.yaml Server“{server_name}”；未识别的 TLS/Header/扩展字段均已保留。")
+    except ConfigError as exc:
+        return redirect(f"/docker/hosts?edit={quote(_docker_host_id('yaml', server_name))}", error=str(exc))
+
+
+@app.get("/docker/hosts/delete/{host_id}", response_class=HTMLResponse)
+def docker_host_delete_page(host_id: str, request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
+    host = docker_discovery_host(host_id)
+    if not host or not host.get("manageable"):
+        raise HTTPException(404)
+    server_name = str(host.get("homepage_server") or "")
+    references = docker_server_references(server_name)
+    has_custom = bool(host.get("has_custom") or host.get("source") == "custom")
+    has_yaml = server_name in homepage_docker_servers()
+    return templates.TemplateResponse(
+        request,
+        "docker_host_delete.html",
+        context(
+            request,
+            "docker",
+            host=_docker_host_safe(host),
+            references=references,
+            has_custom=has_custom,
+            has_yaml=has_yaml,
+            default_remove_custom=has_custom,
+            default_remove_yaml=has_yaml and not has_custom,
+            error=request.query_params.get("error"),
+        ),
+    )
+
+
+@app.post("/docker/hosts/delete-confirm")
+async def docker_host_delete_confirm(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    host_id = str(form.get("host_id", "")).strip()
+    server_name = str(form.get("homepage_server", "")).strip()
+    remove_custom = str(form.get("remove_custom", "")) == "1"
+    remove_yaml = str(form.get("remove_yaml", "")) == "1"
+    clear_refs = str(form.get("clear_refs", "")) == "1"
+    confirm_text = str(form.get("confirm_text", "")).strip()
+    try:
+        host = docker_discovery_host(host_id)
+        if not host or not host.get("manageable"):
+            raise ConfigError("Docker 主机不存在或已发生变化，请刷新后重试。")
+        current_server = str(host.get("homepage_server") or "").strip()
+        if current_server != server_name:
+            raise ConfigError("Docker Server 映射已经发生变化，请刷新后重试。")
+        has_custom = bool(host.get("has_custom") or host.get("source") == "custom")
+        has_yaml = server_name in homepage_docker_servers()
+        if not remove_custom and not remove_yaml:
+            raise ConfigError("至少选择一项删除操作。")
+        if remove_custom and not has_custom:
+            raise ConfigError("该主机当前没有 Admin 自定义发现连接。")
+        if remove_yaml and not has_yaml:
+            raise ConfigError("该主机当前没有 docker.yaml Server。")
+        refs = docker_server_references(server_name)
+        if remove_yaml and refs and confirm_text != "DELETE":
+            raise ConfigError(f"docker.yaml Server 当前被 {len(refs)} 个服务引用。请输入 DELETE 确认删除。")
+        if clear_refs and not remove_yaml:
+            raise ConfigError("只有删除 docker.yaml Server 时才能同时清除服务引用。")
+
+        cleared = 0
+        if remove_yaml and clear_refs:
+            services = store.load("services.yaml")
+            cleared = _clear_docker_server_references(services, server_name)
+            if cleared:
+                store.write_data("services.yaml", services, actor(request), f"clear docker server references {server_name}")
+
+        if remove_yaml:
+            docker_data = store.load("docker.yaml")
+            if server_name not in docker_data:
+                raise ConfigError("docker.yaml Server 已不存在，请刷新页面。")
+            del docker_data[server_name]
+            store.write_data("docker.yaml", docker_data, actor(request), f"delete docker server {server_name}")
+
+        if remove_custom:
+            store.delete_docker_discovery_host(host_id, actor(request))
+
+        parts: list[str] = []
+        if remove_custom:
+            parts.append("Admin 发现连接")
+        if remove_yaml:
+            parts.append(f"docker.yaml Server“{server_name}”")
+        if cleared:
+            parts.append(f"{cleared} 个服务的 Docker 关联")
+        return redirect("/docker/hosts", ok="已删除 " + "、".join(parts) + "。")
+    except ConfigError as exc:
+        return redirect(f"/docker/hosts/delete/{quote(host_id)}", error=str(exc))
 
 
 @app.post("/docker/hosts/delete")

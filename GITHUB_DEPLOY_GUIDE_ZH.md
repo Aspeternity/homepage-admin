@@ -1,4 +1,4 @@
-# GitHub + GHCR 部署指南（v0.4.0）
+# GitHub + GHCR 部署指南（v0.4.1）
 
 当前仓库：
 
@@ -14,10 +14,10 @@ ghcr.io/aspeternity/homepage-admin:latest
 
 ## 日常升级流程
 
-1. 解压 `homepage-admin-v0.4.0-web-upload.zip`。
+1. 解压 `homepage-admin-v0.4.1-web-upload.zip`。
 2. GitHub 仓库 → **Add file** → **Upload files**。
 3. 把解压后的文件内容拖进去覆盖。
-4. Commit message：`Release v0.4.0`。
+4. Commit message：`Release v0.4.1`。
 5. 打开 **Actions**。
 6. 等待 `Test and publish Docker image` 全部绿色。
 7. GHCR 的 `latest` 会自动更新。
@@ -35,15 +35,15 @@ ghcr.io/aspeternity/homepage-admin:latest
 - 推送 `latest`
 - 创建 Git Tag 时额外推送语义版本标签
 
-例如创建 Tag `v0.4.0` 会得到：
+例如创建 Tag `v0.4.1` 会得到：
 
 ```text
-ghcr.io/aspeternity/homepage-admin:0.4.0
+ghcr.io/aspeternity/homepage-admin:0.4.1
 ghcr.io/aspeternity/homepage-admin:0.4
 ghcr.io/aspeternity/homepage-admin:latest
 ```
 
-## v0.4.0 特别注意
+## v0.4.1 特别注意
 
 升级本身无需修改现有 Homepage Stack、`homepage-tools`、主 Docker VM 的 `homepage-docker-proxy`、PGID 或 MySQL。只有在新增 Game-Server VM 等额外 Docker 主机时，才需要为目标 VM 提供只读 Docker API，并可由 Admin 创建对应的 `docker.yaml` Server。
 

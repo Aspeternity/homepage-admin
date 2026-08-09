@@ -1,7 +1,19 @@
-# Homepage Admin v0.4.0
+# Homepage Admin v0.4.1
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
+
+
+## v0.4.1：Docker 主机统一 CRUD 与依赖保护
+
+- `docker.yaml` 自动发现的 Server 现在也有“编辑 / 删除”，不再只能通过高级 YAML 调整。
+- `docker.yaml` 可视化编辑支持 Remote / Socket、Host、Port、Protocol、Socket 路径，并保留未回显的 TLS、Header 与未来扩展字段。
+- Docker 主机列表显示每个 Server 被多少 Homepage 服务引用，并给出引用预览。
+- 删除改为安全向导：可分别删除 Admin 自定义发现层、`docker.yaml` Server，并可选择同时清除相关服务的 `server` / `container`。
+- 被服务引用的 `docker.yaml` Server 删除前必须输入 `DELETE`，避免误操作导致大量 Docker 状态失效。
+- 已映射到 `docker.yaml` 的 Admin 自定义连接在编辑时锁定 Homepage Server 键名，避免无意断开已有服务引用。
+
+详细说明见 `UPGRADE_V0.4.1_ZH.md`。
 
 ## v0.4.0：多 Docker 主机发现
 

@@ -1894,3 +1894,209 @@ def test_v040_docker_yaml_headers_are_not_exposed_in_host_manager() -> None:
         assert "Bearer" not in page.text
     finally:
         docker_path.write_text(original, encoding="utf-8")
+
+
+def test_v041_docker_yaml_host_has_visual_edit_and_delete_controls() -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    original = docker_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text("---\nlocal-docker:\n  host: homepage-docker-proxy\n  port: 2375\n", encoding="utf-8")
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "local-docker")
+        page = client.get("/docker/hosts")
+        assert page.status_code == 200
+        assert f'/docker/hosts?edit={host["id"]}' in page.text
+        assert f'/docker/hosts/delete/{host["id"]}' in page.text
+
+        edit = client.get(f'/docker/hosts?edit={host["id"]}')
+        assert edit.status_code == 200
+        assert "编辑 docker.yaml Server" in edit.text
+        assert 'name="server_name" value="local-docker"' in edit.text
+        assert 'name="host" value="homepage-docker-proxy"' in edit.text
+    finally:
+        docker_path.write_text(original, encoding="utf-8")
+
+
+def test_v041_visual_docker_yaml_edit_preserves_advanced_fields() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    original = docker_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text(
+            "---\nsecure:\n  host: old-host\n  port: 443\n  protocol: https\n  headers:\n    Authorization: Bearer keep-me\n  tls:\n    caFile: ca.pem\n  customFutureKey: preserved\n",
+            encoding="utf-8",
+        )
+        response = client.post(
+            "/docker/hosts/yaml-save",
+            data={
+                "csrf": csrf,
+                "server_name": "secure",
+                "mode": "remote",
+                "host": "new-host",
+                "port": "2375",
+                "protocol": "http",
+                "socket": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
+        assert data["secure"]["host"] == "new-host"
+        assert data["secure"]["port"] == 2375
+        assert data["secure"]["protocol"] == "http"
+        assert data["secure"]["headers"]["Authorization"] == "Bearer keep-me"
+        assert data["secure"]["tls"]["caFile"] == "ca.pem"
+        assert data["secure"]["customFutureKey"] == "preserved"
+    finally:
+        docker_path.write_text(original, encoding="utf-8")
+
+
+def test_v041_delete_wizard_lists_service_references_and_requires_delete_confirmation() -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    services_path = settings.config_dir / "services.yaml"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_services = services_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text("---\nlocal-docker:\n  host: proxy\n  port: 2375\n", encoding="utf-8")
+        services_path.write_text(
+            "---\n- Core:\n    - Jellyfin:\n        server: local-docker\n        container: jellyfin\n    - qBittorrent:\n        server: local-docker\n        container: qbittorrent\n",
+            encoding="utf-8",
+        )
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "local-docker")
+        page = client.get(f'/docker/hosts/delete/{host["id"]}')
+        assert page.status_code == 200
+        assert "当前 Server 被 2 个服务引用" in page.text
+        assert "Jellyfin" in page.text and "qBittorrent" in page.text
+
+        rejected = client.post(
+            "/docker/hosts/delete-confirm",
+            data={
+                "csrf": csrf,
+                "host_id": host["id"],
+                "homepage_server": "local-docker",
+                "remove_yaml": "1",
+                "confirm_text": "",
+            },
+            follow_redirects=False,
+        )
+        assert rejected.status_code == 303
+        assert "local-docker" in YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        services_path.write_text(original_services, encoding="utf-8")
+
+
+def test_v041_delete_yaml_server_can_keep_or_clear_service_references() -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    services_path = settings.config_dir / "services.yaml"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_services = services_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text("---\nold-server:\n  host: proxy\n  port: 2375\n", encoding="utf-8")
+        services_path.write_text("---\n- Core:\n    - App:\n        server: old-server\n        container: app\n", encoding="utf-8")
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "old-server")
+        response = client.post(
+            "/docker/hosts/delete-confirm",
+            data={
+                "csrf": csrf,
+                "host_id": host["id"],
+                "homepage_server": "old-server",
+                "remove_yaml": "1",
+                "clear_refs": "1",
+                "confirm_text": "DELETE",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert "old-server" not in (YAML(typ="safe").load(docker_path.read_text(encoding="utf-8")) or {})
+        services = YAML(typ="safe").load(services_path.read_text(encoding="utf-8"))
+        details = services[0]["Core"][0]["App"]
+        assert "server" not in details
+        assert "container" not in details
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        services_path.write_text(original_services, encoding="utf-8")
+
+
+def test_v041_custom_delete_wizard_can_remove_only_admin_layer() -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    prefs_path = settings.data_dir / "admin-settings.json"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
+    try:
+        docker_path.write_text("---\ngame-server:\n  host: 10.10.1.13\n  port: 2375\n", encoding="utf-8")
+        store.save_docker_discovery_host(
+            {"id": "game-server", "name": "Game VM", "url": "http://10.10.1.13:2375", "homepage_server": "game-server", "public_host": "10.10.1.13"},
+            "test",
+        )
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "game-server")
+        response = client.post(
+            "/docker/hosts/delete-confirm",
+            data={
+                "csrf": csrf,
+                "host_id": host["id"],
+                "homepage_server": "game-server",
+                "remove_custom": "1",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert not store.docker_discovery_hosts()
+        assert "game-server" in YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        if original_prefs is None:
+            prefs_path.unlink(missing_ok=True)
+        else:
+            prefs_path.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v041_delete_yaml_server_can_intentionally_keep_service_references() -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    services_path = settings.config_dir / "services.yaml"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_services = services_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text("---\nold-server:\n  host: proxy\n  port: 2375\n", encoding="utf-8")
+        services_path.write_text("---\n- Core:\n    - App:\n        server: old-server\n        container: app\n", encoding="utf-8")
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "old-server")
+        response = client.post(
+            "/docker/hosts/delete-confirm",
+            data={
+                "csrf": csrf,
+                "host_id": host["id"],
+                "homepage_server": "old-server",
+                "remove_yaml": "1",
+                "confirm_text": "DELETE",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert "old-server" not in (YAML(typ="safe").load(docker_path.read_text(encoding="utf-8")) or {})
+        services = YAML(typ="safe").load(services_path.read_text(encoding="utf-8"))
+        details = services[0]["Core"][0]["App"]
+        assert details["server"] == "old-server"
+        assert details["container"] == "app"
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        services_path.write_text(original_services, encoding="utf-8")

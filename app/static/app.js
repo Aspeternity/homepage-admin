@@ -898,3 +898,78 @@
   }
 
 })();
+
+// v0.4.1 visual docker.yaml Server editor and delete wizard.
+(() => {
+  const renderResult = (target, ok, message) => {
+    if (!target) return;
+    target.hidden = false;
+    target.classList.toggle('ok', Boolean(ok));
+    target.classList.toggle('error', !ok);
+    target.textContent = message;
+  };
+  const testUrl = async (url, button, result) => {
+    const original = button?.textContent || '';
+    if (button) { button.disabled = true; button.textContent = '测试中…'; }
+    renderResult(result, true, '正在连接 Docker API…');
+    try {
+      const body = new URLSearchParams({
+        csrf: document.body.dataset.csrf || '',
+        url,
+        homepage_server: 'test-server',
+        public_host: '',
+      });
+      const response = await fetch('/api/docker/hosts/test', {method: 'POST', body});
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.message || '连接测试失败');
+      renderResult(result, true, payload.message);
+    } catch (error) {
+      renderResult(result, false, error.message || String(error));
+    } finally {
+      if (button) { button.disabled = false; button.textContent = original; }
+    }
+  };
+
+  const form = document.querySelector('[data-docker-yaml-host-form]');
+  if (form) {
+    const mode = form.querySelector('[data-docker-yaml-mode]');
+    const remotes = [...form.querySelectorAll('[data-docker-yaml-remote]')];
+    const sockets = [...form.querySelectorAll('[data-docker-yaml-socket]')];
+    const syncMode = () => {
+      const socketMode = mode?.value === 'socket';
+      remotes.forEach((el) => { el.hidden = socketMode; });
+      sockets.forEach((el) => { el.hidden = !socketMode; });
+    };
+    mode?.addEventListener('change', syncMode);
+    syncMode();
+
+    const testButton = form.querySelector('[data-docker-yaml-form-test]');
+    const result = form.querySelector('[data-docker-yaml-form-result]');
+    testButton?.addEventListener('click', async () => {
+      if (mode?.value === 'socket') {
+        renderResult(result, false, 'Socket 模式不能由 Homepage Admin 直接测试；建议使用只读 Docker Socket Proxy。');
+        return;
+      }
+      const host = form.querySelector('[data-docker-yaml-host]')?.value.trim() || '';
+      const port = form.querySelector('[data-docker-yaml-port]')?.value.trim() || '';
+      const protocol = form.querySelector('[data-docker-yaml-protocol]')?.value || 'http';
+      if (!host || !port) {
+        renderResult(result, false, '请先填写 Host 与 Port。');
+        return;
+      }
+      const displayHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+      await testUrl(`${protocol}://${displayHost}:${port}`, testButton, result);
+    });
+  }
+
+  const removeYaml = document.querySelector('[data-remove-docker-yaml]');
+  const clearRefs = document.querySelector('[data-clear-docker-refs]');
+  if (removeYaml && clearRefs) {
+    const sync = () => {
+      clearRefs.disabled = !removeYaml.checked;
+      if (!removeYaml.checked) clearRefs.checked = false;
+    };
+    removeYaml.addEventListener('change', sync);
+    sync();
+  }
+})();

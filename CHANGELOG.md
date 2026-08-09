@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.1 - 2026-08-10
+
+- Docker 主机管理统一 CRUD：`docker.yaml` 原生 Server 也可可视化编辑与进入删除向导。
+- 可视化编辑基础连接字段并原样保留 TLS、Header 与未知扩展键，敏感 Header 不回显浏览器。
+- 主机卡片显示 Server 的服务引用数量与预览。
+- 新增安全删除向导，可独立删除 Admin 自定义发现连接、`docker.yaml` Server，并可选择清除引用服务的 Docker 关联。
+- 删除被引用的 `docker.yaml` Server 必须输入 `DELETE`；仅删除 Admin 自定义层不要求确认词。
+- 已映射 `docker.yaml` 的自定义主机编辑时锁定 Homepage Server 名称，降低误断引用风险。
+
 ## v0.4.0 - 2026-08-10
 
 - Docker 发现升级为多主机：支持全部主机/单主机切换，并自动读取 `docker.yaml` 中多个远程 Server。

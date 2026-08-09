@@ -736,3 +736,31 @@ html[data-theme="light"] .back-to-top { background: rgba(255,255,255,.92); }
 .docker-host-migration-alert { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
 .docker-host-migration-alert form { flex: 0 0 auto; }
 @media (max-width: 700px) { .docker-host-migration-alert { align-items: stretch; flex-direction: column; } }
+
+/* v0.4.1 unified Docker host CRUD */
+.docker-host-form-grid > label > select { height: 42px; }
+.docker-reference-preview { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.docker-reference-preview span { padding: 4px 7px; border-radius: 999px; background: rgba(99, 102, 241, .07); color: var(--muted); font-size: 9px; }
+.reference-pill { border-color: rgba(245, 158, 11, .28); background: rgba(245, 158, 11, .08); }
+.compact-alert { margin-top: 12px; }
+.docker-delete-card { max-width: 920px; }
+.docker-delete-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.docker-delete-summary > div { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: rgba(148, 163, 184, .035); min-width: 0; }
+.docker-delete-summary code { overflow-wrap: anywhere; }
+.docker-reference-list { display: grid; gap: 7px; margin: 12px 0 18px; }
+.docker-reference-list > div { display: flex; justify-content: space-between; gap: 14px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px; }
+.docker-reference-list code { color: var(--muted); overflow-wrap: anywhere; text-align: right; }
+.docker-delete-options { display: grid; gap: 10px; }
+.docker-delete-options .check-line { border: 1px solid var(--border); border-radius: 12px; padding: 11px 12px; }
+.docker-delete-options .danger-check { border-color: rgba(248, 113, 113, .22); }
+.docker-delete-options .check-line span { display: grid; gap: 3px; }
+.docker-delete-options small, .docker-delete-confirm small { color: var(--muted); }
+.docker-delete-confirm { display: grid; gap: 6px; margin-top: 16px; }
+.docker-delete-confirm input { max-width: 260px; }
+.docker-delete-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 18px; }
+@media (max-width: 760px) {
+  .docker-delete-summary { grid-template-columns: 1fr; }
+  .docker-reference-list > div { flex-direction: column; }
+  .docker-reference-list code { text-align: left; }
+  .docker-delete-actions > * { flex: 1; text-align: center; }
+}

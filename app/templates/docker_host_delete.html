@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}删除 Docker 主机 · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <a class="back-link" href="/docker/hosts">← 返回 Docker 主机管理</a>
+    <h1>删除 Docker 主机</h1>
+    <p>先确认要删除哪一层配置；Admin 不会在未确认的情况下自动破坏现有服务引用。</p>
+  </div>
+</section>
+
+<section class="form-card docker-delete-card">
+  <div class="docker-delete-summary">
+    <div><span class="eyebrow">主机</span><strong>{{ host.name }}</strong></div>
+    <div><span class="eyebrow">Homepage Server</span><code>{{ host.homepage_server }}</code></div>
+    <div><span class="eyebrow">Discovery</span><code>{{ host.url or '无 Admin HTTP API' }}</code></div>
+  </div>
+
+  {% if references %}
+  <div class="alert warning">
+    <strong>当前 Server 被 {{ references|length }} 个服务引用。</strong><br>
+    删除 <code>docker.yaml</code> Server 后，如果保留这些引用，对应服务的 Docker 状态会失效。
+  </div>
+  <div class="docker-reference-list">
+    {% for ref in references %}
+    <div><span>{{ ref.group }} / <strong>{{ ref.service }}</strong></span><code>{{ ref.container or '未指定容器' }}</code></div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="alert info">当前没有服务引用 <code>{{ host.homepage_server }}</code>。</div>
+  {% endif %}
+
+  <form method="post" action="/docker/hosts/delete-confirm" class="docker-delete-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="host_id" value="{{ host.id }}">
+    <input type="hidden" name="homepage_server" value="{{ host.homepage_server }}">
+
+    <div class="docker-delete-options">
+      {% if has_custom %}
+      <label class="check-line danger-check"><input type="checkbox" name="remove_custom" value="1" {% if default_remove_custom %}checked{% endif %}><span><strong>删除 Admin 自定义发现连接</strong><small>删除 <code>/data/admin-settings.json</code> 中这台主机的 Discovery URL、显示名称和 Public Host。</small></span></label>
+      {% endif %}
+      {% if has_yaml %}
+      <label class="check-line danger-check"><input type="checkbox" name="remove_yaml" value="1" {% if default_remove_yaml %}checked{% endif %} data-remove-docker-yaml><span><strong>删除 docker.yaml Server</strong><small>删除 <code>{{ host.homepage_server }}</code> 这条 Homepage Docker Server 配置。</small></span></label>
+      {% endif %}
+      {% if references and has_yaml %}
+      <label class="check-line"><input type="checkbox" name="clear_refs" value="1" data-clear-docker-refs><span><strong>同时清除上述服务的 Docker 关联</strong><small>只删除这些服务中的 <code>server</code> 与 <code>container</code>；服务、Widget、URL 和其他配置保留。</small></span></label>
+      {% endif %}
+    </div>
+
+    {% if references and has_yaml %}
+    <label class="docker-delete-confirm">删除 docker.yaml Server 时请输入 <code>DELETE</code> 确认
+      <input name="confirm_text" autocomplete="off" placeholder="DELETE">
+      <small>仅删除 Admin 自定义发现连接时不需要输入。</small>
+    </label>
+    {% endif %}
+
+    <div class="docker-delete-actions">
+      <a class="button secondary" href="/docker/hosts">取消</a>
+      <button class="button danger" type="submit">执行所选删除操作</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

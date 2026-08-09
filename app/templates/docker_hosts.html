@@ -5,7 +5,7 @@
   <div>
     <a class="back-link" href="/docker">← 返回 Docker 发现</a>
     <h1>Docker 主机管理</h1>
-    <p>管理多个只读 Docker API 连接。<code>docker.yaml</code> 中的远程 Server 会自动出现；Admin 自定义连接保存在 <code>/data/admin-settings.json</code>。</p>
+    <p>统一管理 <code>docker.yaml</code> Server 与 Admin 只读发现连接；修改与删除前会检查现有服务引用。</p>
   </div>
   <div class="heading-actions"><a class="button secondary" href="/yaml/docker.yaml">高级编辑 docker.yaml</a></div>
 </section>
@@ -22,7 +22,7 @@
 
 <div class="docker-host-manager-grid">
   <section class="form-card docker-host-list-panel">
-    <div class="section-title-row"><div><h2>当前连接</h2><p class="section-help">同一个 Homepage Server 如果存在 Admin 自定义地址，会优先使用自定义地址进行发现。</p></div><span class="count-pill">{{ hosts|length }} 个</span></div>
+    <div class="section-title-row"><div><h2>当前连接</h2><p class="section-help">docker.yaml 原生 Server 与 Admin 自定义连接现在都可从这里管理；环境变量临时连接保持只读。</p></div><span class="count-pill">{{ hosts|length }} 个</span></div>
     {% if hosts %}
     <div class="docker-host-list">
       {% for h in hosts %}
@@ -42,7 +42,14 @@
             {% if h.yaml_mode == 'socket' %}<span class="role-pill">Socket 模式</span>{% endif %}
             {% if h.has_tls %}<span class="role-pill">TLS</span>{% endif %}
             {% if h.has_headers %}<span class="role-pill">认证 Header</span>{% endif %}
+            {% if h.reference_count %}<span class="role-pill reference-pill">被 {{ h.reference_count }} 个服务引用</span>{% else %}<span class="role-pill">暂无服务引用</span>{% endif %}
           </div>
+          {% if h.reference_preview %}
+          <div class="docker-reference-preview">
+            {% for ref in h.reference_preview %}<span>{{ ref.group }} / {{ ref.service }}{% if ref.container %} · {{ ref.container }}{% endif %}</span>{% endfor %}
+            {% if h.reference_count > h.reference_preview|length %}<span>等 {{ h.reference_count }} 个服务</span>{% endif %}
+          </div>
+          {% endif %}
         </div>
         <div class="docker-host-row-actions">
           <button type="button" class="button secondary" data-docker-host-test data-host-id="{{ h.id }}">测试连接</button>
@@ -53,12 +60,7 @@
             <button class="button primary" type="submit">同步到 docker.yaml</button>
           </form>
           {% endif %}
-          {% if h.editable %}
-          <form method="post" action="/docker/hosts/delete" data-confirm="只删除 Admin 自定义发现连接；不会删除 docker.yaml。确定吗？">
-            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="host_id" value="{{ h.id }}">
-            <button class="button danger" type="submit">删除自定义</button>
-          </form>
-          {% endif %}
+          {% if h.manageable %}<a class="button danger" href="/docker/hosts/delete/{{ h.id|urlencode }}">删除</a>{% endif %}
         </div>
         <div class="docker-host-test-result" data-host-test-result="{{ h.id }}" hidden></div>
       </article>
@@ -71,9 +73,59 @@
 
   <section class="form-card docker-host-form-panel">
     <div class="section-title-row">
-      <div><h2>{{ '编辑自定义连接' if edit_host else '添加 Docker 主机' }}</h2><p class="section-help">推荐连接 <code>docker-socket-proxy</code>，并保持 <code>POST=0</code>。</p></div>
+      <div>
+        <h2>{% if edit_kind == 'yaml' %}编辑 docker.yaml Server{% elif edit_kind == 'custom' %}编辑自定义连接{% else %}添加 Docker 主机{% endif %}</h2>
+        <p class="section-help">{% if edit_kind == 'yaml' %}只修改基础连接字段；现有 TLS、Header 与其他扩展键会原样保留。{% else %}推荐连接 <code>docker-socket-proxy</code>，并保持 <code>POST=0</code>。{% endif %}</p>
+      </div>
       {% if edit_host %}<a class="button secondary small" href="/docker/hosts">取消编辑</a>{% endif %}
     </div>
+
+    {% if edit_kind == 'yaml' %}
+    <form method="post" action="/docker/hosts/yaml-save" class="docker-host-form" data-docker-yaml-host-form>
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="server_name" value="{{ yaml_form_values.server_name }}">
+      <div class="form-grid two docker-host-form-grid">
+        <label>Homepage Docker Server
+          <input value="{{ yaml_form_values.server_name }}" readonly>
+          <small>Server 名称暂不在可视化编辑器中重命名，避免打断已有 <code>server:</code> 引用。</small>
+        </label>
+        <label>连接模式
+          <select name="mode" data-docker-yaml-mode>
+            <option value="remote" {% if yaml_form_values.mode != 'socket' %}selected{% endif %}>远程 HTTP / HTTPS</option>
+            <option value="socket" {% if yaml_form_values.mode == 'socket' %}selected{% endif %}>Unix Socket</option>
+          </select>
+          <small>远程模式适合只读 Docker Socket Proxy；Socket 模式由 Homepage 本体直接访问。</small>
+        </label>
+        <label data-docker-yaml-remote>Host
+          <input name="host" value="{{ yaml_form_values.host }}" placeholder="homepage-docker-proxy" data-docker-yaml-host>
+          <small>只填写主机名或 IP，不要包含 <code>http://</code>。</small>
+        </label>
+        <label data-docker-yaml-remote>Port
+          <input name="port" value="{{ yaml_form_values.port }}" inputmode="numeric" placeholder="2375" data-docker-yaml-port>
+          <small>Docker Socket Proxy 常用 2375；HTTPS 按你的实际监听端口填写。</small>
+        </label>
+        <label data-docker-yaml-remote>Protocol
+          <select name="protocol" data-docker-yaml-protocol>
+            <option value="http" {% if yaml_form_values.protocol != 'https' %}selected{% endif %}>http</option>
+            <option value="https" {% if yaml_form_values.protocol == 'https' %}selected{% endif %}>https</option>
+          </select>
+          <small>{% if yaml_form_values.has_tls %}当前 Server 含 TLS 配置，保存时会保留。{% else %}没有 TLS 配置时通常使用 http。{% endif %}</small>
+        </label>
+        <label data-docker-yaml-socket>Socket 路径
+          <input name="socket" value="{{ yaml_form_values.socket }}" placeholder="/var/run/docker.sock">
+          <small>例如 <code>/var/run/docker.sock</code>。Admin 不会直接通过此 Socket 做发现。</small>
+        </label>
+      </div>
+      {% if yaml_form_values.has_headers or yaml_form_values.has_tls %}
+      <div class="alert info compact-alert">当前 Server 含{% if yaml_form_values.has_tls %} TLS{% endif %}{% if yaml_form_values.has_headers %} Header{% endif %} 高级配置；这些值不会回显到表单，但保存基础字段时会完整保留。</div>
+      {% endif %}
+      <div class="docker-host-form-actions">
+        <button class="button secondary" type="button" data-docker-yaml-form-test>测试当前表单</button>
+        <button class="button primary" type="submit">保存 docker.yaml</button>
+      </div>
+      <div class="docker-host-test-result" data-docker-yaml-form-result hidden></div>
+    </form>
+    {% else %}
     <form method="post" action="/docker/hosts/save" class="docker-host-form" data-docker-host-form>
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="original_id" value="{{ edit_host.id if edit_host else '' }}">
@@ -91,9 +143,9 @@
           <small>只读 Docker HTTP API 根地址；不要带 <code>/containers/json</code> 等路径。</small>
         </label>
         <label>Homepage Docker Server
-          <input name="homepage_server" value="{{ form_values.homepage_server }}" list="docker-server-options" placeholder="game-server" required data-docker-homepage-server>
+          <input name="homepage_server" value="{{ form_values.homepage_server }}" list="docker-server-options" placeholder="game-server" required data-docker-homepage-server {% if edit_host and edit_host.yaml_configured %}readonly{% endif %}>
           <datalist id="docker-server-options">{% for server in docker_servers %}<option value="{{ server }}"></option>{% endfor %}</datalist>
-          <small>导入服务时写入 <code>server:</code> 的值，必须对应 docker.yaml 键名。</small>
+          <small>{% if edit_host and edit_host.yaml_configured %}已映射 docker.yaml；为避免打断已有引用，这里不允许改 Server 键名。{% else %}导入服务时写入 <code>server:</code> 的值，必须对应 docker.yaml 键名。{% endif %}</small>
         </label>
         <label>Public Host
           <input name="public_host" value="{{ form_values.public_host }}" placeholder="10.10.1.13" data-docker-public-host>
@@ -110,6 +162,7 @@
       </div>
       <div class="docker-host-test-result" data-docker-host-form-result hidden></div>
     </form>
+    {% endif %}
 
     <div class="alert info docker-host-security-note">
       <strong>远程 VM 安全建议</strong><br>
