@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.4 - 2026-08-10
+
+- Docker 主机“先测试连接”改为“测试连接”，并美化编辑态取消按钮。
+- 无服务引用的 Docker Server 支持安全改名；有引用时继续锁定。
+- Docker 发现页为已配置容器增加可逆的“编辑服务 / 移除配置”。
+- 移除配置仅清理 `server` / `container`，保留服务及其 Widget/URL。
+
 ## v0.4.3 - 2026-08-10
 
 - Docker 主机连接改为 Single Source of Truth：`docker.yaml` 唯一保存 Server / Host / Port / Protocol / Socket / TLS / Header。

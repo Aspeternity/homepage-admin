@@ -788,3 +788,26 @@ html[data-theme="light"] .back-to-top { background: rgba(255,255,255,.92); }
 .docker-host-override-body { padding: 0 12px 12px; }
 .docker-host-override-body > label { display: grid; gap: 6px; }
 .docker-host-override-body small { color: var(--muted); font-size: 10px; line-height: 1.5; }
+
+
+/* v0.4.4: Docker host polish, safe rename, and reversible service bindings. */
+.docker-cancel-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding-inline: 11px;
+  background: rgba(148, 163, 184, .055);
+  color: var(--muted);
+}
+.docker-cancel-edit:hover { color: var(--text); background: rgba(99, 102, 241, .08); }
+.docker-configured-actions { display: block; }
+.docker-configured-action-list { width: 100%; display: grid; gap: 8px; }
+.docker-configured-action-title { color: var(--muted); font-size: 10px; font-weight: 700; text-align: center; }
+.docker-configured-action-row { display: grid; gap: 6px; padding-top: 7px; border-top: 1px solid var(--border); }
+.docker-configured-service-name { color: var(--muted); font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
+.docker-configured-action-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; align-items: stretch; }
+.docker-configured-action-buttons form { margin: 0; display: flex; min-width: 0; }
+.docker-configured-action-buttons > .button,
+.docker-configured-action-buttons form > .button { width: 100%; min-height: 38px; height: 100%; }
+@media (max-width: 430px) { .docker-configured-action-buttons { grid-template-columns: 1fr; } }

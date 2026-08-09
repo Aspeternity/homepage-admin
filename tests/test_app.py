@@ -2490,3 +2490,184 @@ def test_v043_host_manager_explains_single_source_and_optional_override() -> Non
     assert "唯一配置源" in page.text
     assert "Admin Discovery Override（可选）" in page.text
     assert "Admin 设置中不再复制 Server、Host、Port 或协议" in page.text
+
+
+def test_v044_host_form_polish_and_unreferenced_server_is_renameable() -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    services_path = settings.config_dir / "services.yaml"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_services = services_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text("---\nold-server:\n  host: 10.10.1.12\n  port: 2375\n  protocol: http\n", encoding="utf-8")
+        services_path.write_text("---\n- Widgets:\n    - Home Assistant:\n        href: https://home.example\n", encoding="utf-8")
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "old-server")
+        page = client.get(f'/docker/hosts?edit={host["id"]}')
+        assert page.status_code == 200
+        assert "先测试连接" not in page.text
+        assert ">测试连接</button>" in page.text
+        assert "docker-cancel-edit" in page.text
+        assert "←" in page.text and "取消编辑" in page.text
+        match = re.search(r'<input name="homepage_server"[^>]+>', page.text)
+        assert match and "readonly" not in match.group(0)
+        assert "当前没有服务引用，可以直接重命名" in page.text
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        services_path.write_text(original_services, encoding="utf-8")
+
+
+def test_v044_referenced_server_name_stays_locked() -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    services_path = settings.config_dir / "services.yaml"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_services = services_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text("---\nused-server:\n  host: 10.10.1.12\n  port: 2375\n", encoding="utf-8")
+        services_path.write_text("---\n- Core:\n    - App:\n        server: used-server\n        container: app\n", encoding="utf-8")
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "used-server")
+        page = client.get(f'/docker/hosts?edit={host["id"]}')
+        match = re.search(r'<input name="homepage_server"[^>]+>', page.text)
+        assert match and "readonly" in match.group(0)
+        assert "当前被 1 个服务引用" in page.text
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        services_path.write_text(original_services, encoding="utf-8")
+
+
+def test_v044_unreferenced_server_can_be_renamed_and_metadata_moves() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    services_path = settings.config_dir / "services.yaml"
+    prefs_path = settings.data_dir / "admin-settings.json"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_services = services_path.read_text(encoding="utf-8")
+    original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
+    try:
+        docker_path.write_text(
+            "---\nold-server:\n  host: 10.10.1.12\n  port: 2375\n  protocol: http\n  customFutureKey: keep-me\n",
+            encoding="utf-8",
+        )
+        services_path.write_text("---\n- Core:\n    - App:\n        href: https://example.test\n", encoding="utf-8")
+        store.save_docker_host_metadata("old-server", {"display_name": "Old VM", "public_host": "10.10.1.12"}, "test")
+        response = client.post(
+            "/docker/hosts/save",
+            data={
+                "csrf": csrf,
+                "original_server": "old-server",
+                "name": "Game VM",
+                "homepage_server": "game-server",
+                "url": "http://10.10.1.13:2375",
+                "public_host": "10.10.1.13",
+                "discovery_override": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
+        assert "old-server" not in data
+        assert data["game-server"]["host"] == "10.10.1.13"
+        assert data["game-server"]["port"] == 2375
+        assert data["game-server"]["protocol"] == "http"
+        assert data["game-server"]["customFutureKey"] == "keep-me"
+        metadata = store.docker_host_metadata()
+        assert "old-server" not in metadata
+        assert metadata["game-server"]["display_name"] == "Game VM"
+        assert metadata["game-server"]["public_host"] == "10.10.1.13"
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        services_path.write_text(original_services, encoding="utf-8")
+        if original_prefs is None:
+            prefs_path.unlink(missing_ok=True)
+        else:
+            prefs_path.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v044_referenced_server_rename_is_rejected() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    services_path = settings.config_dir / "services.yaml"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_services = services_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text("---\nold-server:\n  host: 10.10.1.12\n  port: 2375\n", encoding="utf-8")
+        services_path.write_text("---\n- Core:\n    - App:\n        server: old-server\n        container: app\n", encoding="utf-8")
+        response = client.post(
+            "/docker/hosts/save",
+            data={
+                "csrf": csrf,
+                "original_server": "old-server",
+                "name": "New VM",
+                "homepage_server": "new-server",
+                "url": "http://10.10.1.12:2375",
+                "public_host": "10.10.1.12",
+                "discovery_override": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
+        assert "old-server" in data and "new-server" not in data
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        services_path.write_text(original_services, encoding="utf-8")
+
+
+def test_v044_docker_discovery_shows_edit_and_remove_config_and_unbind_preserves_service(monkeypatch) -> None:
+    from app import main as main_module
+    from app.docker_client import DockerDiscoveryClient
+
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    services_path = settings.config_dir / "services.yaml"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_services = services_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text("---\ngame-server:\n  host: 10.10.1.12\n  port: 2375\n", encoding="utf-8")
+        services_path.write_text(
+            "---\n- Games:\n    - Minecraft:\n        href: http://10.10.1.12:25565\n        description: MC\n        server: game-server\n        container: minecraft\n        widget:\n          type: minecraft\n          url: tcp://10.10.1.12:25565\n",
+            encoding="utf-8",
+        )
+        sample = [{"id": "game123456789", "name": "minecraft", "image": "itzg/minecraft-server:latest", "state": "running", "status": "Up", "ports": [], "labels": {}}]
+        monkeypatch.setattr(DockerDiscoveryClient, "ping", lambda self: True)
+        monkeypatch.setattr(DockerDiscoveryClient, "list_containers", lambda self: sample)
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "game-server")
+        page = client.get(f'/docker?host={host["id"]}')
+        assert page.status_code == 200
+        assert "已在 services.yaml" in page.text
+        assert "编辑服务" in page.text
+        assert "移除配置" in page.text
+        assert 'action="/docker/unbind"' in page.text
+
+        response = client.post(
+            "/docker/unbind",
+            data={
+                "csrf": csrf,
+                "host_id": host["id"],
+                "server": "game-server",
+                "container": "minecraft",
+                "group_index": "0",
+                "item_index": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(services_path.read_text(encoding="utf-8"))
+        details = data[0]["Games"][0]["Minecraft"]
+        assert "server" not in details
+        assert "container" not in details
+        assert details["href"] == "http://10.10.1.12:25565"
+        assert details["description"] == "MC"
+        assert details["widget"]["type"] == "minecraft"
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        services_path.write_text(original_services, encoding="utf-8")

@@ -276,28 +276,35 @@ def sync_layout_order(group_order: list[str], user: str) -> None:
     store.write_data("settings.yaml", settings_data, user, "layout reorder")
 
 
-def configured_docker_containers() -> dict[tuple[str, str], list[dict[str, str]]]:
-    configured: dict[tuple[str, str], list[dict[str, str]]] = {}
+def configured_docker_containers() -> dict[tuple[str, str], list[dict[str, Any]]]:
+    configured: dict[tuple[str, str], list[dict[str, Any]]] = {}
     try:
         data = store.load("services.yaml")
     except ConfigError:
         return configured
-    for group_entry in data:
+    for group_index, group_entry in enumerate(data):
         try:
             group_name, items = first_pair(group_entry)
         except ConfigError:
             continue
         if not isinstance(items, list):
             continue
-        for entry in items:
+        for item_index, entry in enumerate(items):
             try:
                 service_name, details = first_pair(entry)
             except ConfigError:
                 continue
             if isinstance(details, dict) and details.get("container"):
-                server = str(details.get("server") or "").casefold()
-                container = str(details.get("container") or "").casefold()
-                configured.setdefault((server, container), []).append({"group": group_name, "service": service_name})
+                server_raw = str(details.get("server") or "")
+                container_raw = str(details.get("container") or "")
+                configured.setdefault((server_raw.casefold(), container_raw.casefold()), []).append({
+                    "group": str(group_name),
+                    "service": str(service_name),
+                    "group_index": group_index,
+                    "item_index": item_index,
+                    "server": server_raw,
+                    "container": container_raw,
+                })
     return configured
 
 
@@ -624,11 +631,18 @@ def sync_custom_docker_host_to_homepage(host: dict[str, str], user: str) -> bool
     return True
 
 
-def upsert_homepage_docker_server_from_discovery(host: dict[str, str], user: str) -> bool:
-    """Create or update a remote docker.yaml server from the unified host form.
+def upsert_homepage_docker_server_from_discovery(
+    host: dict[str, str],
+    user: str,
+    *,
+    original_server: str = "",
+) -> tuple[bool, bool]:
+    """Create/update/rename a remote docker.yaml server from the unified host form.
 
-    Existing headers, TLS blocks and unknown future Homepage keys are preserved.
-    Returns True when the server was newly created.
+    docker.yaml remains the single source of truth. Existing headers, TLS blocks
+    and unknown future Homepage keys are preserved. A rename is allowed only
+    after the caller has verified the old Server has no service references.
+    Returns (created, renamed).
     """
     data = store.load("docker.yaml")
     if not isinstance(data, dict):
@@ -640,28 +654,47 @@ def upsert_homepage_docker_server_from_discovery(host: dict[str, str], user: str
     try:
         parsed_port = parsed.port
     except ValueError as exc:
-        raise ConfigError("Docker Discovery URL 端口无效。") from exc
+        raise ConfigError("Docker API URL 端口无效。") from exc
     port = parsed_port or (443 if parsed.scheme == "https" else 80)
+    protocol = parsed.scheme
+
+    old_name = str(original_server or "").strip()
+    renamed = bool(old_name and old_name != server_name)
+    if renamed:
+        if old_name not in data:
+            raise ConfigError(f"原 Docker Server“{old_name}”已不存在，请刷新页面后重试。")
+        collision = next((str(key) for key in data.keys() if str(key).casefold() == server_name.casefold() and str(key) != old_name), "")
+        if collision:
+            raise ConfigError(f"Docker Server“{server_name}”已存在，不能重命名为相同名称。")
+        keys = list(data.keys())
+        index = keys.index(old_name)
+        cfg = data.pop(old_name)
+        if isinstance(data, CommentedMap):
+            data.insert(index, server_name, cfg)
+        else:
+            rows = list(data.items())
+            rows.insert(index, (server_name, cfg))
+            data = CommentedMap(rows)
+
     created = server_name not in data
     if created:
         cfg = CommentedMap()
         data[server_name] = cfg
     else:
-        cfg = data.get(server_name)
+        cfg = data[server_name]
         if not isinstance(cfg, dict):
             raise ConfigError(f"docker.yaml 中的 {server_name} 不是有效映射。")
+
+    # A unified host form represents a remote HTTP(S) endpoint. Remove an old
+    # socket key when the user explicitly converts the host to remote mode.
+    cfg.pop("socket", None)
     cfg["host"] = parsed.hostname
     cfg["port"] = port
-    cfg["protocol"] = parsed.scheme
-    cfg.pop("socket", None)
-    # Preserve headers, tls and unknown future Homepage keys already in cfg.
-    store.write_data(
-        "docker.yaml",
-        data,
-        user,
-        f"{'add' if created else 'update'} docker server {server_name} from unified host manager",
-    )
-    return created
+    cfg["protocol"] = protocol
+
+    action = f"rename docker server {old_name} -> {server_name}" if renamed else (f"add docker server {server_name}" if created else f"update docker server {server_name}")
+    store.write_data("docker.yaml", data, user, action)
+    return created, renamed
 
 
 def update_homepage_docker_server(server_name: str, payload: dict[str, str], user: str) -> None:
@@ -2137,6 +2170,35 @@ def docker_page(
     )
 
 
+@app.post("/docker/unbind")
+async def docker_unbind_service(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    host_id = str(form.get("host_id", "")).strip()
+    expected_server = str(form.get("server", "")).strip()
+    expected_container = str(form.get("container", "")).strip()
+    try:
+        gi = int(str(form.get("group_index", "-1")))
+        ii = int(str(form.get("item_index", "-1")))
+        data = store.load("services.yaml")
+        _, items = first_pair(data[gi])
+        service_name, details = first_pair(items[ii])
+        if not isinstance(details, dict):
+            raise ConfigError("目标服务格式无效。")
+        current_server = str(details.get("server") or "").strip()
+        current_container = str(details.get("container") or "").strip()
+        if current_server.casefold() != expected_server.casefold() or current_container.casefold() != expected_container.casefold():
+            raise ConfigError("该服务的 Docker 配置已经发生变化，请刷新页面后再操作。")
+        details.pop("server", None)
+        details.pop("container", None)
+        store.write_data("services.yaml", data, actor(request), f"unbind service {service_name} from docker {expected_server}/{expected_container}")
+        target = f"/docker?host={quote(host_id)}" if host_id else "/docker"
+        return redirect(target, ok=f"已移除“{service_name}”的 Docker 配置；服务本身及 Widget/链接配置保持不变。")
+    except (ConfigError, IndexError, ValueError) as exc:
+        target = f"/docker?host={quote(host_id)}" if host_id else "/docker"
+        return redirect(target, error=str(exc))
+
+
 @app.get("/docker/hosts", response_class=HTMLResponse)
 def docker_hosts_page(
     request: Request,
@@ -2236,9 +2298,15 @@ async def docker_host_save(request: Request, _: None = Depends(auth_guard)) -> R
     }
     try:
         validated = store._validate_docker_discovery_host_payload(payload)
-        if original_server and original_server != validated["homepage_server"]:
-            raise ConfigError("编辑已有 Docker 主机时不能修改 Homepage Docker Server 名称；请新增主机或先处理现有服务引用。")
-        if not original_server:
+        renamed = bool(original_server and original_server != validated["homepage_server"])
+        if renamed:
+            refs = docker_server_references(original_server)
+            if refs:
+                raise ConfigError(f"Docker Server“{original_server}”当前被 {len(refs)} 个服务引用，暂不能改名。请先移除或迁移这些服务的 Docker 配置。")
+            duplicate = next((item for item in docker_discovery_hosts() if str(item.get("homepage_server") or "").casefold() == validated["homepage_server"].casefold() and str(item.get("homepage_server") or "") != original_server), None)
+            if duplicate:
+                raise ConfigError(f"Docker 主机“{validated['homepage_server']}”已存在，不能使用该名称。")
+        elif not original_server:
             duplicate = next((item for item in docker_discovery_hosts() if str(item.get("homepage_server") or "").casefold() == validated["homepage_server"].casefold()), None)
             if duplicate:
                 raise ConfigError(f"Docker 主机“{validated['homepage_server']}”已存在，请直接编辑现有主机。")
@@ -2249,17 +2317,23 @@ async def docker_host_save(request: Request, _: None = Depends(auth_guard)) -> R
             if override == validated["url"].rstrip("/"):
                 override = ""
 
-        created = upsert_homepage_docker_server_from_discovery(validated, actor(request))
-        metadata = store.save_docker_host_metadata(
-            validated["homepage_server"],
-            {
-                "display_name": validated["name"] if validated["name"] != validated["homepage_server"] else "",
-                "public_host": validated["public_host"],
-                "discovery_override": override,
-            },
-            actor(request),
-        )
-        note = "已创建 docker.yaml Server" if created else "已更新 docker.yaml Server"
+        old_metadata = store.docker_host_metadata().get(original_server, {}) if renamed else {}
+        created, did_rename = upsert_homepage_docker_server_from_discovery(validated, actor(request), original_server=original_server)
+        metadata_payload = {
+            "display_name": validated["name"] if validated["name"] != validated["homepage_server"] else "",
+            "public_host": validated["public_host"],
+            "discovery_override": override,
+        }
+        # Preserve any Admin-only metadata values that the current form does not
+        # expose, while always letting the submitted fields win.
+        if old_metadata:
+            merged_meta = dict(old_metadata)
+            merged_meta.update(metadata_payload)
+            metadata_payload = merged_meta
+        metadata = store.save_docker_host_metadata(validated["homepage_server"], metadata_payload, actor(request))
+        if did_rename and original_server != validated["homepage_server"]:
+            store.delete_docker_host_metadata(original_server, actor(request))
+        note = "已重命名并更新 docker.yaml Server" if did_rename else ("已创建 docker.yaml Server" if created else "已更新 docker.yaml Server")
         meta_note = "；Admin 仅保存显示元数据" if metadata else "；无需额外 Admin 元数据"
         return redirect("/docker/hosts", ok=f"已保存 Docker 主机“{validated['name']}”；{note}{meta_note}。")
     except ConfigError as exc:

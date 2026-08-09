@@ -122,9 +122,28 @@
       <div><strong>Homepage</strong><span>{{ '有 Labels，尚未写入 YAML' if c.homepage_labeled else '尚未添加' }}</span></div>
       {% endif %}
     </div>
-    <div class="docker-actions">
+    <div class="docker-actions{% if c.configured %} docker-configured-actions{% endif %}">
       {% if c.configured %}
-      <span class="button secondary disabled">已在 services.yaml</span>
+      <div class="docker-configured-action-list">
+        <div class="docker-configured-action-title">已在 services.yaml</div>
+        {% for match in c.configured_matches %}
+        <div class="docker-configured-action-row">
+          <span class="docker-configured-service-name">{{ match.group }} / {{ match.service }}</span>
+          <div class="docker-configured-action-buttons">
+            <a class="button secondary" href="/services/item/{{ match.group_index }}/{{ match.item_index }}/edit">编辑服务</a>
+            <form method="post" action="/docker/unbind" data-confirm="确认移除“{{ match.service }}”与容器 {{ c.name }} 的 Docker 配置？服务本身不会删除。">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="host_id" value="{{ c.discovery_host_id }}">
+              <input type="hidden" name="server" value="{{ c.homepage_server }}">
+              <input type="hidden" name="container" value="{{ c.name }}">
+              <input type="hidden" name="group_index" value="{{ match.group_index }}">
+              <input type="hidden" name="item_index" value="{{ match.item_index }}">
+              <button class="button danger-outline" type="submit">移除配置</button>
+            </form>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
       {% elif c.role == 'Docker 只读代理' %}
       <span class="button secondary disabled">系统组件</span>
       {% elif not c.yaml_configured %}

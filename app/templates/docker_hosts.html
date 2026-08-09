@@ -77,7 +77,7 @@
         <h2>{{ '编辑 Docker 主机' if edit_host else '添加 Docker 主机' }}</h2>
         <p class="section-help">推荐连接 <code>docker-socket-proxy</code> 并保持 <code>POST=0</code>。核心连接只维护在 <code>docker.yaml</code>。</p>
       </div>
-      {% if edit_host %}<a class="button secondary small" href="/docker/hosts">取消编辑</a>{% endif %}
+      {% if edit_host %}<a class="button secondary small docker-cancel-edit" href="/docker/hosts"><span aria-hidden="true">←</span> 取消编辑</a>{% endif %}
     </div>
 
     <form method="post" action="/docker/hosts/save" class="docker-host-form" data-docker-host-form>
@@ -90,8 +90,8 @@
           <small>仅保存到 Admin 元数据；不写入 <code>docker.yaml</code>。</small>
         </label>
         <label>Homepage Docker Server
-          <input name="homepage_server" value="{{ form_values.homepage_server }}" placeholder="game-server" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,119}" required data-docker-homepage-server {% if edit_host %}readonly{% endif %}>
-          <small>{% if edit_host %}服务可能引用该 Server，编辑时锁定名称避免断开关联。{% else %}这是 <code>docker.yaml</code> 键名，也是服务中的 <code>server:</code> 值。{% endif %}</small>
+          <input name="homepage_server" value="{{ form_values.homepage_server }}" placeholder="game-server" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,119}" required data-docker-homepage-server {% if edit_host and edit_host.reference_count %}readonly{% endif %}>
+          <small>{% if edit_host and edit_host.reference_count %}当前被 {{ edit_host.reference_count }} 个服务引用，为避免断开关联，Server 名称暂不可修改。{% elif edit_host %}当前没有服务引用，可以直接重命名；保存后 <code>docker.yaml</code> 键名与 Admin 元数据会一起迁移。{% else %}这是 <code>docker.yaml</code> 键名，也是服务中的 <code>server:</code> 值。{% endif %}</small>
         </label>
         <label class="span-2">Docker API URL
           <input name="url" value="{{ form_values.url }}" placeholder="http://10.10.1.13:2375" required data-docker-host-url>
@@ -121,7 +121,7 @@
       <div class="alert info compact-alert">当前 Server 含{% if edit_host.has_tls %} TLS{% endif %}{% if edit_host.has_headers %} Header{% endif %} 高级配置；这些值不会回显到表单，保存连接地址时会原样保留。</div>
       {% endif %}
       <div class="docker-host-form-actions">
-        <button class="button secondary" type="button" data-docker-host-form-test>先测试连接</button>
+        <button class="button secondary" type="button" data-docker-host-form-test>测试连接</button>
         <button class="button primary" type="submit">{{ '保存修改' if edit_host else '添加 Docker 主机' }}</button>
       </div>
       <div class="docker-host-test-result" data-docker-host-form-result hidden></div>

@@ -1,4 +1,4 @@
-# Homepage Admin v0.4.3
+# Homepage Admin v0.4.4
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
@@ -258,3 +258,10 @@ docker compose up -d --build
 pip install -r requirements-dev.txt
 python -m pytest -q
 ```
+
+## v0.4.4 优化
+
+- Docker 主机表单按钮文案统一为“测试连接”，右上角“取消编辑”改为轻量胶囊按钮。
+- Docker Server 当前没有任何服务引用时允许安全重命名；有引用时继续锁定并说明引用数量。
+- 重命名会同步迁移 `docker.yaml` 键名与 Admin-only 元数据，连接配置仍只有 `docker.yaml` 一份。
+- Docker 发现页对已加入 Homepage 的容器提供“编辑服务 / 移除配置”；移除仅删除服务的 `server` / `container`，不会删除服务、Widget 或链接。
