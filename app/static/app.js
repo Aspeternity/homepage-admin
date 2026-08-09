@@ -899,7 +899,7 @@
 
 })();
 
-// v0.4.1 visual docker.yaml Server editor and delete wizard.
+// v0.4.2 compatibility helpers for Docker host editor and delete wizard.
 (() => {
   const renderResult = (target, ok, message) => {
     if (!target) return;

@@ -21,7 +21,7 @@
 <section class="form-card docker-host-selector-card">
   <div class="docker-host-selector-copy">
     <h2>Docker 主机 / 连接</h2>
-    <p class="section-help"><code>docker.yaml</code> 中的远程 Server 会自动加入发现列表；也可以在“Docker 主机管理”中添加 Admin 专用的只读代理地址。</p>
+    <p class="section-help">选择一台主机或聚合查看全部容器；新增、编辑和删除连接统一在“Docker 主机管理”中完成。</p>
   </div>
   <form method="get" class="docker-host-filter-form">
     <select name="host" aria-label="Docker 主机" data-docker-host-filter>
@@ -35,32 +35,18 @@
   </form>
 </section>
 
-{% if host_statuses %}
-<div class="docker-host-status-grid">
-  {% for h in host_statuses %}
-  <section class="form-card docker-host-status-card {% if h.healthy %}healthy{% else %}unhealthy{% endif %}">
-    <div class="section-title-row">
-      <div>
-        <div class="docker-host-title-line"><h3>{{ h.name }}</h3><span class="source-pill">{{ h.source_label }}</span></div>
-        <p class="section-help">Homepage Server：<code>{{ h.homepage_server }}</code></p>
-      </div>
-      <span class="status-pill {{ 'ok' if h.healthy else '' }}">{{ '可达' if h.healthy else '不可达' }}</span>
-    </div>
-    <div class="docker-host-status-facts">
-      <div><span>Discovery</span><code>{{ h.url or '无 Admin HTTP API' }}</code></div>
-      <div><span>容器</span><strong>{{ h.container_count }}</strong></div>
-      <div><span>Homepage</span><strong>{{ '已配置' if h.yaml_configured else '未配置 docker.yaml' }}</strong></div>
-    </div>
-    {% if h.error %}<div class="alert warning compact-alert">{{ h.error }}</div>{% endif %}
-    {% if not h.yaml_configured %}<div class="alert warning compact-alert">此连接尚未映射到 <code>docker.yaml</code>，导入按钮会暂时禁用。可在“Docker 主机管理”中同步。</div>{% endif %}
-  </section>
+{% if host_errors %}
+<div class="docker-host-error-list">
+  {% for h in host_errors %}
+  <div class="alert warning compact-alert"><strong>{{ h.name }}</strong>：{{ h.error or 'Docker API 不可达' }}</div>
   {% endfor %}
 </div>
 {% endif %}
+
 {% else %}
 <section class="form-card">
   <div class="section-title-row">
-    <div><h2>还没有 Docker 发现连接</h2><p class="section-help">可以从现有 <code>docker.yaml</code> 自动发现，也可以添加远程 VM 的只读 Docker Proxy。</p></div>
+    <div><h2>还没有 Docker 发现连接</h2><p class="section-help">请先在 Docker 主机管理中添加一台只读 Docker Proxy。</p></div>
     <a class="button primary" href="/docker/hosts">添加 Docker 主机</a>
   </div>
   <form method="post" action="/docker/setup-homepage">

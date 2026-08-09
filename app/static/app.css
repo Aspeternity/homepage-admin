@@ -737,7 +737,7 @@ html[data-theme="light"] .back-to-top { background: rgba(255,255,255,.92); }
 .docker-host-migration-alert form { flex: 0 0 auto; }
 @media (max-width: 700px) { .docker-host-migration-alert { align-items: stretch; flex-direction: column; } }
 
-/* v0.4.1 unified Docker host CRUD */
+/* v0.4.2 unified Docker host CRUD */
 .docker-host-form-grid > label > select { height: 42px; }
 .docker-reference-preview { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .docker-reference-preview span { padding: 4px 7px; border-radius: 999px; background: rgba(99, 102, 241, .07); color: var(--muted); font-size: 9px; }
@@ -764,3 +764,19 @@ html[data-theme="light"] .back-to-top { background: rgba(255,255,255,.92); }
   .docker-reference-list code { text-align: left; }
   .docker-delete-actions > * { flex: 1; text-align: center; }
 }
+
+
+/* v0.4.2: unified Docker host manager. */
+.docker-host-sync-summary {
+  min-height: 42px;
+  align-self: start;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(99, 102, 241, .045);
+}
+.docker-host-sync-summary strong { font-size: 11px; }
+.docker-host-sync-summary span { color: var(--muted); font-size: 10px; line-height: 1.4; }

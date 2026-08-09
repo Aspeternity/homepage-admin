@@ -1,8 +1,16 @@
-# Homepage Admin v0.4.1
+# Homepage Admin v0.4.2
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
 
+
+## v0.4.2 Docker 主机管理统一化
+
+- Docker 发现主页移除重复的主机状态卡，只保留主机选择、容器筛选和必要的连接错误提示。
+- `docker.yaml` 已有 Server 与后来添加的远程主机统一使用同一个“编辑 Docker 主机”表单。
+- 新增 Docker 主机时固定同时保存 Admin 发现信息并创建/更新同名 `docker.yaml` Server，不再区分“原生 Server / Admin 自定义”的配置流程。
+- 编辑已有主机时保留 TLS、Header 和未知扩展字段；Homepage Server 名称继续锁定，避免打断已有服务引用。
+- 删除页默认完整删除该主机的管理信息与 `docker.yaml` Server，并继续提供服务引用保护。
 
 ## v0.4.1：Docker 主机统一 CRUD 与依赖保护
 

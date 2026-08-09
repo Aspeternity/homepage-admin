@@ -1867,7 +1867,7 @@ def test_v040_custom_docker_host_can_save_test_and_sync_to_docker_yaml(monkeypat
         assert docker_data["game-server"]["port"] == 2375
         manager = client.get("/docker/hosts")
         assert "Game-Server VM" in manager.text
-        assert "docker.yaml 已配置" in manager.text
+        assert "Homepage 已配置" in manager.text
     finally:
         docker_path.write_text(original_docker, encoding="utf-8")
         if original_prefs is None:
@@ -1913,9 +1913,11 @@ def test_v041_docker_yaml_host_has_visual_edit_and_delete_controls() -> None:
 
         edit = client.get(f'/docker/hosts?edit={host["id"]}')
         assert edit.status_code == 200
-        assert "编辑 docker.yaml Server" in edit.text
-        assert 'name="server_name" value="local-docker"' in edit.text
-        assert 'name="host" value="homepage-docker-proxy"' in edit.text
+        assert "编辑 Docker 主机" in edit.text
+        assert 'name="homepage_server" value="local-docker"' in edit.text
+        assert 'name="url" value="http://homepage-docker-proxy:2375"' in edit.text
+        assert "编辑 docker.yaml Server" not in edit.text
+        assert "编辑自定义连接" not in edit.text
     finally:
         docker_path.write_text(original, encoding="utf-8")
 
@@ -2100,3 +2102,176 @@ def test_v041_delete_yaml_server_can_intentionally_keep_service_references() -> 
     finally:
         docker_path.write_text(original_docker, encoding="utf-8")
         services_path.write_text(original_services, encoding="utf-8")
+
+
+def test_v042_docker_discovery_page_removes_redundant_host_status_cards(monkeypatch) -> None:
+    from app import main as main_module
+    from app.docker_client import DockerDiscoveryClient
+
+    client = TestClient(app)
+    login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    original = docker_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text("---\nlocal-docker:\n  host: homepage-docker-proxy\n  port: 2375\n", encoding="utf-8")
+        monkeypatch.setattr(DockerDiscoveryClient, "ping", lambda self: True)
+        monkeypatch.setattr(DockerDiscoveryClient, "list_containers", lambda self: [])
+        page = client.get("/docker")
+        assert page.status_code == 200
+        assert "Docker 主机 / 连接" in page.text
+        assert "docker-host-status-grid" not in page.text
+        assert "Homepage Server：" not in page.text
+    finally:
+        docker_path.write_text(original, encoding="utf-8")
+
+
+def test_v042_yaml_and_custom_hosts_use_same_edit_form() -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    prefs_path = settings.data_dir / "admin-settings.json"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
+    try:
+        docker_path.write_text(
+            "---\nlocal-docker:\n  host: homepage-docker-proxy\n  port: 2375\ngame-server:\n  host: 10.10.1.12\n  port: 2375\n",
+            encoding="utf-8",
+        )
+        store.save_docker_discovery_host(
+            {"id": "game-server", "name": "Game-Server VM", "url": "http://10.10.1.12:2375", "homepage_server": "game-server", "public_host": "10.10.1.12"},
+            "test",
+        )
+        hosts = main_module.docker_discovery_hosts()
+        local = next(item for item in hosts if item["homepage_server"] == "local-docker")
+        game = next(item for item in hosts if item["homepage_server"] == "game-server")
+        local_page = client.get(f'/docker/hosts?edit={local["id"]}')
+        game_page = client.get(f'/docker/hosts?edit={game["id"]}')
+        for page in (local_page, game_page):
+            assert page.status_code == 200
+            assert "编辑 Docker 主机" in page.text
+            assert 'action="/docker/hosts/save"' in page.text
+            assert "编辑 docker.yaml Server" not in page.text
+            assert "编辑自定义连接" not in page.text
+        assert 'value="local-docker"' in local_page.text
+        assert 'value="Game-Server VM"' in game_page.text
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        if original_prefs is None:
+            prefs_path.unlink(missing_ok=True)
+        else:
+            prefs_path.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v042_add_host_always_creates_homepage_server_without_checkbox() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    prefs_path = settings.data_dir / "admin-settings.json"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
+    try:
+        docker_path.write_text("---\n", encoding="utf-8")
+        page = client.get("/docker/hosts")
+        assert page.status_code == 200
+        assert 'name="sync_homepage"' not in page.text
+        assert "若 docker.yaml 没有同名 Server，则同时创建" not in page.text
+        assert "同时保存发现设置，并创建或更新同名" in page.text
+
+        response = client.post(
+            "/docker/hosts/save",
+            data={
+                "csrf": csrf,
+                "name": "Game-Server VM",
+                "url": "http://10.10.1.12:2375",
+                "homepage_server": "game-server",
+                "public_host": "10.10.1.12",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        docker_data = YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
+        assert docker_data["game-server"]["host"] == "10.10.1.12"
+        assert docker_data["game-server"]["port"] == 2375
+        assert docker_data["game-server"]["protocol"] == "http"
+        saved = store.docker_discovery_hosts()
+        assert any(item["homepage_server"] == "game-server" and item["name"] == "Game-Server VM" for item in saved)
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        if original_prefs is None:
+            prefs_path.unlink(missing_ok=True)
+        else:
+            prefs_path.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v042_edit_yaml_only_host_adopts_unified_metadata_and_preserves_advanced_fields() -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    csrf = login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    prefs_path = settings.data_dir / "admin-settings.json"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
+    try:
+        docker_path.write_text(
+            "---\nlocal-docker:\n  host: homepage-docker-proxy\n  port: 2375\n  headers:\n    X-Test: keep-secret\n  customFutureKey: keep-me\n",
+            encoding="utf-8",
+        )
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "local-docker")
+        response = client.post(
+            "/docker/hosts/save",
+            data={
+                "csrf": csrf,
+                "original_id": "",
+                "original_server": "local-docker",
+                "name": "Docker VM",
+                "url": "http://homepage-docker-proxy:2375",
+                "homepage_server": "local-docker",
+                "public_host": "10.10.1.11",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        docker_data = YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
+        assert docker_data["local-docker"]["headers"]["X-Test"] == "keep-secret"
+        assert docker_data["local-docker"]["customFutureKey"] == "keep-me"
+        metadata = next(item for item in store.docker_discovery_hosts() if item["homepage_server"] == "local-docker")
+        assert metadata["name"] == "Docker VM"
+        assert metadata["public_host"] == "10.10.1.11"
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        if original_prefs is None:
+            prefs_path.unlink(missing_ok=True)
+        else:
+            prefs_path.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v042_unified_metadata_keeps_yaml_headers_for_discovery_client() -> None:
+    from app import main as main_module
+
+    docker_path = settings.config_dir / "docker.yaml"
+    prefs_path = settings.data_dir / "admin-settings.json"
+    original_docker = docker_path.read_text(encoding="utf-8")
+    original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
+    try:
+        docker_path.write_text(
+            "---\nsecure:\n  host: docker.example.internal\n  port: 443\n  protocol: https\n  headers:\n    Authorization: Bearer keep-secret\n",
+            encoding="utf-8",
+        )
+        store.save_docker_discovery_host(
+            {"id": "secure", "name": "Secure Docker", "url": "https://docker.example.internal:443", "homepage_server": "secure", "public_host": "docker.example.internal"},
+            "test",
+        )
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "secure")
+        assert host["client"].headers == {"Authorization": "Bearer keep-secret"}
+        safe = main_module._docker_host_safe(host)
+        assert "client" not in safe
+        assert "keep-secret" not in repr(safe)
+    finally:
+        docker_path.write_text(original_docker, encoding="utf-8")
+        if original_prefs is None:
+            prefs_path.unlink(missing_ok=True)
+        else:
+            prefs_path.write_text(original_prefs, encoding="utf-8")

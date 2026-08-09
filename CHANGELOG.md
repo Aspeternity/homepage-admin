@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.2 - 2026-08-10
+
+- Docker 发现主页移除重复的 Docker 主机状态卡。
+- Docker 主机管理统一新增/编辑流程，不再按 docker.yaml 原生 Server 与 Admin 自定义连接使用两套表单。
+- 添加主机时始终同步创建或更新 docker.yaml Server，移除“若 docker.yaml 没有同名 Server，则同时创建”复选框。
+- 统一表单保存时保留现有 TLS、Header 与未知 docker.yaml 扩展键。
+- 删除向导默认完整移除发现设置与 docker.yaml Server，并保留服务引用保护。
+
 ## v0.4.1 - 2026-08-10
 
 - Docker 主机管理统一 CRUD：`docker.yaml` 原生 Server 也可可视化编辑与进入删除向导。

@@ -5,7 +5,7 @@
   <div>
     <a class="back-link" href="/docker/hosts">← 返回 Docker 主机管理</a>
     <h1>删除 Docker 主机</h1>
-    <p>先确认要删除哪一层配置；Admin 不会在未确认的情况下自动破坏现有服务引用。</p>
+    <p>删除前会检查 Homepage 服务引用；正常情况下同时移除发现设置与 docker.yaml Server。</p>
   </div>
 </section>
 
@@ -37,10 +37,10 @@
 
     <div class="docker-delete-options">
       {% if has_custom %}
-      <label class="check-line danger-check"><input type="checkbox" name="remove_custom" value="1" {% if default_remove_custom %}checked{% endif %}><span><strong>删除 Admin 自定义发现连接</strong><small>删除 <code>/data/admin-settings.json</code> 中这台主机的 Discovery URL、显示名称和 Public Host。</small></span></label>
+      <label class="check-line danger-check"><input type="checkbox" name="remove_custom" value="1" {% if default_remove_custom %}checked{% endif %}><span><strong>删除 Docker 发现设置</strong><small>移除这台主机在 Homepage Admin 中保存的 Discovery URL、显示名称和 Public Host。</small></span></label>
       {% endif %}
       {% if has_yaml %}
-      <label class="check-line danger-check"><input type="checkbox" name="remove_yaml" value="1" {% if default_remove_yaml %}checked{% endif %} data-remove-docker-yaml><span><strong>删除 docker.yaml Server</strong><small>删除 <code>{{ host.homepage_server }}</code> 这条 Homepage Docker Server 配置。</small></span></label>
+      <label class="check-line danger-check"><input type="checkbox" name="remove_yaml" value="1" {% if default_remove_yaml %}checked{% endif %} data-remove-docker-yaml><span><strong>删除 Homepage Docker Server</strong><small>同时删除 <code>docker.yaml</code> 中的 <code>{{ host.homepage_server }}</code> 配置。</small></span></label>
       {% endif %}
       {% if references and has_yaml %}
       <label class="check-line"><input type="checkbox" name="clear_refs" value="1" data-clear-docker-refs><span><strong>同时清除上述服务的 Docker 关联</strong><small>只删除这些服务中的 <code>server</code> 与 <code>container</code>；服务、Widget、URL 和其他配置保留。</small></span></label>
@@ -50,7 +50,7 @@
     {% if references and has_yaml %}
     <label class="docker-delete-confirm">删除 docker.yaml Server 时请输入 <code>DELETE</code> 确认
       <input name="confirm_text" autocomplete="off" placeholder="DELETE">
-      <small>仅删除 Admin 自定义发现连接时不需要输入。</small>
+      <small>仅删除发现设置、不删除 Homepage Docker Server 时不需要输入。</small>
     </label>
     {% endif %}
 

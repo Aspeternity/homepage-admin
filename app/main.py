@@ -439,10 +439,10 @@ def _docker_host_id(prefix: str, value: str) -> str:
     return f"{prefix}-{slug}-{digest}"
 
 
-def _docker_client_from_yaml(server: dict[str, Any]) -> DockerDiscoveryClient | None:
-    if server.get("mode") != "remote" or not server.get("url"):
+def _docker_client_from_url_and_yaml(url: str, server: dict[str, Any] | None = None) -> DockerDiscoveryClient | None:
+    if not url:
         return None
-    raw = server.get("raw") if isinstance(server.get("raw"), dict) else {}
+    raw = server.get("raw") if isinstance(server, dict) and isinstance(server.get("raw"), dict) else {}
     headers = raw.get("headers") if isinstance(raw.get("headers"), dict) else {}
     safe_headers = {str(k): str(v) for k, v in headers.items()}
     verify: bool | str = True
@@ -456,7 +456,13 @@ def _docker_client_from_yaml(server: dict[str, Any]) -> DockerDiscoveryClient | 
             verify = str((settings.config_dir / ca).resolve())
         if cert_file and key_file:
             cert = (str((settings.config_dir / cert_file).resolve()), str((settings.config_dir / key_file).resolve()))
-    return DockerDiscoveryClient(str(server.get("url")), headers=safe_headers, verify=verify, cert=cert)
+    return DockerDiscoveryClient(str(url), headers=safe_headers, verify=verify, cert=cert)
+
+
+def _docker_client_from_yaml(server: dict[str, Any]) -> DockerDiscoveryClient | None:
+    if server.get("mode") != "remote" or not server.get("url"):
+        return None
+    return _docker_client_from_url_and_yaml(str(server.get("url")), server)
 
 
 def docker_discovery_hosts() -> list[dict[str, Any]]:
@@ -484,10 +490,11 @@ def docker_discovery_hosts() -> list[dict[str, Any]]:
                 "manageable": True,
                 "edit_kind": "custom",
                 "has_custom": True,
+                "custom_id": custom["id"],
                 "has_yaml": True,
                 "yaml_configured": True,
                 "yaml_mode": server.get("mode"),
-                "client": DockerDiscoveryClient(custom["url"]),
+                "client": _docker_client_from_url_and_yaml(custom["url"], server),
             }
         else:
             url = str(server.get("url") or "")
@@ -504,6 +511,7 @@ def docker_discovery_hosts() -> list[dict[str, Any]]:
                 "manageable": True,
                 "edit_kind": "yaml",
                 "has_custom": False,
+                "custom_id": "",
                 "has_yaml": True,
                 "yaml_configured": True,
                 "yaml_mode": server.get("mode"),
@@ -524,6 +532,7 @@ def docker_discovery_hosts() -> list[dict[str, Any]]:
             "manageable": True,
             "edit_kind": "custom",
             "has_custom": True,
+            "custom_id": custom["id"],
             "has_yaml": False,
             "yaml_configured": False,
             "yaml_mode": "none",
@@ -558,6 +567,7 @@ def docker_discovery_hosts() -> list[dict[str, Any]]:
                     "manageable": False,
                     "edit_kind": "",
                     "has_custom": False,
+                    "custom_id": "",
                     "has_yaml": server_name in servers,
                     "yaml_configured": server_name in servers,
                     "yaml_mode": servers.get(server_name, {}).get("mode", "none"),
@@ -616,6 +626,46 @@ def sync_custom_docker_host_to_homepage(host: dict[str, str], user: str) -> bool
     data[server_name] = cfg
     store.write_data("docker.yaml", data, user, f"add docker server {server_name} from discovery host")
     return True
+
+
+def upsert_homepage_docker_server_from_discovery(host: dict[str, str], user: str) -> bool:
+    """Create or update a remote docker.yaml server from the unified host form.
+
+    Existing headers, TLS blocks and unknown future Homepage keys are preserved.
+    Returns True when the server was newly created.
+    """
+    data = store.load("docker.yaml")
+    if not isinstance(data, dict):
+        raise ConfigError("docker.yaml 必须是对象映射。")
+    server_name = str(host.get("homepage_server") or "").strip()
+    parsed = urlparse(str(host.get("url") or "").strip())
+    if not server_name or not parsed.hostname or parsed.scheme not in {"http", "https"}:
+        raise ConfigError("Docker 主机配置不完整。")
+    try:
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise ConfigError("Docker Discovery URL 端口无效。") from exc
+    port = parsed_port or (443 if parsed.scheme == "https" else 80)
+    created = server_name not in data
+    if created:
+        cfg = CommentedMap()
+        data[server_name] = cfg
+    else:
+        cfg = data.get(server_name)
+        if not isinstance(cfg, dict):
+            raise ConfigError(f"docker.yaml 中的 {server_name} 不是有效映射。")
+    cfg["host"] = parsed.hostname
+    cfg["port"] = port
+    cfg["protocol"] = parsed.scheme
+    cfg.pop("socket", None)
+    # Preserve headers, tls and unknown future Homepage keys already in cfg.
+    store.write_data(
+        "docker.yaml",
+        data,
+        user,
+        f"{'add' if created else 'update'} docker server {server_name} from unified host manager",
+    )
+    return created
 
 
 def update_homepage_docker_server(server_name: str, payload: dict[str, str], user: str) -> None:
@@ -2041,13 +2091,14 @@ def docker_page(
                     snapshots[host_id] = ({**_docker_host_safe(base), "healthy": False, "error": str(exc), "container_count": 0}, [])
 
     visible: list[dict[str, Any]] = []
-    status_rows: list[dict[str, Any]] = []
+    host_errors: list[dict[str, Any]] = []
     hidden_internal_count = 0
     internal_names = {"homepage-docker-proxy", "homepage-admin-docker-proxy", "docker-proxy"}
     for selected in selected_hosts:
         host_id = str(selected.get("id"))
         status, containers = snapshots.get(host_id, (_docker_host_safe(selected), []))
-        status_rows.append(status)
+        if not status.get("healthy"):
+            host_errors.append(status)
         server_name = str(selected.get("homepage_server") or "")
         for raw in containers:
             item = dict(raw)
@@ -2081,7 +2132,7 @@ def docker_page(
             ok=request.query_params.get("ok"),
             docker_hosts=[_docker_host_safe(item) for item in all_hosts],
             selected_host=host,
-            host_statuses=status_rows,
+            host_errors=host_errors,
             show_internal=show_internal,
             hidden_internal_count=hidden_internal_count,
             service_groups=groups,
@@ -2103,28 +2154,21 @@ def docker_hosts_page(
         item["reference_preview"] = refs[:4]
     editable = next((item for item in hosts if str(item.get("id")) == str(edit or "") and item.get("editable")), None)
     form_values = {
-        "id": "",
+        "original_id": "",
+        "original_server": "",
         "name": "",
         "url": "",
         "homepage_server": "",
         "public_host": "",
     }
-    yaml_form_values = {"server_name": "", "mode": "remote", "host": "", "port": "2375", "protocol": "http", "socket": ""}
-    edit_kind = str(editable.get("edit_kind") or "") if editable else ""
-    if editable and edit_kind == "custom":
-        form_values.update({key: str(editable.get(key) or "") for key in form_values})
-    elif editable and edit_kind == "yaml":
-        server_name = str(editable.get("homepage_server") or "")
-        server = homepage_docker_servers().get(server_name, {})
-        yaml_form_values.update({
-            "server_name": server_name,
-            "mode": str(server.get("mode") or "remote"),
-            "host": str(server.get("host") or ""),
-            "port": str(server.get("port") or "2375"),
-            "protocol": str(server.get("protocol") or "http"),
-            "socket": str(server.get("socket") or ""),
-            "has_headers": bool(server.get("has_headers")),
-            "has_tls": bool(server.get("has_tls")),
+    if editable:
+        form_values.update({
+            "original_id": str(editable.get("custom_id") or ""),
+            "original_server": str(editable.get("homepage_server") or ""),
+            "name": str(editable.get("name") or editable.get("homepage_server") or ""),
+            "url": str(editable.get("url") or ""),
+            "homepage_server": str(editable.get("homepage_server") or ""),
+            "public_host": str(editable.get("public_host") or ""),
         })
     return templates.TemplateResponse(
         request,
@@ -2133,12 +2177,9 @@ def docker_hosts_page(
             request,
             "docker",
             hosts=[_docker_host_safe(item) for item in hosts],
-            docker_servers=list(homepage_docker_servers().keys()),
             default_server_info=docker_server_info(),
             edit_host=_docker_host_safe(editable) if editable else None,
-            edit_kind=edit_kind,
             form_values=form_values,
-            yaml_form_values=yaml_form_values,
             error=request.query_params.get("error"),
             ok=request.query_params.get("ok"),
         ),
@@ -2182,8 +2223,9 @@ async def docker_host_save(request: Request, _: None = Depends(auth_guard)) -> R
     form = await request.form()
     verify_csrf(request, str(form.get("csrf", "")))
     original_id = str(form.get("original_id", "")).strip().lower()
+    original_server = str(form.get("original_server", "")).strip()
     homepage_server = str(form.get("homepage_server", "")).strip()
-    host_id = str(form.get("id", "")).strip().lower() or _docker_custom_host_id(homepage_server, str(form.get("name", "")))
+    host_id = _docker_custom_host_id(homepage_server, str(form.get("name", "")))
     payload = {
         "id": host_id,
         "name": str(form.get("name", "")),
@@ -2192,15 +2234,17 @@ async def docker_host_save(request: Request, _: None = Depends(auth_guard)) -> R
         "public_host": str(form.get("public_host", "")),
     }
     try:
-        saved = store.save_docker_discovery_host(payload, actor(request), original_id=original_id)
-        sync_note = ""
-        if str(form.get("sync_homepage", "")) == "1":
-            try:
-                created = sync_custom_docker_host_to_homepage(saved, actor(request))
-                sync_note = "；已创建 docker.yaml Server" if created else "；docker.yaml Server 已匹配"
-            except ConfigError as exc:
-                return redirect("/docker/hosts", error=f"Docker 主机已保存，但未同步 docker.yaml：{exc}")
-        return redirect("/docker/hosts", ok=f"已保存 Docker 主机“{saved['name']}”{sync_note}。")
+        validated = store._validate_docker_discovery_host_payload(payload)
+        if original_server and original_server != validated["homepage_server"]:
+            raise ConfigError("编辑已有 Docker 主机时不能修改 Homepage Docker Server 名称；请新增主机或先处理现有服务引用。")
+        if not original_server:
+            duplicate = next((item for item in docker_discovery_hosts() if str(item.get("homepage_server") or "").casefold() == validated["homepage_server"].casefold()), None)
+            if duplicate:
+                raise ConfigError(f"Docker 主机“{validated['homepage_server']}”已存在，请直接编辑现有主机。")
+        created = upsert_homepage_docker_server_from_discovery(validated, actor(request))
+        saved = store.save_docker_discovery_host(validated, actor(request), original_id=original_id)
+        note = "已创建 docker.yaml Server" if created else "已更新 docker.yaml Server"
+        return redirect("/docker/hosts", ok=f"已保存 Docker 主机“{saved['name']}”；{note}。")
     except ConfigError as exc:
         return redirect("/docker/hosts", error=str(exc))
 
@@ -2247,7 +2291,7 @@ def docker_host_delete_page(host_id: str, request: Request, _: None = Depends(au
             has_custom=has_custom,
             has_yaml=has_yaml,
             default_remove_custom=has_custom,
-            default_remove_yaml=has_yaml and not has_custom,
+            default_remove_yaml=has_yaml,
             error=request.query_params.get("error"),
         ),
     )
