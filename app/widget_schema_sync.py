@@ -5,7 +5,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -14,7 +14,7 @@ from ruamel.yaml import YAML
 GITHUB_REPO = "gethomepage/homepage"
 DOCS_API = "https://api.github.com/repos/gethomepage/homepage/contents/docs/widgets/services"
 REGISTRY_RAW = "https://raw.githubusercontent.com/gethomepage/homepage/{ref}/src/widgets/widgets.js"
-USER_AGENT = "Homepage-Admin-Widget-Schema-Sync/0.3.5"
+USER_AGENT = "Homepage-Admin-Widget-Schema-Sync/0.3.6"
 
 _SECRET_HINTS = (
     "password",
@@ -433,7 +433,23 @@ def _parse_registry(source: str) -> dict[str, str]:
     return aliases
 
 
-def fetch_official_widget_schemas(ref: str = "dev", timeout: float = 8.0, workers: int = 10) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+def fetch_official_widget_schemas(
+    ref: str = "dev",
+    timeout: float = 8.0,
+    workers: int = 10,
+    progress: Callable[[dict[str, Any]], None] | None = None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    def emit(stage: str, message: str, current: int = 0, total: int = 0, percent: int = 0) -> None:
+        if progress:
+            progress({
+                "stage": stage,
+                "message": message,
+                "current": int(current),
+                "total": int(total),
+                "percent": max(0, min(100, int(percent))),
+            })
+
+    emit("listing", "正在连接 GitHub 并读取 Homepage 官方 Widget 文档目录…", percent=3)
     listing = _request_json(f"{DOCS_API}?ref={ref}", timeout)
     if not isinstance(listing, list):
         raise RuntimeError("GitHub Widget 文档目录返回格式异常。")
@@ -443,6 +459,7 @@ def fetch_official_widget_schemas(ref: str = "dev", timeout: float = 8.0, worker
     ]
     if not docs:
         raise RuntimeError("没有从 Homepage 官方仓库发现 Service Widget 文档。")
+    emit("documents", f"已发现 {len(docs)} 个官方 Widget 文档，开始并行下载与解析…", 0, len(docs), 10)
 
     schemas: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
@@ -454,6 +471,7 @@ def fetch_official_widget_schemas(ref: str = "dev", timeout: float = 8.0, worker
 
     with ThreadPoolExecutor(max_workers=max(2, min(workers, 16))) as executor:
         futures = {executor.submit(load_doc, item): item for item in docs}
+        completed = 0
         for future in as_completed(futures):
             item = futures[future]
             try:
@@ -463,12 +481,24 @@ def fetch_official_widget_schemas(ref: str = "dev", timeout: float = 8.0, worker
                     schemas[type_id] = schema
             except Exception as exc:  # keep a partial sync usable
                 errors.append(f"{item.get('name')}: {exc}")
+            completed += 1
+            percent = 10 + int((completed / max(1, len(docs))) * 72)
+            emit(
+                "documents",
+                f"正在解析官方 Widget 文档：{completed}/{len(docs)}",
+                completed,
+                len(docs),
+                percent,
+            )
 
+    emit("registry", "Widget 文档解析完成，正在读取官方注册表…", len(docs), len(docs), 86)
     try:
         registry = _parse_registry(_request_text(REGISTRY_RAW.format(ref=ref), timeout))
     except Exception as exc:
         registry = {}
         errors.append(f"widgets.js: {exc}")
+
+    emit("merge", f"已读取 {len(registry)} 个注册表项，正在合并别名与动态表单…", percent=93)
 
     # Include aliases / registry-only widget IDs so the Admin follows Homepage's actual registry,
     # not only the documentation filenames.
@@ -496,6 +526,7 @@ def fetch_official_widget_schemas(ref: str = "dev", timeout: float = 8.0, worker
                 "source_mode": "official-auto",
             }
 
+    emit("finalize", f"正在整理 {len(schemas)} 个 Widget Schema…", percent=97)
     meta = {
         "source": GITHUB_REPO,
         "ref": ref,
@@ -506,4 +537,5 @@ def fetch_official_widget_schemas(ref: str = "dev", timeout: float = 8.0, worker
         "error_count": len(errors),
         "errors": errors[:20],
     }
+    emit("complete", f"官方 Schema 解析完成：{len(schemas)} 个 Widget。", len(schemas), len(schemas), 100)
     return dict(sorted(schemas.items())), meta

@@ -86,8 +86,20 @@
 <section class="form-card">
   <div class="section-title-row"><div><h2>手动操作</h2><p class="section-help">若 Homepage 刚新增 Widget，可随时立即同步，不必等待自动计划。</p></div></div>
   <div class="inline-actions">
-    <form method="post" action="/widget-schema/sync"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button primary" type="submit">立即同步官方 Schema</button></form>
+    <form method="post" action="/widget-schema/sync" data-schema-sync-form>
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="button primary" type="submit" data-schema-sync-button>立即同步官方 Schema</button>
+    </form>
     <form method="post" action="/widget-schema/reset"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="button secondary" type="submit">清除缓存并恢复内置目录</button></form>
+  </div>
+  <div class="schema-sync-progress" data-schema-sync-progress hidden aria-live="polite">
+    <div class="schema-sync-progress-head">
+      <strong data-schema-sync-stage>准备同步</strong>
+      <span data-schema-sync-percent>0%</span>
+    </div>
+    <div class="schema-sync-progress-track"><span data-schema-sync-bar style="width:0%"></span></div>
+    <p data-schema-sync-message>正在准备同步任务…</p>
+    <small data-schema-sync-counter></small>
   </div>
 </section>
 

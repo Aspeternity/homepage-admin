@@ -1336,3 +1336,87 @@ def test_v035_schema_schedule_controls_are_top_aligned() -> None:
     css = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.css").read_text(encoding="utf-8")
     assert ".schema-schedule-fields { align-items: start; }" in css
     assert ".schema-schedule-fields > label { align-content: start; }" in css
+
+
+def test_v036_generated_widget_fields_reserve_help_row_for_alignment() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.js").read_text(encoding="utf-8")
+    css = (Path(__file__).resolve().parents[1] / "app" / "static" / "app.css").read_text(encoding="utf-8")
+    assert 'class="widget-schema-field"' in js
+    assert 'field-help empty' in js
+    assert '.widget-schema-field {' in css
+    assert 'grid-template-rows: minmax(18px, auto) 42px minmax(15px, auto);' in css
+    assert '.widget-schema-field > .field-help.empty { visibility: hidden; }' in css
+
+
+def test_v036_schema_fetch_emits_real_progress(monkeypatch) -> None:
+    from app import widget_schema_sync as sync_module
+
+    listing = [
+        {"name": "alpha.md", "download_url": "https://example.invalid/alpha"},
+        {"name": "beta.md", "download_url": "https://example.invalid/beta"},
+    ]
+    docs = {
+        "https://example.invalid/alpha": '''---\ntitle: Alpha\n---\n```yaml\nwidget:\n  type: alpha\n  url: http://alpha\n```\n''',
+        "https://example.invalid/beta": '''---\ntitle: Beta\n---\n```yaml\nwidget:\n  type: beta\n  url: http://beta\n```\n''',
+    }
+    registry = 'const widgets = { alpha: alpha, beta: beta };'
+
+    monkeypatch.setattr(sync_module, "_request_json", lambda url, timeout: listing)
+    monkeypatch.setattr(sync_module, "_request_text", lambda url, timeout: registry if "widgets.js" in url else docs[url])
+    progress = []
+    schemas, meta = sync_module.fetch_official_widget_schemas(progress=progress.append, workers=2)
+
+    assert set(schemas) >= {"alpha", "beta"}
+    assert meta["document_count"] == 2
+    assert any(item["stage"] == "documents" and item["current"] == 2 for item in progress)
+    assert any(item["stage"] == "registry" for item in progress)
+    assert progress[-1]["stage"] == "complete"
+    assert progress[-1]["percent"] == 100
+
+
+def test_v036_manual_schema_sync_job_exposes_progress(monkeypatch) -> None:
+    import time
+    from app import widget_catalog as catalog_module
+
+    original = dict(catalog_module._MANUAL_SYNC_STATE)
+
+    def fake_sync(*, force=True, progress_callback=None):
+        assert force is True
+        assert progress_callback is not None
+        progress_callback({"stage": "documents", "message": "处理中", "current": 1, "total": 2, "percent": 50})
+        time.sleep(0.02)
+        progress_callback({"stage": "complete", "message": "完成", "current": 2, "total": 2, "percent": 100})
+        return {"widget_count": 167, "generated_field_count": 514}
+
+    monkeypatch.setattr(catalog_module, "sync_widget_schema", fake_sync)
+    try:
+        state = catalog_module.start_widget_schema_sync_job()
+        assert state["running"] is True
+        deadline = time.time() + 1
+        while time.time() < deadline:
+            state = catalog_module.widget_schema_sync_job_status()
+            if not state["running"]:
+                break
+            time.sleep(0.01)
+        assert state["running"] is False
+        assert state["stage"] == "complete"
+        assert state["percent"] == 100
+        assert state["result"]["widget_count"] == 167
+    finally:
+        with catalog_module._MANUAL_SYNC_LOCK:
+            catalog_module._MANUAL_SYNC_STATE.clear()
+            catalog_module._MANUAL_SYNC_STATE.update(original)
+
+
+def test_v036_schema_page_has_ajax_progress_ui() -> None:
+    client = TestClient(app)
+    login(client)
+    response = client.get("/widget-schema")
+    assert response.status_code == 200
+    html = response.text
+    assert 'data-schema-sync-form' in html
+    assert 'data-schema-sync-progress' in html
+    assert 'data-schema-sync-bar' in html
+    assert '/api/widget-schema/sync/start' in (Path(__file__).resolve().parents[1] / "app" / "static" / "app.js").read_text(encoding="utf-8")

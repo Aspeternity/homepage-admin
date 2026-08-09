@@ -1,4 +1,4 @@
-# GitHub + GHCR 部署指南（v0.3.5）
+# GitHub + GHCR 部署指南（v0.3.6）
 
 当前仓库：
 
@@ -14,10 +14,10 @@ ghcr.io/aspeternity/homepage-admin:latest
 
 ## 日常升级流程
 
-1. 解压 `homepage-admin-v0.3.5-web-upload.zip`。
+1. 解压 `homepage-admin-v0.3.6-web-upload.zip`。
 2. GitHub 仓库 → **Add file** → **Upload files**。
 3. 把解压后的文件内容拖进去覆盖。
-4. Commit message：`Release v0.3.5`。
+4. Commit message：`Release v0.3.6`。
 5. 打开 **Actions**。
 6. 等待 `Test and publish Docker image` 全部绿色。
 7. GHCR 的 `latest` 会自动更新。
@@ -35,15 +35,15 @@ ghcr.io/aspeternity/homepage-admin:latest
 - 推送 `latest`
 - 创建 Git Tag 时额外推送语义版本标签
 
-例如创建 Tag `v0.3.5` 会得到：
+例如创建 Tag `v0.3.6` 会得到：
 
 ```text
-ghcr.io/aspeternity/homepage-admin:0.3.5
+ghcr.io/aspeternity/homepage-admin:0.3.6
 ghcr.io/aspeternity/homepage-admin:0.3
 ghcr.io/aspeternity/homepage-admin:latest
 ```
 
-## v0.3.5 特别注意
+## v0.3.6 特别注意
 
 本次无需再次修改 Homepage Stack、`homepage-tools`、`homepage-docker-proxy`、PGID 或 `docker.yaml`，也不需要 MySQL。
 

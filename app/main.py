@@ -43,9 +43,11 @@ from .widget_catalog import (
     public_catalog,
     import_widget_schema_json,
     reset_widget_schema_cache,
+    start_widget_schema_sync_job,
     sync_widget_schema,
     sync_widget_schema_if_due,
     widget_schema_status,
+    widget_schema_sync_job_status,
 )
 from .widget_tester import WidgetTestError, test_widget
 
@@ -1336,6 +1338,18 @@ async def widget_schema_schedule_reset(request: Request, _: None = Depends(auth_
     else:
         message = "已恢复环境默认设置：自动同步关闭。"
     return redirect("/widget-schema", ok=message)
+
+
+@app.post("/api/widget-schema/sync/start")
+async def widget_schema_sync_start_api(request: Request, _: None = Depends(auth_guard)) -> JSONResponse:
+    verify_csrf(request, request.headers.get("x-csrf-token", ""))
+    state = start_widget_schema_sync_job()
+    return JSONResponse({"ok": True, **state})
+
+
+@app.get("/api/widget-schema/sync/status")
+async def widget_schema_sync_status_api(_: None = Depends(auth_guard)) -> JSONResponse:
+    return JSONResponse({"ok": True, **widget_schema_sync_job_status()})
 
 
 @app.post("/widget-schema/sync")

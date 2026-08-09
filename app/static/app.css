@@ -610,3 +610,37 @@ html[data-theme="light"] .back-to-top { background: rgba(255,255,255,.92); }
   .timezone-input-row { grid-template-columns: 1fr; }
   .schema-schedule-reset { position: static; margin-top: 12px; }
 }
+
+/* v0.3.6: keep generated Widget fields aligned even when only one field has help text. */
+.widget-dynamic-fields .form-grid.two { align-items: start; }
+.widget-schema-field {
+  display: grid;
+  grid-template-rows: minmax(18px, auto) 42px minmax(15px, auto);
+  gap: 7px;
+  align-content: start;
+}
+.widget-schema-field-label { min-height: 18px; display: flex; align-items: center; flex-wrap: wrap; }
+.widget-schema-field > input,
+.widget-schema-field > select { height: 42px; align-self: start; }
+.widget-schema-field > .field-help { margin-top: 0; min-height: 15px; }
+.widget-schema-field > .field-help.empty { visibility: hidden; }
+.widget-schema-field-yaml { grid-template-rows: minmax(18px, auto) auto minmax(15px, auto); }
+.widget-schema-field-yaml > textarea { align-self: start; }
+
+/* v0.3.6: non-blocking manual Schema sync progress. */
+.schema-sync-progress {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(124, 156, 255, .05);
+}
+.schema-sync-progress.success { border-color: rgba(52, 211, 153, .30); background: rgba(16, 185, 129, .07); }
+.schema-sync-progress.danger { border-color: rgba(251, 113, 133, .30); background: rgba(244, 63, 94, .07); }
+.schema-sync-progress-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.schema-sync-progress-head strong { font-size: 12px; }
+.schema-sync-progress-head span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.schema-sync-progress-track { height: 8px; margin: 10px 0 8px; overflow: hidden; border-radius: 999px; background: rgba(148, 163, 184, .14); }
+.schema-sync-progress-track > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--primary), #8b5cf6); transition: width .25s ease; }
+.schema-sync-progress p { margin: 0; color: var(--text); font-size: 11px; line-height: 1.5; }
+.schema-sync-progress small { display: block; min-height: 14px; margin-top: 4px; color: var(--muted); font-size: 10px; }

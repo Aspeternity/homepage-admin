@@ -495,25 +495,28 @@
         const label = escapeHtml(field.label || name);
         const value = values[name] ?? '';
         const required = field.required ? '<em class="required-mark">必填</em>' : '';
-        const help = field.help ? `<small class="field-help">${escapeHtml(field.help)}</small>` : '';
+        const help = field.help
+          ? `<small class="field-help">${escapeHtml(field.help)}</small>`
+          : '<small class="field-help empty" aria-hidden="true">占位</small>';
+        const fieldLabel = `<span class="widget-schema-field-label">${label}${required}</span>`;
         const baseName = `widgets_${slot}_field_${name}`;
         if (field.kind === 'secret') {
           const placeholder = secretSaved[name] ? '已保存；留空保持原值' : (field.placeholder || '没有则留空');
-          return `<label>${label}${required}<input type="password" name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}" autocomplete="new-password">${help}</label>`;
+          return `<label class="widget-schema-field">${fieldLabel}<input type="password" name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" placeholder="${escapeHtml(placeholder)}" autocomplete="new-password">${help}</label>`;
         }
         if (field.kind === 'bool') {
           const current = value === true ? 'true' : value === false ? 'false' : '';
-          return `<label>${label}${required}<select name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}"><option value="" ${current === '' ? 'selected' : ''}>使用 Homepage 默认值</option><option value="true" ${current === 'true' ? 'selected' : ''}>true</option><option value="false" ${current === 'false' ? 'selected' : ''}>false</option></select>${help}</label>`;
+          return `<label class="widget-schema-field">${fieldLabel}<select name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}"><option value="" ${current === '' ? 'selected' : ''}>使用 Homepage 默认值</option><option value="true" ${current === 'true' ? 'selected' : ''}>true</option><option value="false" ${current === 'false' ? 'selected' : ''}>false</option></select>${help}</label>`;
         }
         if (field.kind === 'yaml') {
-          return `<label class="span-2">${label}${required}<textarea name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" rows="${Number(field.rows || 6)}" spellcheck="false" placeholder="${escapeHtml(field.placeholder || '')}">${escapeHtml(value)}</textarea>${help}</label>`;
+          return `<label class="widget-schema-field widget-schema-field-yaml span-2">${fieldLabel}<textarea name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" rows="${Number(field.rows || 6)}" spellcheck="false" placeholder="${escapeHtml(field.placeholder || '')}">${escapeHtml(value)}</textarea>${help}</label>`;
         }
         if (field.kind === 'select') {
           const options = (field.options || []).map((option) => `<option value="${escapeHtml(option)}" ${String(value) === String(option) ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('');
-          return `<label>${label}${required}<select name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}"><option value="">使用默认值</option>${options}</select>${help}</label>`;
+          return `<label class="widget-schema-field">${fieldLabel}<select name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}"><option value="">使用默认值</option>${options}</select>${help}</label>`;
         }
         const inputMode = field.kind === 'number' ? ' inputmode="decimal"' : '';
-        return `<label>${label}${required}<input name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(field.placeholder || '')}"${inputMode}>${help}</label>`;
+        return `<label class="widget-schema-field">${fieldLabel}<input name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(field.placeholder || '')}"${inputMode}>${help}</label>`;
       }).join('');
       const allowed = schema.allowed_fields || [];
       const fieldPicker = allowed.length ? `<div class="widget-field-picker span-2"><div class="field-picker-head"><strong>显示字段</strong><span>Homepage 最多显示 4 项；不选择则使用官方默认字段。</span></div><div class="checkbox-row">${allowed.map((name) => `<label class="checkbox compact-check"><input type="checkbox" name="widgets_${slot}_fields" value="${escapeHtml(name)}" ${selectedFields.has(name) ? 'checked' : ''}><span>${escapeHtml(name)}</span></label>`).join('')}</div></div>` : '';
@@ -672,6 +675,88 @@
       node.title = `UTC: ${raw}`;
     } catch (_) {}
   });
+
+  // v0.3.6 manual Widget Schema sync: start a background job and show real progress
+  // while official documents are downloaded, parsed, merged, and written to /data.
+  const schemaSyncForm = $('[data-schema-sync-form]');
+  if (schemaSyncForm) {
+    const button = $('[data-schema-sync-button]', schemaSyncForm);
+    const panel = $('[data-schema-sync-progress]');
+    const stageNode = $('[data-schema-sync-stage]', panel || document);
+    const percentNode = $('[data-schema-sync-percent]', panel || document);
+    const barNode = $('[data-schema-sync-bar]', panel || document);
+    const messageNode = $('[data-schema-sync-message]', panel || document);
+    const counterNode = $('[data-schema-sync-counter]', panel || document);
+    const stageLabels = {
+      queued: '等待开始', waiting: '准备同步', listing: '读取目录', documents: '解析文档',
+      registry: '读取注册表', merge: '合并 Schema', finalize: '整理结果', cache: '写入缓存',
+      complete: '同步完成', error: '同步失败',
+    };
+    let pollTimer = null;
+
+    const renderSyncState = (state) => {
+      if (!panel) return;
+      panel.hidden = false;
+      panel.classList.toggle('success', state.stage === 'complete' && !state.running);
+      panel.classList.toggle('danger', state.stage === 'error');
+      const percent = Math.max(0, Math.min(100, Number(state.percent || 0)));
+      if (stageNode) stageNode.textContent = stageLabels[state.stage] || '正在同步';
+      if (percentNode) percentNode.textContent = `${percent}%`;
+      if (barNode) barNode.style.width = `${percent}%`;
+      if (messageNode) messageNode.textContent = state.message || '正在同步…';
+      if (counterNode) {
+        const current = Number(state.current || 0);
+        const total = Number(state.total || 0);
+        counterNode.textContent = total > 0 ? `进度 ${current} / ${total}` : '';
+      }
+    };
+
+    const finishPolling = (state) => {
+      if (pollTimer) { window.clearTimeout(pollTimer); pollTimer = null; }
+      if (button) { button.disabled = false; button.textContent = '立即同步官方 Schema'; }
+      if (state.stage === 'complete' && !state.error) {
+        window.setTimeout(() => {
+          const result = state.result || {};
+          const message = `官方 Widget Schema 已同步：${result.widget_count || 0} 个 Widget，自动字段 ${result.generated_field_count || 0} 个。`;
+          window.location.href = `/widget-schema?ok=${encodeURIComponent(message)}`;
+        }, 650);
+      }
+    };
+
+    const pollSync = async () => {
+      try {
+        const response = await fetch('/api/widget-schema/sync/status', {headers: {'accept': 'application/json'}});
+        const state = await response.json();
+        if (!response.ok || !state.ok) throw new Error(state.error || '无法读取同步进度');
+        renderSyncState(state);
+        if (!state.running) { finishPolling(state); return; }
+        pollTimer = window.setTimeout(pollSync, 450);
+      } catch (error) {
+        renderSyncState({stage: 'error', message: error.message, percent: 0, running: false});
+        finishPolling({stage: 'error', error: error.message});
+      }
+    };
+
+    schemaSyncForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (button) { button.disabled = true; button.textContent = '同步中…'; }
+      renderSyncState({stage: 'queued', message: '正在启动同步任务…', percent: 0, running: true});
+      try {
+        const response = await fetch('/api/widget-schema/sync/start', {
+          method: 'POST',
+          headers: {'content-type': 'application/json', 'x-csrf-token': csrf()},
+          body: '{}',
+        });
+        const state = await response.json();
+        if (!response.ok || !state.ok) throw new Error(state.error || '无法启动同步任务');
+        renderSyncState(state);
+        pollSync();
+      } catch (error) {
+        renderSyncState({stage: 'error', message: error.message, percent: 0, running: false});
+        finishPolling({stage: 'error', error: error.message});
+      }
+    });
+  }
 
   // Widget Schema schedule editor: support interval or a daily wall-clock time.
   const schemaSchedule = $('[data-schema-schedule]');

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import copy
 import json
@@ -453,6 +453,19 @@ _SCHEMA_STATE: dict[str, Any] = {
     "errors": [],
     "last_error": "",
 }
+_MANUAL_SYNC_LOCK = threading.RLock()
+_MANUAL_SYNC_STATE: dict[str, Any] = {
+    "running": False,
+    "stage": "idle",
+    "message": "尚未启动手动同步。",
+    "current": 0,
+    "total": 0,
+    "percent": 0,
+    "started_at": None,
+    "finished_at": None,
+    "error": "",
+    "result": {},
+}
 
 
 def _merge_field_lists(auto_fields: list[dict[str, Any]], enhanced_fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -552,26 +565,120 @@ def _write_cache(widgets: dict[str, dict[str, Any]], meta: dict[str, Any]) -> No
     temp.replace(path)
 
 
-def sync_widget_schema(*, force: bool = True) -> dict[str, Any]:
+def sync_widget_schema(
+    *,
+    force: bool = True,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     with _SCHEMA_LOCK:
         # Keep concurrent manual/automatic syncs from hammering GitHub.
         if not force and not widget_schema_sync_due():
             return widget_schema_status()
         try:
+            if progress_callback:
+                progress_callback({
+                    "stage": "waiting",
+                    "message": "正在准备官方 Widget Schema 同步…",
+                    "current": 0,
+                    "total": 0,
+                    "percent": 1,
+                })
             widgets, meta = fetch_official_widget_schemas(
                 ref=getattr(settings, "widget_schema_ref", "dev"),
                 timeout=float(getattr(settings, "widget_schema_timeout", 8.0)),
                 workers=int(getattr(settings, "widget_schema_workers", 10)),
+                progress=progress_callback,
             )
             if len(widgets) < 50:
                 raise RuntimeError(f"官方 Widget Schema 数量异常：只发现 {len(widgets)} 个，已拒绝覆盖现有缓存。")
+            if progress_callback:
+                progress_callback({
+                    "stage": "cache",
+                    "message": "正在写入 /data Schema 缓存并刷新 Widget 中心…",
+                    "current": len(widgets),
+                    "total": len(widgets),
+                    "percent": 99,
+                })
             _write_cache(widgets, meta)
             meta["last_error"] = ""
             _apply_catalog(_merge_synced_catalog(widgets), meta)
-            return widget_schema_status()
+            status = widget_schema_status()
+            if progress_callback:
+                progress_callback({
+                    "stage": "complete",
+                    "message": f"同步完成：{status.get('widget_count', 0)} 个 Widget，自动字段 {status.get('generated_field_count', 0)} 个。",
+                    "current": status.get("widget_count", 0),
+                    "total": status.get("widget_count", 0),
+                    "percent": 100,
+                })
+            return status
         except Exception as exc:
             _SCHEMA_STATE["last_error"] = str(exc)
             raise
+
+
+def _manual_sync_progress(payload: dict[str, Any]) -> None:
+    with _MANUAL_SYNC_LOCK:
+        _MANUAL_SYNC_STATE.update({
+            "stage": str(payload.get("stage") or _MANUAL_SYNC_STATE.get("stage") or "working"),
+            "message": str(payload.get("message") or "正在同步…"),
+            "current": int(payload.get("current") or 0),
+            "total": int(payload.get("total") or 0),
+            "percent": max(0, min(100, int(payload.get("percent") or 0))),
+        })
+
+
+def _run_manual_widget_schema_sync() -> None:
+    try:
+        result = sync_widget_schema(force=True, progress_callback=_manual_sync_progress)
+        with _MANUAL_SYNC_LOCK:
+            _MANUAL_SYNC_STATE.update({
+                "running": False,
+                "stage": "complete",
+                "message": f"同步完成：{result.get('widget_count', 0)} 个 Widget，自动字段 {result.get('generated_field_count', 0)} 个。",
+                "percent": 100,
+                "finished_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "error": "",
+                "result": {
+                    "widget_count": result.get("widget_count", 0),
+                    "generated_field_count": result.get("generated_field_count", 0),
+                },
+            })
+    except Exception as exc:
+        with _MANUAL_SYNC_LOCK:
+            _MANUAL_SYNC_STATE.update({
+                "running": False,
+                "stage": "error",
+                "message": f"同步失败：{exc}",
+                "finished_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "error": str(exc),
+            })
+
+
+def start_widget_schema_sync_job() -> dict[str, Any]:
+    with _MANUAL_SYNC_LOCK:
+        if _MANUAL_SYNC_STATE.get("running"):
+            return copy.deepcopy(_MANUAL_SYNC_STATE)
+        _MANUAL_SYNC_STATE.update({
+            "running": True,
+            "stage": "queued",
+            "message": "同步任务已启动，正在连接 Homepage 官方仓库…",
+            "current": 0,
+            "total": 0,
+            "percent": 0,
+            "started_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "finished_at": None,
+            "error": "",
+            "result": {},
+        })
+        thread = threading.Thread(target=_run_manual_widget_schema_sync, name="widget-schema-manual-sync", daemon=True)
+        thread.start()
+        return copy.deepcopy(_MANUAL_SYNC_STATE)
+
+
+def widget_schema_sync_job_status() -> dict[str, Any]:
+    with _MANUAL_SYNC_LOCK:
+        return copy.deepcopy(_MANUAL_SYNC_STATE)
 
 
 def _parse_synced_at(value: Any) -> datetime | None:
