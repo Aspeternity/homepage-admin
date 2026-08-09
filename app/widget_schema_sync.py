@@ -14,7 +14,7 @@ from ruamel.yaml import YAML
 GITHUB_REPO = "gethomepage/homepage"
 DOCS_API = "https://api.github.com/repos/gethomepage/homepage/contents/docs/widgets/services"
 REGISTRY_RAW = "https://raw.githubusercontent.com/gethomepage/homepage/{ref}/src/widgets/widgets.js"
-USER_AGENT = "Homepage-Admin-Widget-Schema-Sync/0.3.4"
+USER_AGENT = "Homepage-Admin-Widget-Schema-Sync/0.3.5"
 
 _SECRET_HINTS = (
     "password",
@@ -334,13 +334,21 @@ def parse_widget_document(markdown: str, slug: str) -> tuple[str, dict[str, Any]
             kind = _field_kind(name, value)
             comment = comments.get(name, "")
             lower_comment = comment.lower()
-            required = not any(token in lower_comment for token in ("optional", "default", "defaults to", "if "))
+            # An uncommented key in an official example is not proof that it is mandatory.
+            # Only mark an auto-generated field required when the official inline comment
+            # explicitly says so. Curated Admin enhancements provide stronger validation
+            # for widgets with dedicated connection testers.
+            explicit_required = any(token in lower_comment for token in ("required", "mandatory", "必填"))
+            explicitly_optional = any(token in lower_comment for token in ("optional", "not required", "default", "defaults to", "if "))
+            required = explicit_required and not explicitly_optional
             candidate: dict[str, Any] = {
                 "name": name,
                 "label": _humanize(name),
                 "kind": kind,
                 "required": required,
             }
+            if required:
+                candidate["required_source"] = "official-comment"
             placeholder = _placeholder(name, value, kind)
             if placeholder:
                 candidate["placeholder"] = placeholder

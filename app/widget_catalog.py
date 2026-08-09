@@ -78,7 +78,7 @@ ENHANCED_WIDGET_CATALOG: dict[str, dict[str, Any]] = {
         "fields": [
             {"name": "url", "label": "Home Assistant 地址", "kind": "text", "placeholder": "http://homeassistant:8123", "required": True},
             {"name": "key", "label": "长期访问令牌", "kind": "secret", "required": True},
-            {"name": "custom", "label": "自定义状态 / 模板", "kind": "yaml", "rows": 7, "placeholder": "- state: sensor.total_power\n- template: '{{ states.light|selectattr(\"state\",\"equalto\",\"on\")|list|length }}'"},
+            {"name": "custom", "label": "自定义状态 / 模板（可选）", "kind": "yaml", "rows": 7, "required": False, "placeholder": "- state: sensor.total_power\n- template: '{{ states.light|selectattr(\"state\",\"equalto\",\"on\")|list|length }}'", "help": "可选，最多 4 个 state / template；设置 fields 时 Homepage 会忽略 custom。"},
         ],
     },
     "qbittorrent": {
@@ -479,6 +479,21 @@ def _merge_synced_catalog(synced: dict[str, dict[str, Any]]) -> dict[str, dict[s
     # disappear instead of being kept forever by the old hand-maintained index. Deep Admin
     # integrations are the only local entries retained when the upstream docs temporarily omit one.
     result: dict[str, dict[str, Any]] = copy.deepcopy(synced)
+
+    # Official YAML examples demonstrate valid configuration, but Homepage docs do not
+    # generally declare every uncommented example property as mandatory. Older v0.3.x
+    # caches inferred required=True from example presence, which produced false positives
+    # such as Home Assistant `custom`. Keep auto-generated fields optional unless the
+    # parser has an explicit required source; curated Admin enhancements below can still
+    # mark known connection/auth fields as required.
+    for schema in result.values():
+        normalized_fields = []
+        for field in list(schema.get("fields") or []):
+            normalized = copy.deepcopy(field)
+            if not normalized.get("required_source"):
+                normalized["required"] = False
+            normalized_fields.append(normalized)
+        schema["fields"] = normalized_fields
 
     for type_id, enhanced in ENHANCED_WIDGET_CATALOG.items():
         base = copy.deepcopy(result.get(type_id, {}))

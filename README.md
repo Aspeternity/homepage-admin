@@ -1,16 +1,14 @@
-# Homepage Admin v0.3.4
+# Homepage Admin v0.3.5
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
-## v0.3.4 新功能
+## v0.3.5 修复
 
-- Widget Schema 的“最后同步”和“下次计划”在浏览器中显示为用户本地时间；缓存内部继续保存 UTC。
-- Schema 管理页新增可视化自动同步计划：开关、1–720 小时间隔、每天固定时间、IANA 时区和“使用浏览器时区”。
-- 自动同步计划持久化到 `/data/admin-settings.json`，运行时动态读取，保存后无需重启容器。
-- 页面中的版本绑定文案改为通用说明，升级后不会继续显示旧版本号。
-- Docker 镜像加入 `tzdata`，确保 `Asia/Shanghai` 等 IANA 时区可用于调度。
-
-环境变量仍作为默认值；后台保存的计划优先，恢复默认后重新使用环境变量。
+- 自动同步计划中的“计划时区”与同步方式 / 每天同步时间顶部对齐，辅助说明不再把输入框顶高。
+- Home Assistant `custom`（自定义状态 / 模板）明确改为可选；连接测试只验证实际需要的 URL 与长期访问令牌。
+- 官方 Schema 自动表单采用保守的必填判定：仅当官方 inline comment 明确标记 required / mandatory / 必填时才自动标为必填。
+- 旧版 Schema 缓存会在加载时清除历史错误 required 推断，再叠加 Admin 已知的深度增强必填规则，无需手工清缓存。
+- Home Assistant 表单提示 `custom` 最多 4 项，并说明设置 `fields` 后 Homepage 会忽略 `custom`。
 
 
 > v0.3.2 的主题是：**Homepage 官方 Widget Schema 自动同步 + 全量动态表单 + Schema 管理 + 全局回到顶部**。

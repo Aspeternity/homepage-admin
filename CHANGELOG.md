@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.5 - 2026-08-10
+
+- 修复 Widget Schema 自动同步计划中“计划时区”输入框与同排控件垂直不齐的问题。
+- 修复 Home Assistant `custom`（自定义状态 / 模板）被错误标记为必填，导致连接测试误报。
+- Schema Parser 改为保守判定必填：官方 YAML 示例中的字段不再仅因“出现在示例里”就视为必填；只有官方注释明确标记 required / mandatory / 必填时才自动标记。
+- 对旧版 Schema 缓存做兼容归一化：清除历史自动推断的 required 标记，再叠加 Admin 已知的专属必填规则。
+- Home Assistant `custom` 增加“可选”说明，并提示最多 4 项以及设置 `fields` 时 `custom` 不生效。
+
 ## v0.3.4 - 2026-08-10
 
 - Schema 时间在浏览器按本地时区显示，同时保留 UTC 作为内部标准。

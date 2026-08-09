@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: homepage-admin:0.3.4
+    image: homepage-admin:0.3.5
     container_name: homepage-admin
     restart: unless-stopped
     user: "${PUID:-1000}:${PGID:-1000}"
