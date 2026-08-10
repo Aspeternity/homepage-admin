@@ -7,10 +7,10 @@
   <section class="form-card">
     <h2>书签信息</h2>
     <div class="form-grid two">
-      <label>名称<input name="name" value="{{ values.name }}" required placeholder="M-Team"></label>
+      <label>名称<input name="name" value="{{ values.name }}" required placeholder="Example Site"></label>
       <label>所属分组<select name="group_index">{% for group in groups %}<option value="{{ loop.index0 }}" {% if loop.index0 == group_index %}selected{% endif %}>{{ group }}</option>{% endfor %}</select></label>
       <label class="span-2">访问地址<input name="href" value="{{ values.href }}" required placeholder="https://example.com"></label>
-      <label>缩写<input name="abbr" value="{{ values.abbr }}" maxlength="8" placeholder="MT"></label>
+      <label>缩写<input name="abbr" value="{{ values.abbr }}" maxlength="8" placeholder="EX"></label>
       <label>图标<input name="icon" value="{{ values.icon }}" placeholder="图标优先于缩写"></label>
       <label class="span-2">说明<input name="description" value="{{ values.description }}" placeholder="留空时 Homepage 显示主机名"></label>
       <label class="span-2">额外配置（YAML 映射）<textarea name="extra" rows="8" spellcheck="false">{{ values.extra }}</textarea></label>

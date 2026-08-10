@@ -1,4 +1,4 @@
-# Homepage Admin v0.4.4
+# Homepage Admin v0.4.5
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
@@ -258,6 +258,15 @@ docker compose up -d --build
 pip install -r requirements-dev.txt
 python -m pytest -q
 ```
+
+## v0.4.5 优化
+
+- 服务新增/编辑页的 Docker 集成改为基于 Docker 发现的“主机 + 容器”选择器。
+- Proxmox VM/LXC 集成改为基于 Proxmox 发现的“连接 + VM/LXC”选择器。
+- 未配置对应发现连接时，集成区域会禁用并给出配置入口；编辑已有服务时会保留原配置。
+- 新增只读 API 为表单动态加载 Docker 容器与 Proxmox 资源，不向浏览器暴露 Header、Token 或 Secret。
+- 对用户可见的占位符、示例 IP、节点名和分组提示做开源友好化，改用通用名称与 TEST-NET 示例地址。
+- Docker/Proxmox 下拉控件使用统一行高与帮助文字区域。
 
 ## v0.4.4 优化
 

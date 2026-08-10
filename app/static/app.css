@@ -811,3 +811,14 @@ html[data-theme="light"] .back-to-top { background: rgba(255,255,255,.92); }
 .docker-configured-action-buttons > .button,
 .docker-configured-action-buttons form > .button { width: 100%; min-height: 38px; height: 100%; }
 @media (max-width: 430px) { .docker-configured-action-buttons { grid-template-columns: 1fr; } }
+
+/* v0.4.5: discovery-backed service runtime integration selectors. */
+.integration-card .section-title-row { align-items: flex-start; }
+.integration-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.integration-fieldset:disabled { opacity: .62; }
+.integration-fieldset:disabled select { cursor: not-allowed; }
+.integration-unavailable { margin-bottom: 16px; }
+.integration-unavailable a { text-decoration: underline; text-underline-offset: 2px; }
+.integration-select-grid > label { display: grid; grid-template-rows: auto 42px minmax(18px, auto); align-content: start; gap: 7px; }
+.integration-select-grid > label > select { height: 42px; }
+.integration-select-grid .field-help { margin-top: 0; }

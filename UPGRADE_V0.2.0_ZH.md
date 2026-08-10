@@ -61,7 +61,7 @@ docker ps --filter name=homepage-admin
 打开：
 
 ```text
-http://10.10.1.11:3001
+http://192.0.2.10:3001
 ```
 
 左侧应新增“Docker 发现”。

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.5 - 2026-08-10
+
+- 新增服务页的 Docker 与 Proxmox 运行状态集成改为发现驱动的选择器。
+- 未配置 Docker/Proxmox 发现时禁用相应集成并提示配置入口。
+- 增加 Docker 容器与 Proxmox VM/LXC 的只读动态选项 API。
+- 清理用户相关节点名、私网 IP 与自定义分组示例，改用通用开源示例。
+- Compose 示例默认通过 `HomePage:3000` 访问同网络 Homepage，`DOCKER_PUBLIC_HOST` 默认留空等待部署者显式配置。
+
 ## v0.4.4 - 2026-08-10
 
 - Docker 主机“先测试连接”改为“测试连接”，并美化编辑态取消按钮。

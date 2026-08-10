@@ -15,7 +15,7 @@ local-docker:
   protocol: http
 
 game-server:
-  host: 10.10.1.12
+  host: 192.0.2.20
   port: 2375
   protocol: http
 ```
@@ -31,7 +31,7 @@ Server 名称、Host、Port、Protocol、Socket、TLS、Header 都只在这里�
   "docker_host_metadata": {
     "game-server": {
       "display_name": "Game-Server VM",
-      "public_host": "10.10.1.12"
+      "public_host": "192.0.2.20"
     }
   }
 }
@@ -43,7 +43,7 @@ Server 名称、Host、Port、Protocol、Socket、TLS、Header 都只在这里�
 
 ```json
 {
-  "discovery_override": "http://10.10.1.11:2375"
+  "discovery_override": "http://192.0.2.10:2375"
 }
 ```
 

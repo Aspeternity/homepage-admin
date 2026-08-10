@@ -151,7 +151,7 @@ ENHANCED_WIDGET_CATALOG: dict[str, dict[str, Any]] = {
         "icon": "minecraft.png",
         "test": "config",
         "fields": [
-            {"name": "url", "label": "服务器地址", "kind": "text", "placeholder": "udp://10.10.1.254:25565", "required": True},
+            {"name": "url", "label": "服务器地址", "kind": "text", "placeholder": "udp://192.0.2.50:25565", "required": True},
         ],
     },
     "gamedig": {

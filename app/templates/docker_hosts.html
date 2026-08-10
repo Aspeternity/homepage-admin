@@ -86,19 +86,19 @@
       <input type="hidden" name="original_server" value="{{ form_values.original_server }}">
       <div class="form-grid two docker-host-form-grid">
         <label>显示名称
-          <input name="name" value="{{ form_values.name }}" placeholder="Game-Server VM" required>
+          <input name="name" value="{{ form_values.name }}" placeholder="Docker Node" required>
           <small>仅保存到 Admin 元数据；不写入 <code>docker.yaml</code>。</small>
         </label>
         <label>Homepage Docker Server
-          <input name="homepage_server" value="{{ form_values.homepage_server }}" placeholder="game-server" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,119}" required data-docker-homepage-server {% if edit_host and edit_host.reference_count %}readonly{% endif %}>
+          <input name="homepage_server" value="{{ form_values.homepage_server }}" placeholder="docker-node" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,119}" required data-docker-homepage-server {% if edit_host and edit_host.reference_count %}readonly{% endif %}>
           <small>{% if edit_host and edit_host.reference_count %}当前被 {{ edit_host.reference_count }} 个服务引用，为避免断开关联，Server 名称暂不可修改。{% elif edit_host %}当前没有服务引用，可以直接重命名；保存后 <code>docker.yaml</code> 键名与 Admin 元数据会一起迁移。{% else %}这是 <code>docker.yaml</code> 键名，也是服务中的 <code>server:</code> 值。{% endif %}</small>
         </label>
         <label class="span-2">Docker API URL
-          <input name="url" value="{{ form_values.url }}" placeholder="http://10.10.1.13:2375" required data-docker-host-url>
+          <input name="url" value="{{ form_values.url }}" placeholder="http://192.0.2.20:2375" required data-docker-host-url>
           <small>核心连接地址，保存到 <code>docker.yaml</code> 的 host / port / protocol；不要带 <code>/containers/json</code>。</small>
         </label>
         <label>Public Host
-          <input name="public_host" value="{{ form_values.public_host }}" placeholder="10.10.1.13" data-docker-public-host>
+          <input name="public_host" value="{{ form_values.public_host }}" placeholder="192.0.2.20" data-docker-public-host>
           <small>仅用于 Admin 根据容器端口生成访问地址；留空时自动推断。</small>
         </label>
         <div class="docker-host-sync-summary" role="note">
@@ -111,7 +111,7 @@
         <summary>Admin Discovery Override（可选）</summary>
         <div class="docker-host-override-body">
           <label>独立发现地址
-            <input name="discovery_override" value="{{ form_values.discovery_override }}" placeholder="http://10.10.1.11:2375" data-docker-discovery-override>
+            <input name="discovery_override" value="{{ form_values.discovery_override }}" placeholder="http://192.0.2.30:2375" data-docker-discovery-override>
             <small>默认留空，Admin 直接使用上面的 Docker API URL。仅当 Admin 无法解析/访问 <code>docker.yaml</code> 地址（例如 Socket 或容器内 DNS 差异）时填写；该值只保存在 <code>/data/admin-settings.json</code>。</small>
           </label>
         </div>

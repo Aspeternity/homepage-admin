@@ -1072,6 +1072,28 @@ def _ensure_widget_values(values: dict[str, Any]) -> None:
     ]
 
 
+def service_form_docker_hosts() -> list[dict[str, Any]]:
+    """Return non-sensitive Docker discovery choices for the service editor."""
+    rows: list[dict[str, Any]] = []
+    for host in docker_discovery_hosts():
+        rows.append({
+            "id": str(host.get("id") or ""),
+            "name": str(host.get("name") or host.get("homepage_server") or "Docker"),
+            "homepage_server": str(host.get("homepage_server") or ""),
+            "discoverable": bool(host.get("client") and host.get("url") and host.get("yaml_configured")),
+        })
+    return rows
+
+
+def service_form_proxmox_connections() -> list[dict[str, str]]:
+    """Return Proxmox connection names without exposing tokens/secrets."""
+    try:
+        connections = _proxmox_connections()
+    except ConfigError:
+        return []
+    return [{"name": name, "url": normalize_proxmox_url(connection.url)} for name, connection in connections.items()]
+
+
 def render_service_form(
     request: Request,
     *,
@@ -1084,6 +1106,8 @@ def render_service_form(
     docker_source: str | None = None,
 ) -> HTMLResponse:
     _ensure_widget_values(values)
+    docker_hosts = service_form_docker_hosts()
+    proxmox_connections = service_form_proxmox_connections()
     return templates.TemplateResponse(
         request,
         "service_form.html",
@@ -1099,6 +1123,10 @@ def render_service_form(
             widget_catalog=WIDGET_CATALOG,
             widget_catalog_json=json.dumps(public_catalog(), ensure_ascii=False),
             docker_source=docker_source,
+            docker_hosts=docker_hosts,
+            docker_integration_available=any(item.get("discoverable") for item in docker_hosts),
+            proxmox_connections=proxmox_connections,
+            proxmox_integration_available=bool(proxmox_connections),
         ),
     )
 
@@ -1163,6 +1191,70 @@ def edit_service(
         values=values,
         error=error,
     )
+
+
+@app.get("/api/docker/host/{host_id}/service-options")
+def docker_service_options(host_id: str, _: None = Depends(auth_guard)) -> JSONResponse:
+    host = docker_discovery_host(host_id)
+    if not host:
+        return JSONResponse({"ok": False, "error": "Docker 主机不存在，请刷新页面。"}, status_code=404)
+    client = host.get("client")
+    if not isinstance(client, DockerDiscoveryClient):
+        return JSONResponse({"ok": False, "error": "该 Docker 主机当前没有可用于发现容器的连接地址。"}, status_code=400)
+    try:
+        containers = client.list_containers()
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": f"读取 Docker 容器失败：{exc}"}, status_code=502)
+    payload = [
+        {
+            "id": str(item.get("id") or ""),
+            "name": str(item.get("name") or ""),
+            "image": str(item.get("image") or ""),
+            "state": str(item.get("state") or "unknown"),
+        }
+        for item in containers
+        if str(item.get("name") or "").strip()
+    ]
+    return JSONResponse({
+        "ok": True,
+        "host": {
+            "id": str(host.get("id") or ""),
+            "name": str(host.get("name") or host.get("homepage_server") or "Docker"),
+            "homepage_server": str(host.get("homepage_server") or ""),
+        },
+        "containers": payload,
+    })
+
+
+@app.get("/api/proxmox/service-options")
+async def proxmox_service_options(request: Request, _: None = Depends(auth_guard)) -> JSONResponse:
+    server = str(request.query_params.get("server") or "").strip()
+    try:
+        connections = _proxmox_connections()
+    except ConfigError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    connection = connections.get(server)
+    if not connection:
+        return JSONResponse({"ok": False, "error": "Proxmox 连接不存在，请刷新页面。"}, status_code=404)
+    try:
+        resources = await proxmox_discovery.discover(connection)
+    except ProxmoxDiscoveryError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
+    return JSONResponse({
+        "ok": True,
+        "server": server,
+        "resources": [
+            {
+                "name": str(item.get("name") or f"VM {item.get('vmid', '')}"),
+                "node": str(item.get("node") or server),
+                "vmid": int(item.get("vmid") or 0),
+                "type": str(item.get("type") or "qemu"),
+                "status": str(item.get("status") or "unknown"),
+                "connection_available": str(item.get("node") or server) in connections,
+            }
+            for item in resources
+        ],
+    })
 
 
 def _coerce_widget_field(kind: str, raw: str) -> Any:

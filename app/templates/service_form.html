@@ -26,36 +26,82 @@
   <section class="form-card">
     <h2>基本信息</h2>
     <div class="form-grid two">
-      <label>服务名称<input name="name" value="{{ values.name }}" placeholder="Jellyfin" required></label>
+      <label>服务名称<input name="name" value="{{ values.name }}" placeholder="Media Server" required></label>
       <label>所属分组<select name="group_index">{% for group in groups %}<option value="{{ loop.index0 }}" {% if loop.index0 == group_index %}selected{% endif %}>{{ group }}</option>{% endfor %}</select></label>
       <label>访问地址<input name="href" value="{{ values.href }}" placeholder="https://service.example.com"></label>
       <label>图标<input name="icon" value="{{ values.icon }}" placeholder="service.png / sh-service / mdi-server / https://..."></label>
       <label class="span-2">简短说明<input name="description" value="{{ values.description }}" placeholder="服务说明"></label>
       <label>打开方式<select name="target"><option value="">使用全局设置</option>{% for value in ['_blank','_self','_parent','_top'] %}<option value="{{ value }}" {% if values.target == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
       <label>站点监控 URL<input name="siteMonitor" value="{{ values.siteMonitor }}" placeholder="可使用内网地址"></label>
-      <label>ICMP Ping 主机<input name="ping" value="{{ values.ping }}" placeholder="10.10.1.11"></label>
+      <label>ICMP Ping 主机<input name="ping" value="{{ values.ping }}" placeholder="192.0.2.10"></label>
     </div>
   </section>
 
-  <section class="form-card">
-    <h2>Docker 集成</h2>
-    <p class="section-help">通过 <code>server + container</code> 显示 Docker 运行状态。Docker 发现页可以自动预填。</p>
-    <div class="form-grid two">
-      <label>Docker Server<input name="server" value="{{ values.server }}" placeholder="local-docker"></label>
-      <label>容器名称<input name="container" value="{{ values.container }}" placeholder="jellyfin"></label>
+  <section class="form-card integration-card" data-service-docker-integration data-current-server="{{ values.server }}" data-current-container="{{ values.container }}">
+    <div class="section-title-row">
+      <div><h2>Docker 集成</h2><p class="section-help">从 Docker 发现中选择主机与容器，Homepage 将通过 <code>server + container</code> 显示运行状态。</p></div>
+      <a href="/docker">Docker 发现 ↗</a>
     </div>
-  </section>
-
-  <section class="form-card">
-    <div class="section-title-row"><div><h2>Proxmox VM / LXC 集成</h2><p class="section-help">对应 <code>proxmox.yaml</code>。绑定后 Homepage 可在服务卡片上显示该 VM/LXC 的 CPU 与内存。</p></div><a href="/proxmox">Proxmox 发现 ↗</a></div>
-    {% if values.server and values.container and values.proxmoxNode and values.proxmoxVMID %}
-    <div class="alert warning service-runtime-conflict"><strong>检测到双重运行状态集成：</strong> 当前服务同时配置 Docker（<code>{{ values.server }} / {{ values.container }}</code>）和 Proxmox（<code>{{ values.proxmoxNode }} / {{ values.proxmoxVMID }}</code>）。Homepage 会同时渲染两套状态与资源；如果这个服务代表 PVE VM/LXC，请清空上方 Docker Server 与容器名称。</div>
+    <input type="hidden" name="server" value="{{ values.server }}" data-service-docker-server-value>
+    <input type="hidden" name="container" value="{{ values.container }}" data-service-docker-container-value>
+    {% if not docker_integration_available %}
+      <div class="alert info integration-unavailable"><strong>Docker 集成暂不可用。</strong> 尚未配置可用于 Docker 发现的主机。请先前往 <a href="/docker/hosts">Docker 主机管理</a> 完成连接配置后再使用。{% if values.server or values.container %}<br>当前服务已有配置 <code>{{ values.server or '未指定 Server' }} / {{ values.container or '未指定容器' }}</code>，本次保存会原样保留。{% endif %}</div>
     {% endif %}
-    <div class="form-grid three proxmox-service-grid">
-      <label class="proxmox-service-field">Proxmox 节点名<input name="proxmoxNode" value="{{ values.proxmoxNode }}" placeholder="asp-pve"><small class="field-help">应与 PVE 实际节点名及 proxmox.yaml 键名一致。</small></label>
-      <label class="proxmox-service-field">VMID<input name="proxmoxVMID" value="{{ values.proxmoxVMID }}" inputmode="numeric" placeholder="100"><small class="field-help empty" aria-hidden="true">占位</small></label>
-      <label class="proxmox-service-field">类型<select name="proxmoxType"><option value="" {% if not values.proxmoxType %}selected{% endif %}>QEMU VM（默认）</option><option value="qemu" {% if values.proxmoxType == 'qemu' %}selected{% endif %}>qemu</option><option value="lxc" {% if values.proxmoxType == 'lxc' %}selected{% endif %}>lxc</option></select><small class="field-help empty" aria-hidden="true">占位</small></label>
-    </div>
+    <fieldset class="integration-fieldset" {% if not docker_integration_available %}disabled{% endif %}>
+      <div class="form-grid two integration-select-grid">
+        <label>Docker 主机
+          <select data-service-docker-host>
+            <option value="">不使用 Docker 集成</option>
+            {% for host in docker_hosts %}
+              <option value="{{ host.id }}" data-server="{{ host.homepage_server }}" {% if host.homepage_server == values.server %}selected{% endif %} {% if not host.discoverable %}disabled{% endif %}>{{ host.name }} · {{ host.homepage_server }}{% if not host.discoverable %}（当前不可发现）{% endif %}</option>
+            {% endfor %}
+            {% set docker_matches = docker_hosts|selectattr('homepage_server', 'equalto', values.server)|list %}
+            {% if values.server and not docker_matches %}<option value="" selected disabled>当前配置：{{ values.server }}（未在 Docker 发现中）</option>{% endif %}
+          </select>
+          <small class="field-help">主机来自 Docker 发现 / <code>docker.yaml</code>。</small>
+        </label>
+        <label>Docker 容器
+          <select data-service-docker-container {% if not values.server %}disabled{% endif %}>
+            <option value="">{% if values.server %}正在准备容器列表…{% else %}请先选择 Docker 主机{% endif %}</option>
+            {% if values.container %}<option value="{{ values.container }}" selected>{{ values.container }}（当前配置）</option>{% endif %}
+          </select>
+          <small class="field-help" data-service-docker-status>{% if values.container %}保存前会以当前配置为准；加载成功后可直接改选其他容器。{% else %}选择主机后自动读取容器列表。{% endif %}</small>
+        </label>
+      </div>
+    </fieldset>
+  </section>
+
+  <section class="form-card integration-card" data-service-proxmox-integration data-current-node="{{ values.proxmoxNode }}" data-current-vmid="{{ values.proxmoxVMID }}" data-current-type="{{ values.proxmoxType or 'qemu' }}">
+    <div class="section-title-row"><div><h2>Proxmox VM / LXC 集成</h2><p class="section-help">从 Proxmox 发现中选择连接与 VM/LXC，绑定后 Homepage 可在服务卡片上显示 CPU 与内存。</p></div><a href="/proxmox">Proxmox 发现 ↗</a></div>
+    <input type="hidden" name="proxmoxNode" value="{{ values.proxmoxNode }}" data-service-proxmox-node-value>
+    <input type="hidden" name="proxmoxVMID" value="{{ values.proxmoxVMID }}" data-service-proxmox-vmid-value>
+    <input type="hidden" name="proxmoxType" value="{{ values.proxmoxType }}" data-service-proxmox-type-value>
+    {% if values.server and values.container and values.proxmoxNode and values.proxmoxVMID %}
+    <div class="alert warning service-runtime-conflict"><strong>检测到双重运行状态集成：</strong> 当前服务同时配置 Docker（<code>{{ values.server }} / {{ values.container }}</code>）和 Proxmox（<code>{{ values.proxmoxNode }} / {{ values.proxmoxVMID }}</code>）。Homepage 会同时渲染两套状态与资源。</div>
+    {% endif %}
+    {% if not proxmox_integration_available %}
+      <div class="alert info integration-unavailable"><strong>Proxmox 集成暂不可用。</strong> 尚未配置 Proxmox 发现连接。请先前往 <a href="/yaml/proxmox.yaml">高级编辑 proxmox.yaml</a> 配置连接，再回到 <a href="/proxmox">Proxmox 发现</a> 验证。{% if values.proxmoxNode or values.proxmoxVMID %}<br>当前服务已有配置 <code>{{ values.proxmoxNode or '未指定节点' }} / {{ values.proxmoxVMID or '未指定 VMID' }}</code>，本次保存会原样保留。{% endif %}</div>
+    {% endif %}
+    <fieldset class="integration-fieldset" {% if not proxmox_integration_available %}disabled{% endif %}>
+      <div class="form-grid two integration-select-grid">
+        <label>Proxmox 连接
+          <select data-service-proxmox-connection>
+            <option value="">不使用 Proxmox 集成</option>
+            {% for connection in proxmox_connections %}<option value="{{ connection.name }}" {% if connection.name == values.proxmoxNode %}selected{% endif %}>{{ connection.name }}</option>{% endfor %}
+            {% set proxmox_matches = proxmox_connections|selectattr('name', 'equalto', values.proxmoxNode)|list %}
+            {% if values.proxmoxNode and not proxmox_matches %}<option value="" selected disabled>当前配置：{{ values.proxmoxNode }}（未在 Proxmox 发现中）</option>{% endif %}
+          </select>
+          <small class="field-help">连接来自 <code>proxmox.yaml</code>，不会在页面暴露 Token 或 Secret。</small>
+        </label>
+        <label>VM / LXC
+          <select data-service-proxmox-resource {% if not values.proxmoxNode %}disabled{% endif %}>
+            <option value="">{% if values.proxmoxNode %}正在准备 VM / LXC 列表…{% else %}请先选择 Proxmox 连接{% endif %}</option>
+            {% if values.proxmoxNode and values.proxmoxVMID %}<option value="current" data-node="{{ values.proxmoxNode }}" data-vmid="{{ values.proxmoxVMID }}" data-type="{{ values.proxmoxType or 'qemu' }}" selected>{{ (values.proxmoxType or 'qemu')|upper }} {{ values.proxmoxVMID }} · {{ values.proxmoxNode }}（当前配置）</option>{% endif %}
+          </select>
+          <small class="field-help" data-service-proxmox-status>{% if values.proxmoxVMID %}加载成功后可直接改选其他 VM/LXC。{% else %}选择连接后自动读取 VM / LXC 列表。{% endif %}</small>
+        </label>
+      </div>
+    </fieldset>
   </section>
 
   <section class="form-card">

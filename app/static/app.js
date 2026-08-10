@@ -522,6 +522,208 @@
   // v0.3.0 metadata-driven multi-widget editor.
   const serviceEditor = $('[data-service-editor]');
   if (serviceEditor) {
+    // v0.4.5 discovery-backed runtime integrations. The visible selects never
+    // submit raw names directly; hidden fields remain compatible with Homepage YAML.
+    const dockerIntegration = $('[data-service-docker-integration]', serviceEditor);
+    if (dockerIntegration) {
+      const hostSelect = $('[data-service-docker-host]', dockerIntegration);
+      const containerSelect = $('[data-service-docker-container]', dockerIntegration);
+      const serverValue = $('[data-service-docker-server-value]', dockerIntegration);
+      const containerValue = $('[data-service-docker-container-value]', dockerIntegration);
+      const status = $('[data-service-docker-status]', dockerIntegration);
+      const currentServer = dockerIntegration.dataset.currentServer || '';
+      const currentContainer = dockerIntegration.dataset.currentContainer || '';
+      let firstLoad = true;
+
+      const syncDockerHidden = () => {
+        const option = hostSelect?.selectedOptions?.[0];
+        const server = option?.dataset?.server || '';
+        const container = containerSelect?.value || '';
+        if (serverValue) serverValue.value = container ? server : '';
+        if (containerValue) containerValue.value = container || '';
+      };
+
+      const resetDockerContainers = (message = '请先选择 Docker 主机') => {
+        if (!containerSelect) return;
+        containerSelect.innerHTML = '';
+        const option = document.createElement('option');
+        option.value = ''; option.textContent = message;
+        containerSelect.appendChild(option);
+        containerSelect.disabled = true;
+      };
+
+      const loadDockerContainers = async () => {
+        if (!hostSelect || !containerSelect) return;
+        const hostId = hostSelect.value;
+        const selected = hostSelect.selectedOptions?.[0];
+        const server = selected?.dataset?.server || '';
+        const preserveCurrent = firstLoad && server && server === currentServer && currentContainer;
+        firstLoad = false;
+        if (!hostId || !server) {
+          resetDockerContainers();
+          if (serverValue) serverValue.value = '';
+          if (containerValue) containerValue.value = '';
+          if (status) status.textContent = '选择主机后自动读取容器列表。';
+          return;
+        }
+        if (!preserveCurrent) {
+          if (serverValue) serverValue.value = '';
+          if (containerValue) containerValue.value = '';
+        }
+        containerSelect.disabled = true;
+        containerSelect.innerHTML = '<option value="">正在读取容器…</option>';
+        if (status) status.textContent = '正在通过 Docker 发现读取容器列表…';
+        try {
+          const response = await fetch(`/api/docker/host/${encodeURIComponent(hostId)}/service-options`);
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || '无法读取 Docker 容器');
+          containerSelect.innerHTML = '';
+          const blank = document.createElement('option');
+          blank.value = ''; blank.textContent = '不绑定 Docker 容器';
+          containerSelect.appendChild(blank);
+          (data.containers || []).forEach((item) => {
+            const option = document.createElement('option');
+            option.value = item.name;
+            option.textContent = `${item.name} · ${item.image || '未知镜像'} · ${item.state || 'unknown'}`;
+            if (preserveCurrent && item.name === currentContainer) option.selected = true;
+            containerSelect.appendChild(option);
+          });
+          if (preserveCurrent && ![...containerSelect.options].some((item) => item.value === currentContainer)) {
+            const option = document.createElement('option');
+            option.value = currentContainer; option.textContent = `${currentContainer}（当前配置，未在发现列表中）`; option.selected = true;
+            containerSelect.appendChild(option);
+          }
+          containerSelect.disabled = false;
+          syncDockerHidden();
+          if (status) status.textContent = `已读取 ${data.containers?.length || 0} 个容器。`;
+        } catch (error) {
+          containerSelect.innerHTML = '';
+          if (preserveCurrent) {
+            const option = document.createElement('option');
+            option.value = currentContainer; option.textContent = `${currentContainer}（当前配置）`; option.selected = true;
+            containerSelect.appendChild(option);
+            containerSelect.disabled = false;
+            if (serverValue) serverValue.value = currentServer;
+            if (containerValue) containerValue.value = currentContainer;
+          } else {
+            resetDockerContainers('读取失败，请重新选择主机');
+          }
+          if (status) status.textContent = `Docker 发现失败：${error.message}`;
+        }
+      };
+      hostSelect?.addEventListener('change', loadDockerContainers);
+      containerSelect?.addEventListener('change', syncDockerHidden);
+      if (hostSelect?.value) loadDockerContainers();
+    }
+
+    const proxmoxIntegration = $('[data-service-proxmox-integration]', serviceEditor);
+    if (proxmoxIntegration) {
+      const connectionSelect = $('[data-service-proxmox-connection]', proxmoxIntegration);
+      const resourceSelect = $('[data-service-proxmox-resource]', proxmoxIntegration);
+      const nodeValue = $('[data-service-proxmox-node-value]', proxmoxIntegration);
+      const vmidValue = $('[data-service-proxmox-vmid-value]', proxmoxIntegration);
+      const typeValue = $('[data-service-proxmox-type-value]', proxmoxIntegration);
+      const status = $('[data-service-proxmox-status]', proxmoxIntegration);
+      const currentNode = proxmoxIntegration.dataset.currentNode || '';
+      const currentVmid = proxmoxIntegration.dataset.currentVmid || '';
+      const currentType = proxmoxIntegration.dataset.currentType || 'qemu';
+      let firstLoad = true;
+
+      const syncProxmoxHidden = () => {
+        const option = resourceSelect?.selectedOptions?.[0];
+        if (!option?.value) {
+          if (nodeValue) nodeValue.value = '';
+          if (vmidValue) vmidValue.value = '';
+          if (typeValue) typeValue.value = '';
+          return;
+        }
+        if (nodeValue) nodeValue.value = option.dataset.node || '';
+        if (vmidValue) vmidValue.value = option.dataset.vmid || '';
+        if (typeValue) typeValue.value = option.dataset.type || 'qemu';
+      };
+
+      const resetProxmoxResources = (message = '请先选择 Proxmox 连接') => {
+        if (!resourceSelect) return;
+        resourceSelect.innerHTML = '';
+        const option = document.createElement('option');
+        option.value = ''; option.textContent = message;
+        resourceSelect.appendChild(option);
+        resourceSelect.disabled = true;
+      };
+
+      const loadProxmoxResources = async () => {
+        if (!connectionSelect || !resourceSelect) return;
+        const server = connectionSelect.value;
+        const preserveCurrent = firstLoad && server && server === currentNode && currentVmid;
+        firstLoad = false;
+        if (!server) {
+          resetProxmoxResources();
+          if (nodeValue) nodeValue.value = '';
+          if (vmidValue) vmidValue.value = '';
+          if (typeValue) typeValue.value = '';
+          if (status) status.textContent = '选择连接后自动读取 VM / LXC 列表。';
+          return;
+        }
+        if (!preserveCurrent) {
+          if (nodeValue) nodeValue.value = '';
+          if (vmidValue) vmidValue.value = '';
+          if (typeValue) typeValue.value = '';
+        }
+        resourceSelect.disabled = true;
+        resourceSelect.innerHTML = '<option value="">正在读取 VM / LXC…</option>';
+        if (status) status.textContent = '正在通过 Proxmox 发现读取资源…';
+        try {
+          const response = await fetch(`/api/proxmox/service-options?server=${encodeURIComponent(server)}`);
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || '无法读取 Proxmox 资源');
+          resourceSelect.innerHTML = '';
+          const blank = document.createElement('option');
+          blank.value = ''; blank.textContent = '不绑定 VM / LXC';
+          resourceSelect.appendChild(blank);
+          let matched = false;
+          (data.resources || []).forEach((item) => {
+            const option = document.createElement('option');
+            option.value = `${item.node}:${item.type}:${item.vmid}`;
+            option.dataset.node = item.node;
+            option.dataset.vmid = String(item.vmid);
+            option.dataset.type = item.type || 'qemu';
+            const available = item.connection_available !== false;
+            option.disabled = !available;
+            option.textContent = `${item.name} · ${(item.type || 'qemu').toUpperCase()} ${item.vmid} · ${item.node} · ${item.status || 'unknown'}${available ? '' : ' · 缺少同名 proxmox.yaml 连接'}`;
+            if (available && preserveCurrent && item.node === currentNode && String(item.vmid) === String(currentVmid) && (item.type || 'qemu') === currentType) { option.selected = true; matched = true; }
+            resourceSelect.appendChild(option);
+          });
+          if (preserveCurrent && !matched) {
+            const option = document.createElement('option');
+            option.value = 'current'; option.dataset.node = currentNode; option.dataset.vmid = currentVmid; option.dataset.type = currentType;
+            option.textContent = `${currentType.toUpperCase()} ${currentVmid} · ${currentNode}（当前配置，未在发现列表中）`; option.selected = true;
+            resourceSelect.appendChild(option);
+          }
+          resourceSelect.disabled = false;
+          syncProxmoxHidden();
+          if (status) status.textContent = `已读取 ${data.resources?.length || 0} 个 VM / LXC。`;
+        } catch (error) {
+          resourceSelect.innerHTML = '';
+          if (preserveCurrent) {
+            const option = document.createElement('option');
+            option.value = 'current'; option.dataset.node = currentNode; option.dataset.vmid = currentVmid; option.dataset.type = currentType;
+            option.textContent = `${currentType.toUpperCase()} ${currentVmid} · ${currentNode}（当前配置）`; option.selected = true;
+            resourceSelect.appendChild(option);
+            resourceSelect.disabled = false;
+            if (nodeValue) nodeValue.value = currentNode;
+            if (vmidValue) vmidValue.value = currentVmid;
+            if (typeValue) typeValue.value = currentType;
+          } else {
+            resetProxmoxResources('读取失败，请重新选择连接');
+          }
+          if (status) status.textContent = `Proxmox 发现失败：${error.message}`;
+        }
+      };
+      connectionSelect?.addEventListener('change', loadProxmoxResources);
+      resourceSelect?.addEventListener('change', syncProxmoxHidden);
+      if (connectionSelect?.value) loadProxmoxResources();
+    }
+
     let catalog = {};
     try { catalog = JSON.parse($('#widget-catalog-data')?.textContent || '{}'); } catch (_) {}
     const list = $('[data-service-widgets]', serviceEditor);

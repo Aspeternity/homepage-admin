@@ -524,7 +524,7 @@ def test_service_profile_recommends_existing_group() -> None:
     assert profile["kind"] == "服务器监控"
     assert profile["description"] == "Komari 服务器监控"
     assert profile["confidence"] == "高"
-    assert recommend_group_index(["Widgets", "群晖NAS", "内网Tools"], profile) == 2
+    assert recommend_group_index(["Widgets", "NAS-Services", "Tools"], profile) == 2
 
 
 def test_v024_wizard_alignment_and_auto_group_assets_are_present() -> None:
@@ -810,13 +810,13 @@ def test_v030_proxmox_can_import_existing_widget_connection_and_discover(monkeyp
             '''---
 - Widgets:
     - Proxmox VE:
-        href: https://10.10.1.2:8006
+        href: https://192.0.2.2:8006
         widget:
           type: proxmox
-          url: https://10.10.1.2:8006
+          url: https://192.0.2.2:8006
           username: homepage@pve!homepage
           password: proxmox-token-secret
-          node: asp-pve
+          node: pve-node1
 ''',
             encoding="utf-8",
         )
@@ -833,25 +833,25 @@ def test_v030_proxmox_can_import_existing_widget_connection_and_discover(monkeyp
         )
         assert imported.status_code == 303
         proxmox = YAML(typ="safe").load(proxmox_path.read_text(encoding="utf-8"))
-        assert proxmox["asp-pve"]["url"] == "https://10.10.1.2:8006"
-        assert proxmox["asp-pve"]["token"] == "homepage@pve!homepage"
-        assert proxmox["asp-pve"]["secret"] == "proxmox-token-secret"
+        assert proxmox["pve-node1"]["url"] == "https://192.0.2.2:8006"
+        assert proxmox["pve-node1"]["token"] == "homepage@pve!homepage"
+        assert proxmox["pve-node1"]["secret"] == "proxmox-token-secret"
 
         async def fake_discover(connection):
-            assert connection.name == "asp-pve"
+            assert connection.name == "pve-node1"
             assert connection.secret == "proxmox-token-secret"
             return [{
                 "vmid": 100,
                 "name": "HomeAssistant",
                 "type": "qemu",
-                "node": "asp-pve",
+                "node": "pve-node1",
                 "status": "running",
                 "cpu_percent": 4,
                 "memory_percent": 32,
             }]
 
         monkeypatch.setattr(main_module.proxmox_discovery, "discover", fake_discover)
-        discovered = client.get("/proxmox?server=asp-pve")
+        discovered = client.get("/proxmox?server=pve-node1")
         assert discovered.status_code == 200
         assert "HomeAssistant" in discovered.text
         assert "QEMU 100" in discovered.text
@@ -872,8 +872,8 @@ def test_v030_proxmox_bind_sets_service_mapping() -> None:
     try:
         proxmox_path.write_text(
             '''---
-asp-pve:
-  url: https://10.10.1.2:8006
+pve-node1:
+  url: https://192.0.2.2:8006
   token: homepage@pve!homepage
   secret: proxmox-token-secret
 ''',
@@ -883,7 +883,7 @@ asp-pve:
             "/proxmox/bind",
             data={
                 "csrf": csrf,
-                "server": "asp-pve",
+                "server": "pve-node1",
                 "group_index": "0",
                 "item_index": "0",
                 "vmid": "104",
@@ -894,7 +894,7 @@ asp-pve:
         assert response.status_code == 303
         data = YAML(typ="safe").load(services_path.read_text(encoding="utf-8"))
         details = data[0]["Core"][0]["Jellyfin"]
-        assert details["proxmoxNode"] == "asp-pve"
+        assert details["proxmoxNode"] == "pve-node1"
         assert details["proxmoxVMID"] == 104
         assert "proxmoxType" not in details
     finally:
@@ -1440,7 +1440,7 @@ def test_v037_proxmox_import_normalizes_trailing_slash() -> None:
           url: https://pve.example/
           username: homepage@pve!homepage
           password: token-secret
-          node: asp-pve
+          node: pve-node1
 ''',
             encoding="utf-8",
         )
@@ -1452,7 +1452,7 @@ def test_v037_proxmox_import_normalizes_trailing_slash() -> None:
         )
         assert response.status_code == 303
         proxmox = YAML(typ="safe").load(proxmox_path.read_text(encoding="utf-8"))
-        assert proxmox["asp-pve"]["url"] == "https://pve.example"
+        assert proxmox["pve-node1"]["url"] == "https://pve.example"
     finally:
         services_path.write_text(services_original, encoding="utf-8")
         proxmox_path.write_text(proxmox_original, encoding="utf-8")
@@ -1468,7 +1468,7 @@ def test_v037_proxmox_page_warns_and_can_normalize_existing_url(monkeypatch) -> 
     try:
         proxmox_path.write_text(
             '''---
-asp-pve:
+pve-node1:
   url: https://pve.example/
   token: homepage@pve!homepage
   secret: token-secret
@@ -1481,26 +1481,26 @@ asp-pve:
                 "vmid": 100,
                 "name": "HomeAssistant",
                 "type": "qemu",
-                "node": "asp-pve",
+                "node": "pve-node1",
                 "status": "running",
                 "cpu_percent": 1.2,
                 "memory_percent": 91.9,
             }]
 
         monkeypatch.setattr(main_module.proxmox_discovery, "discover", fake_discover)
-        page = client.get("/proxmox?server=asp-pve")
+        page = client.get("/proxmox?server=pve-node1")
         assert page.status_code == 200
         assert "检测到 Proxmox URL 末尾包含 /" in page.text
         assert "一键修复 URL" in page.text
 
         response = client.post(
             "/proxmox/normalize-connection",
-            data={"csrf": csrf, "server": "asp-pve"},
+            data={"csrf": csrf, "server": "pve-node1"},
             follow_redirects=False,
         )
         assert response.status_code == 303
         proxmox = YAML(typ="safe").load(proxmox_path.read_text(encoding="utf-8"))
-        assert proxmox["asp-pve"]["url"] == "https://pve.example"
+        assert proxmox["pve-node1"]["url"] == "https://pve.example"
     finally:
         proxmox_path.write_text(original, encoding="utf-8")
 
@@ -1528,7 +1528,7 @@ cluster-entry:
                 "vmid": 101,
                 "name": "Reverse-Proxy",
                 "type": "qemu",
-                "node": "asp-pve",
+                "node": "pve-node1",
                 "status": "running",
                 "cpu_percent": 0.5,
                 "memory_percent": 68.0,
@@ -1538,9 +1538,9 @@ cluster-entry:
         page = client.get("/proxmox?server=cluster-entry")
         assert page.status_code == 200
         assert "发现未配置同名连接的实际 PVE 节点" in page.text
-        assert "asp-pve" in page.text
+        assert "pve-node1" in page.text
         assert "不能安全生成 Homepage per-VM 关联" in page.text
-        assert 'name="server" value="asp-pve"' not in page.text
+        assert 'name="server" value="pve-node1"' not in page.text
     finally:
         proxmox_path.write_text(original, encoding="utf-8")
 
@@ -1571,7 +1571,7 @@ def test_v037_proxmox_binding_can_clear_existing_docker_integration(monkeypatch)
         )
         proxmox_path.write_text(
             '''---
-asp-pve:
+pve-node1:
   url: https://pve.example
   token: homepage@pve!homepage
   secret: token-secret
@@ -1584,21 +1584,21 @@ asp-pve:
                 "vmid": 100,
                 "name": "HomeAssistant",
                 "type": "qemu",
-                "node": "asp-pve",
+                "node": "pve-node1",
                 "status": "running",
                 "cpu_percent": 1.2,
                 "memory_percent": 91.9,
             }]
 
         monkeypatch.setattr(main_module.proxmox_discovery, "discover", fake_discover)
-        page = client.get("/proxmox?server=asp-pve")
+        page = client.get("/proxmox?server=pve-node1")
         assert 'data-has-docker="1"' in page.text
 
         response = client.post(
             "/proxmox/bind",
             data={
                 "csrf": csrf,
-                "server": "asp-pve",
+                "server": "pve-node1",
                 "group_index": "0",
                 "item_index": "0",
                 "vmid": "100",
@@ -1610,7 +1610,7 @@ asp-pve:
         assert response.status_code == 303
         data = YAML(typ="safe").load(services_path.read_text(encoding="utf-8"))
         details = data[0]["Widgets"][0]["Home Assistant"]
-        assert details["proxmoxNode"] == "asp-pve"
+        assert details["proxmoxNode"] == "pve-node1"
         assert details["proxmoxVMID"] == 100
         assert "server" not in details
         assert "container" not in details
@@ -1631,7 +1631,7 @@ def test_v037_service_editor_warns_when_docker_and_proxmox_are_both_configured()
     - Home Assistant:
         server: local-docker
         container: jellyfin
-        proxmoxNode: asp-pve
+        proxmoxNode: pve-node1
         proxmoxVMID: 100
 ''',
             encoding="utf-8",
@@ -1648,11 +1648,13 @@ def test_v038_proxmox_service_editor_fields_are_row_aligned() -> None:
     root = Path(__file__).resolve().parents[1]
     template = (root / "app/templates/service_form.html").read_text(encoding="utf-8")
     css = (root / "app/static/app.css").read_text(encoding="utf-8")
-    assert 'class="form-grid three proxmox-service-grid"' in template
-    assert template.count('class="proxmox-service-field"') == 3
-    assert template.count('class="field-help empty"') >= 2
-    assert ".proxmox-service-grid > .proxmox-service-field" in css
-    assert "grid-template-rows: auto 42px minmax(16px, auto)" in css
+    # v0.4.5 replaced the three manual text fields with two discovery selectors,
+    # but keeps the same fixed control/help rows so the inputs stay aligned.
+    assert 'class="form-grid two integration-select-grid"' in template
+    assert 'data-service-proxmox-connection' in template
+    assert 'data-service-proxmox-resource' in template
+    assert ".integration-select-grid > label" in css
+    assert "grid-template-rows: auto 42px minmax(18px, auto)" in css
 
 
 def test_v038_proxmox_page_shows_edit_and_unbind_for_bound_service(monkeypatch) -> None:
@@ -1669,14 +1671,14 @@ def test_v038_proxmox_page_shows_edit_and_unbind_for_bound_service(monkeypatch) 
             """---
 - Widgets:
     - Home Assistant:
-        proxmoxNode: asp-pve
+        proxmoxNode: pve-node1
         proxmoxVMID: 100
 """,
             encoding="utf-8",
         )
         proxmox_path.write_text(
             """---
-asp-pve:
+pve-node1:
   url: https://pve.example
   token: homepage@pve!homepage
   secret: token-secret
@@ -1689,14 +1691,14 @@ asp-pve:
                 "vmid": 100,
                 "name": "HomeAssistant",
                 "type": "qemu",
-                "node": "asp-pve",
+                "node": "pve-node1",
                 "status": "running",
                 "cpu_percent": 1.2,
                 "memory_percent": 91.9,
             }]
 
         monkeypatch.setattr(main_module.proxmox_discovery, "discover", fake_discover)
-        page = client.get("/proxmox?server=asp-pve")
+        page = client.get("/proxmox?server=pve-node1")
         assert page.status_code == 200
         assert "编辑服务" in page.text
         assert "取消关联" in page.text
@@ -1719,7 +1721,7 @@ def test_v038_proxmox_unbind_removes_only_proxmox_mapping() -> None:
     - Home Assistant:
         href: https://home.example
         description: Home Assistant 智能家居
-        proxmoxNode: asp-pve
+        proxmoxNode: pve-node1
         proxmoxVMID: 100
         widget:
           type: homeassistant
@@ -1732,8 +1734,8 @@ def test_v038_proxmox_unbind_removes_only_proxmox_mapping() -> None:
             "/proxmox/unbind",
             data={
                 "csrf": csrf,
-                "server": "asp-pve",
-                "node": "asp-pve",
+                "server": "pve-node1",
+                "node": "pve-node1",
                 "vmid": "100",
                 "type": "qemu",
                 "group_index": "0",
@@ -1777,7 +1779,7 @@ def test_v040_multi_docker_hosts_are_discovered_and_matched_by_server(monkeypatc
     original_services = services_path.read_text(encoding="utf-8")
     try:
         docker_path.write_text(
-            "---\ndocker-a:\n  host: docker-a-proxy\n  port: 2375\ndocker-b:\n  host: 10.10.1.13\n  port: 2375\n",
+            "---\ndocker-a:\n  host: docker-a-proxy\n  port: 2375\ndocker-b:\n  host: 192.0.2.30\n  port: 2375\n",
             encoding="utf-8",
         )
         services_path.write_text(
@@ -1810,7 +1812,7 @@ def test_v040_import_uses_selected_docker_host_server(monkeypatch) -> None:
     original = docker_path.read_text(encoding="utf-8")
     try:
         docker_path.write_text(
-            "---\ndocker-main:\n  host: main-proxy\n  port: 2375\ngame-server:\n  host: 10.10.1.13\n  port: 2375\n",
+            "---\ndocker-main:\n  host: main-proxy\n  port: 2375\ngame-server:\n  host: 192.0.2.30\n  port: 2375\n",
             encoding="utf-8",
         )
         sample = [{"id": "game123456789", "name": "minecraft", "image": "itzg/minecraft-server:latest", "state": "running", "status": "Up", "ports": [{"private": 25565, "public": 25565, "type": "tcp", "ip": "0.0.0.0"}], "labels": {}}]
@@ -1823,7 +1825,7 @@ def test_v040_import_uses_selected_docker_host_server(monkeypatch) -> None:
         assert "game-server" in wizard.text
         assert 'data-wizard-static="server"' in wizard.text
         assert 'value="game-server"' in wizard.text
-        assert "10.10.1.13:25565" in wizard.text
+        assert "192.0.2.30:25565" in wizard.text
     finally:
         docker_path.write_text(original, encoding="utf-8")
 
@@ -1843,7 +1845,7 @@ def test_v040_custom_docker_host_can_save_test_and_sync_to_docker_yaml(monkeypat
         monkeypatch.setattr(DockerDiscoveryClient, "list_containers", lambda self: [{"id": "1", "name": "minecraft", "image": "mc", "state": "running", "status": "Up", "ports": [], "labels": {}}])
         tested = client.post(
             "/api/docker/hosts/test",
-            data={"csrf": csrf, "url": "http://10.10.1.13:2375", "homepage_server": "game-server"},
+            data={"csrf": csrf, "url": "http://192.0.2.30:2375", "homepage_server": "game-server"},
         )
         assert tested.status_code == 200
         assert tested.json()["containers"] == 1
@@ -1854,9 +1856,9 @@ def test_v040_custom_docker_host_can_save_test_and_sync_to_docker_yaml(monkeypat
                 "csrf": csrf,
                 "id": "game-server",
                 "name": "Game-Server VM",
-                "url": "http://10.10.1.13:2375",
+                "url": "http://192.0.2.30:2375",
                 "homepage_server": "game-server",
-                "public_host": "10.10.1.13",
+                "public_host": "192.0.2.30",
                 "sync_homepage": "1",
             },
             follow_redirects=False,
@@ -1864,7 +1866,7 @@ def test_v040_custom_docker_host_can_save_test_and_sync_to_docker_yaml(monkeypat
         assert saved.status_code == 303
         assert any(item["id"] == "game-server" for item in store.docker_discovery_hosts())
         docker_data = YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
-        assert docker_data["game-server"]["host"] == "10.10.1.13"
+        assert docker_data["game-server"]["host"] == "192.0.2.30"
         assert docker_data["game-server"]["port"] == 2375
         manager = client.get("/docker/hosts")
         assert "Game-Server VM" in manager.text
@@ -2043,9 +2045,9 @@ def test_v041_custom_delete_wizard_can_remove_only_admin_layer() -> None:
     original_docker = docker_path.read_text(encoding="utf-8")
     original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
     try:
-        docker_path.write_text("---\ngame-server:\n  host: 10.10.1.13\n  port: 2375\n", encoding="utf-8")
+        docker_path.write_text("---\ngame-server:\n  host: 192.0.2.30\n  port: 2375\n", encoding="utf-8")
         store.save_docker_discovery_host(
-            {"id": "game-server", "name": "Game VM", "url": "http://10.10.1.13:2375", "homepage_server": "game-server", "public_host": "10.10.1.13"},
+            {"id": "game-server", "name": "Game VM", "url": "http://192.0.2.30:2375", "homepage_server": "game-server", "public_host": "192.0.2.30"},
             "test",
         )
         host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "game-server")
@@ -2137,11 +2139,11 @@ def test_v042_yaml_and_custom_hosts_use_same_edit_form() -> None:
     original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
     try:
         docker_path.write_text(
-            "---\nlocal-docker:\n  host: homepage-docker-proxy\n  port: 2375\ngame-server:\n  host: 10.10.1.12\n  port: 2375\n",
+            "---\nlocal-docker:\n  host: homepage-docker-proxy\n  port: 2375\ngame-server:\n  host: 192.0.2.20\n  port: 2375\n",
             encoding="utf-8",
         )
         store.save_docker_discovery_host(
-            {"id": "game-server", "name": "Game-Server VM", "url": "http://10.10.1.12:2375", "homepage_server": "game-server", "public_host": "10.10.1.12"},
+            {"id": "game-server", "name": "Game-Server VM", "url": "http://192.0.2.20:2375", "homepage_server": "game-server", "public_host": "192.0.2.20"},
             "test",
         )
         hosts = main_module.docker_discovery_hosts()
@@ -2185,15 +2187,15 @@ def test_v042_add_host_always_creates_homepage_server_without_checkbox() -> None
             data={
                 "csrf": csrf,
                 "name": "Game-Server VM",
-                "url": "http://10.10.1.12:2375",
+                "url": "http://192.0.2.20:2375",
                 "homepage_server": "game-server",
-                "public_host": "10.10.1.12",
+                "public_host": "192.0.2.20",
             },
             follow_redirects=False,
         )
         assert response.status_code == 303
         docker_data = YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
-        assert docker_data["game-server"]["host"] == "10.10.1.12"
+        assert docker_data["game-server"]["host"] == "192.0.2.20"
         assert docker_data["game-server"]["port"] == 2375
         assert docker_data["game-server"]["protocol"] == "http"
         saved = store.docker_discovery_hosts()
@@ -2230,7 +2232,7 @@ def test_v042_edit_yaml_only_host_adopts_unified_metadata_and_preserves_advanced
                 "name": "Docker VM",
                 "url": "http://homepage-docker-proxy:2375",
                 "homepage_server": "local-docker",
-                "public_host": "10.10.1.11",
+                "public_host": "192.0.2.10",
             },
             follow_redirects=False,
         )
@@ -2240,7 +2242,7 @@ def test_v042_edit_yaml_only_host_adopts_unified_metadata_and_preserves_advanced
         assert docker_data["local-docker"]["customFutureKey"] == "keep-me"
         metadata = next(item for item in store.docker_discovery_hosts() if item["homepage_server"] == "local-docker")
         assert metadata["name"] == "Docker VM"
-        assert metadata["public_host"] == "10.10.1.11"
+        assert metadata["public_host"] == "192.0.2.10"
     finally:
         docker_path.write_text(original_docker, encoding="utf-8")
         if original_prefs is None:
@@ -2285,7 +2287,7 @@ def test_v043_legacy_docker_rows_migrate_to_metadata_without_duplicate_connectio
     original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
     try:
         docker_path.write_text(
-            "---\nlocal-docker:\n  host: homepage-docker-proxy\n  port: 2375\ngame-server:\n  host: 10.10.1.12\n  port: 2375\n",
+            "---\nlocal-docker:\n  host: homepage-docker-proxy\n  port: 2375\ngame-server:\n  host: 192.0.2.20\n  port: 2375\n",
             encoding="utf-8",
         )
         prefs_path.write_text(
@@ -2297,14 +2299,14 @@ def test_v043_legacy_docker_rows_migrate_to_metadata_without_duplicate_connectio
                             "name": "Docker VM",
                             "url": "http://homepage-docker-proxy:2375",
                             "homepage_server": "local-docker",
-                            "public_host": "10.10.1.11",
+                            "public_host": "192.0.2.10",
                         },
                         {
                             "id": "game-server",
                             "name": "Game-Server VM",
-                            "url": "http://10.10.1.12:2375",
+                            "url": "http://192.0.2.20:2375",
                             "homepage_server": "game-server",
-                            "public_host": "10.10.1.12",
+                            "public_host": "192.0.2.20",
                         },
                     ]
                 },
@@ -2316,11 +2318,11 @@ def test_v043_legacy_docker_rows_migrate_to_metadata_without_duplicate_connectio
         prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
         assert "docker_discovery_hosts" not in prefs
         metadata = prefs["docker_host_metadata"]
-        assert metadata["local-docker"] == {"display_name": "Docker VM", "public_host": "10.10.1.11"}
-        assert metadata["game-server"] == {"display_name": "Game-Server VM", "public_host": "10.10.1.12"}
+        assert metadata["local-docker"] == {"display_name": "Docker VM", "public_host": "192.0.2.10"}
+        assert metadata["game-server"] == {"display_name": "Game-Server VM", "public_host": "192.0.2.20"}
         serialized = json.dumps(prefs, ensure_ascii=False)
         assert "homepage-docker-proxy:2375" not in serialized
-        assert "10.10.1.12:2375" not in serialized
+        assert "192.0.2.20:2375" not in serialized
     finally:
         docker_path.write_text(original_docker, encoding="utf-8")
         if original_prefs is None:
@@ -2345,7 +2347,7 @@ def test_v043_legacy_different_discovery_url_becomes_explicit_override() -> None
                             "name": "Docker VM",
                             "url": "http://homepage-docker-proxy:2375",
                             "homepage_server": "local-docker",
-                            "public_host": "10.10.1.11",
+                            "public_host": "192.0.2.10",
                         }
                     ]
                 },
@@ -2379,21 +2381,21 @@ def test_v043_add_host_writes_connection_only_to_docker_yaml() -> None:
             data={
                 "csrf": csrf,
                 "name": "Game-Server VM",
-                "url": "http://10.10.1.12:2375",
+                "url": "http://192.0.2.20:2375",
                 "homepage_server": "game-server",
-                "public_host": "10.10.1.12",
+                "public_host": "192.0.2.20",
                 "discovery_override": "",
             },
             follow_redirects=False,
         )
         assert response.status_code == 303
         docker_data = YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
-        assert docker_data["game-server"]["host"] == "10.10.1.12"
+        assert docker_data["game-server"]["host"] == "192.0.2.20"
         assert docker_data["game-server"]["port"] == 2375
         prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
         assert "docker_discovery_hosts" not in prefs
         metadata = prefs["docker_host_metadata"]["game-server"]
-        assert metadata == {"display_name": "Game-Server VM", "public_host": "10.10.1.12"}
+        assert metadata == {"display_name": "Game-Server VM", "public_host": "192.0.2.20"}
         assert "url" not in metadata
         assert "homepage_server" not in metadata
         assert "host" not in metadata
@@ -2414,15 +2416,15 @@ def test_v043_discovery_reads_core_connection_from_docker_yaml_and_optional_over
     original_docker = docker_path.read_text(encoding="utf-8")
     original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
     try:
-        docker_path.write_text("---\ngame-server:\n  host: 10.10.1.12\n  port: 2375\n", encoding="utf-8")
+        docker_path.write_text("---\ngame-server:\n  host: 192.0.2.20\n  port: 2375\n", encoding="utf-8")
         prefs_path.write_text(
             json.dumps(
                 {
                     "docker_host_metadata": {
                         "game-server": {
                             "display_name": "Game VM",
-                            "public_host": "10.10.1.12",
-                            "discovery_override": "http://10.10.1.99:2375",
+                            "public_host": "192.0.2.20",
+                            "discovery_override": "http://192.0.2.99:2375",
                         }
                     }
                 },
@@ -2431,9 +2433,9 @@ def test_v043_discovery_reads_core_connection_from_docker_yaml_and_optional_over
             encoding="utf-8",
         )
         host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "game-server")
-        assert host["core_url"] == "http://10.10.1.12:2375"
-        assert host["url"] == "http://10.10.1.99:2375"
-        assert host["discovery_override"] == "http://10.10.1.99:2375"
+        assert host["core_url"] == "http://192.0.2.20:2375"
+        assert host["url"] == "http://192.0.2.99:2375"
+        assert host["discovery_override"] == "http://192.0.2.99:2375"
         assert host["name"] == "Game VM"
     finally:
         docker_path.write_text(original_docker, encoding="utf-8")
@@ -2453,8 +2455,8 @@ def test_v043_delete_host_removes_yaml_and_metadata_together() -> None:
     original_docker = docker_path.read_text(encoding="utf-8")
     original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
     try:
-        docker_path.write_text("---\ngame-server:\n  host: 10.10.1.12\n  port: 2375\n", encoding="utf-8")
-        store.save_docker_host_metadata("game-server", {"display_name": "Game VM", "public_host": "10.10.1.12"}, "test")
+        docker_path.write_text("---\ngame-server:\n  host: 192.0.2.20\n  port: 2375\n", encoding="utf-8")
+        store.save_docker_host_metadata("game-server", {"display_name": "Game VM", "public_host": "192.0.2.20"}, "test")
         host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "game-server")
         page = client.get(f'/docker/hosts/delete/{host["id"]}')
         assert page.status_code == 200
@@ -2502,7 +2504,7 @@ def test_v044_host_form_polish_and_unreferenced_server_is_renameable() -> None:
     original_docker = docker_path.read_text(encoding="utf-8")
     original_services = services_path.read_text(encoding="utf-8")
     try:
-        docker_path.write_text("---\nold-server:\n  host: 10.10.1.12\n  port: 2375\n  protocol: http\n", encoding="utf-8")
+        docker_path.write_text("---\nold-server:\n  host: 192.0.2.20\n  port: 2375\n  protocol: http\n", encoding="utf-8")
         services_path.write_text("---\n- Widgets:\n    - Home Assistant:\n        href: https://home.example\n", encoding="utf-8")
         host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "old-server")
         page = client.get(f'/docker/hosts?edit={host["id"]}')
@@ -2529,7 +2531,7 @@ def test_v044_referenced_server_name_stays_locked() -> None:
     original_docker = docker_path.read_text(encoding="utf-8")
     original_services = services_path.read_text(encoding="utf-8")
     try:
-        docker_path.write_text("---\nused-server:\n  host: 10.10.1.12\n  port: 2375\n", encoding="utf-8")
+        docker_path.write_text("---\nused-server:\n  host: 192.0.2.20\n  port: 2375\n", encoding="utf-8")
         services_path.write_text("---\n- Core:\n    - App:\n        server: used-server\n        container: app\n", encoding="utf-8")
         host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "used-server")
         page = client.get(f'/docker/hosts?edit={host["id"]}')
@@ -2552,11 +2554,11 @@ def test_v044_unreferenced_server_can_be_renamed_and_metadata_moves() -> None:
     original_prefs = prefs_path.read_text(encoding="utf-8") if prefs_path.exists() else None
     try:
         docker_path.write_text(
-            "---\nold-server:\n  host: 10.10.1.12\n  port: 2375\n  protocol: http\n  customFutureKey: keep-me\n",
+            "---\nold-server:\n  host: 192.0.2.20\n  port: 2375\n  protocol: http\n  customFutureKey: keep-me\n",
             encoding="utf-8",
         )
         services_path.write_text("---\n- Core:\n    - App:\n        href: https://example.test\n", encoding="utf-8")
-        store.save_docker_host_metadata("old-server", {"display_name": "Old VM", "public_host": "10.10.1.12"}, "test")
+        store.save_docker_host_metadata("old-server", {"display_name": "Old VM", "public_host": "192.0.2.20"}, "test")
         response = client.post(
             "/docker/hosts/save",
             data={
@@ -2564,8 +2566,8 @@ def test_v044_unreferenced_server_can_be_renamed_and_metadata_moves() -> None:
                 "original_server": "old-server",
                 "name": "Game VM",
                 "homepage_server": "game-server",
-                "url": "http://10.10.1.13:2375",
-                "public_host": "10.10.1.13",
+                "url": "http://192.0.2.30:2375",
+                "public_host": "192.0.2.30",
                 "discovery_override": "",
             },
             follow_redirects=False,
@@ -2573,14 +2575,14 @@ def test_v044_unreferenced_server_can_be_renamed_and_metadata_moves() -> None:
         assert response.status_code == 303
         data = YAML(typ="safe").load(docker_path.read_text(encoding="utf-8"))
         assert "old-server" not in data
-        assert data["game-server"]["host"] == "10.10.1.13"
+        assert data["game-server"]["host"] == "192.0.2.30"
         assert data["game-server"]["port"] == 2375
         assert data["game-server"]["protocol"] == "http"
         assert data["game-server"]["customFutureKey"] == "keep-me"
         metadata = store.docker_host_metadata()
         assert "old-server" not in metadata
         assert metadata["game-server"]["display_name"] == "Game VM"
-        assert metadata["game-server"]["public_host"] == "10.10.1.13"
+        assert metadata["game-server"]["public_host"] == "192.0.2.30"
     finally:
         docker_path.write_text(original_docker, encoding="utf-8")
         services_path.write_text(original_services, encoding="utf-8")
@@ -2598,7 +2600,7 @@ def test_v044_referenced_server_rename_is_rejected() -> None:
     original_docker = docker_path.read_text(encoding="utf-8")
     original_services = services_path.read_text(encoding="utf-8")
     try:
-        docker_path.write_text("---\nold-server:\n  host: 10.10.1.12\n  port: 2375\n", encoding="utf-8")
+        docker_path.write_text("---\nold-server:\n  host: 192.0.2.20\n  port: 2375\n", encoding="utf-8")
         services_path.write_text("---\n- Core:\n    - App:\n        server: old-server\n        container: app\n", encoding="utf-8")
         response = client.post(
             "/docker/hosts/save",
@@ -2607,8 +2609,8 @@ def test_v044_referenced_server_rename_is_rejected() -> None:
                 "original_server": "old-server",
                 "name": "New VM",
                 "homepage_server": "new-server",
-                "url": "http://10.10.1.12:2375",
-                "public_host": "10.10.1.12",
+                "url": "http://192.0.2.20:2375",
+                "public_host": "192.0.2.20",
                 "discovery_override": "",
             },
             follow_redirects=False,
@@ -2632,9 +2634,9 @@ def test_v044_docker_discovery_shows_edit_and_remove_config_and_unbind_preserves
     original_docker = docker_path.read_text(encoding="utf-8")
     original_services = services_path.read_text(encoding="utf-8")
     try:
-        docker_path.write_text("---\ngame-server:\n  host: 10.10.1.12\n  port: 2375\n", encoding="utf-8")
+        docker_path.write_text("---\ngame-server:\n  host: 192.0.2.20\n  port: 2375\n", encoding="utf-8")
         services_path.write_text(
-            "---\n- Games:\n    - Minecraft:\n        href: http://10.10.1.12:25565\n        description: MC\n        server: game-server\n        container: minecraft\n        widget:\n          type: minecraft\n          url: tcp://10.10.1.12:25565\n",
+            "---\n- Games:\n    - Minecraft:\n        href: http://192.0.2.20:25565\n        description: MC\n        server: game-server\n        container: minecraft\n        widget:\n          type: minecraft\n          url: tcp://192.0.2.20:25565\n",
             encoding="utf-8",
         )
         sample = [{"id": "game123456789", "name": "minecraft", "image": "itzg/minecraft-server:latest", "state": "running", "status": "Up", "ports": [], "labels": {}}]
@@ -2665,9 +2667,137 @@ def test_v044_docker_discovery_shows_edit_and_remove_config_and_unbind_preserves
         details = data[0]["Games"][0]["Minecraft"]
         assert "server" not in details
         assert "container" not in details
-        assert details["href"] == "http://10.10.1.12:25565"
+        assert details["href"] == "http://192.0.2.20:25565"
         assert details["description"] == "MC"
         assert details["widget"]["type"] == "minecraft"
     finally:
         docker_path.write_text(original_docker, encoding="utf-8")
         services_path.write_text(original_services, encoding="utf-8")
+
+
+def test_v045_service_form_uses_discovery_selectors_and_generic_examples(monkeypatch) -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    login(client)
+    monkeypatch.setattr(
+        main_module,
+        "service_form_docker_hosts",
+        lambda: [{"id": "yaml-docker-node", "name": "Docker Node", "homepage_server": "docker-node", "discoverable": True}],
+    )
+    monkeypatch.setattr(
+        main_module,
+        "service_form_proxmox_connections",
+        lambda: [{"name": "pve-node1", "url": "https://pve.example.test:8006"}],
+    )
+    page = client.get("/services/item/new")
+    assert page.status_code == 200
+    assert 'data-service-docker-host' in page.text
+    assert 'data-service-docker-container' in page.text
+    assert '<input type="hidden" name="server"' in page.text
+    assert '<input type="hidden" name="container"' in page.text
+    assert 'data-service-proxmox-connection' in page.text
+    assert 'data-service-proxmox-resource' in page.text
+    assert '<input type="hidden" name="proxmoxNode"' in page.text
+    assert "Docker Node · docker-node" in page.text
+    assert "pve-node1" in page.text
+    assert 'placeholder="192.0.2.10"' in page.text
+    assert "asp" + "-pve" not in page.text
+    assert "10." + "10.1." not in page.text
+
+
+def test_v045_service_form_disables_integrations_when_discovery_is_unconfigured(monkeypatch) -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    login(client)
+    monkeypatch.setattr(main_module, "service_form_docker_hosts", lambda: [])
+    monkeypatch.setattr(main_module, "service_form_proxmox_connections", lambda: [])
+    page = client.get("/services/item/new")
+    assert page.status_code == 200
+    assert "Docker 集成暂不可用" in page.text
+    assert "Proxmox 集成暂不可用" in page.text
+    assert page.text.count('class="integration-fieldset" disabled') == 2
+    assert "/docker/hosts" in page.text
+    assert "/yaml/proxmox.yaml" in page.text
+
+
+def test_v045_docker_service_options_api_returns_safe_container_choices(monkeypatch) -> None:
+    from app import main as main_module
+    from app.docker_client import DockerDiscoveryClient
+
+    client = TestClient(app)
+    login(client)
+    docker_path = settings.config_dir / "docker.yaml"
+    original = docker_path.read_text(encoding="utf-8")
+    try:
+        docker_path.write_text("---\ndocker-node:\n  host: 192.0.2.20\n  port: 2375\n", encoding="utf-8")
+        monkeypatch.setattr(
+            DockerDiscoveryClient,
+            "list_containers",
+            lambda self: [
+                {"id": "abc123", "name": "media", "image": "example/media:latest", "state": "running", "status": "Up", "ports": [], "labels": {}},
+                {"id": "def456", "name": "worker", "image": "example/worker:latest", "state": "exited", "status": "Exited", "ports": [], "labels": {}},
+            ],
+        )
+        host = next(item for item in main_module.docker_discovery_hosts() if item["homepage_server"] == "docker-node")
+        response = client.get(f'/api/docker/host/{host["id"]}/service-options')
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["host"]["homepage_server"] == "docker-node"
+        assert [item["name"] for item in payload["containers"]] == ["media", "worker"]
+        assert set(payload["containers"][0]) == {"id", "name", "image", "state"}
+    finally:
+        docker_path.write_text(original, encoding="utf-8")
+
+
+def test_v045_proxmox_service_options_api_returns_resource_choices(monkeypatch) -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    login(client)
+    proxmox_path = settings.config_dir / "proxmox.yaml"
+    original = proxmox_path.read_text(encoding="utf-8")
+    try:
+        proxmox_path.write_text(
+            "---\npve-node1:\n  url: https://pve.example.test:8006\n  token: homepage@pve!homepage\n  secret: test-secret\n",
+            encoding="utf-8",
+        )
+
+        async def fake_discover(connection):
+            return [
+                {"vmid": 100, "name": "Home Automation", "type": "qemu", "node": "pve-node1", "status": "running", "cpu_percent": 1.0, "memory_percent": 20.0},
+                {"vmid": 201, "name": "Build Container", "type": "lxc", "node": "pve-node1", "status": "stopped", "cpu_percent": 0.0, "memory_percent": 0.0},
+            ]
+
+        monkeypatch.setattr(main_module.proxmox_discovery, "discover", fake_discover)
+        response = client.get("/api/proxmox/service-options?server=pve-node1")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert payload["server"] == "pve-node1"
+        assert payload["resources"][0] == {"name": "Home Automation", "node": "pve-node1", "vmid": 100, "type": "qemu", "status": "running", "connection_available": True}
+        assert "secret" not in response.text.lower()
+    finally:
+        proxmox_path.write_text(original, encoding="utf-8")
+
+
+def test_v045_public_ui_source_has_no_personal_environment_examples() -> None:
+    root = Path(__file__).resolve().parents[1]
+    files = [
+        *sorted((root / "app/templates").glob("*.html")),
+        root / "app/widget_catalog.py",
+        root / "app/docker_client.py",
+    ]
+    text = "\n".join(path.read_text(encoding="utf-8") for path in files)
+    for forbidden in ["asp" + "-pve", "10." + "10.1.", "群晖" + "NAS", "内网" + "Tools", "M" + "-Team"]:
+        assert forbidden not in text
+    assert "192.0.2.10" in text
+
+
+def test_v045_healthz_reports_release_version() -> None:
+    client = TestClient(app)
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json()["version"] == "0.4.5"
