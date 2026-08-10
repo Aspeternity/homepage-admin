@@ -2800,7 +2800,7 @@ def test_v046_healthz_reports_release_version() -> None:
     client = TestClient(app)
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.4.8"
+    assert response.json()["version"] == "0.4.9"
 
 
 def test_v046_settings_page_exposes_official_common_controls() -> None:
@@ -3276,3 +3276,14 @@ pve-node1:
     finally:
         proxmox_path.write_text(proxmox_original, encoding="utf-8")
         services_path.write_text(services_original, encoding="utf-8")
+
+
+def test_v049_proxmox_filters_stay_on_one_row() -> None:
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "app/templates/proxmox.html").read_text(encoding="utf-8")
+    css = (root / "app/static/app.css").read_text(encoding="utf-8")
+    assert 'class="span-2">搜索 VM / LXC' not in template
+    assert 'data-proxmox-search' in template
+    assert 'data-proxmox-type-filter' in template
+    assert 'data-proxmox-state-filter' in template
+    assert '.proxmox-filter-bar { display: grid; grid-template-columns: minmax(280px, 2fr) minmax(150px, .7fr) minmax(150px, .7fr);' in css
