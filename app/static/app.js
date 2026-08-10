@@ -1065,6 +1065,81 @@
     refreshScheduleFields();
   }
 
+  // v0.4.8 multi-node Proxmox discovery filters.
+  const proxmoxFilterRoot = $('[data-proxmox-filter-root]');
+  if (proxmoxFilterRoot) {
+    const search = $('[data-proxmox-search]', proxmoxFilterRoot);
+    const typeFilter = $('[data-proxmox-type-filter]', proxmoxFilterRoot);
+    const stateFilter = $('[data-proxmox-state-filter]', proxmoxFilterRoot);
+    const cards = $$('[data-proxmox-card]');
+    const empty = $('[data-proxmox-filter-empty]');
+    const apply = () => {
+      const query = (search?.value || '').trim().toLowerCase();
+      const type = typeFilter?.value || 'all';
+      const state = stateFilter?.value || 'all';
+      let shown = 0;
+      cards.forEach((card) => {
+        const visible = (!query || (card.dataset.search || '').includes(query))
+          && (type === 'all' || card.dataset.type === type)
+          && (state === 'all' || card.dataset.state === state);
+        card.hidden = !visible;
+        if (visible) shown += 1;
+      });
+      if (empty) empty.hidden = shown !== 0;
+    };
+    search?.addEventListener('input', apply);
+    typeFilter?.addEventListener('change', apply);
+    stateFilter?.addEventListener('change', apply);
+    apply();
+  }
+
+  const renderProxmoxNodeTest = (target, ok, message) => {
+    if (!target) return;
+    target.hidden = false;
+    target.classList.toggle('ok', Boolean(ok));
+    target.classList.toggle('error', !ok);
+    target.textContent = message;
+  };
+  const testProxmoxNode = async ({originalName = '', name = '', url = '', token = '', secret = '', button, result}) => {
+    const original = button?.textContent || '';
+    if (button) { button.disabled = true; button.textContent = '测试中…'; }
+    renderProxmoxNodeTest(result, true, '正在连接 Proxmox API…');
+    try {
+      const body = new URLSearchParams({csrf: csrf(), original_name: originalName, name, url, token, secret});
+      const response = await fetch('/api/proxmox/nodes/test', {method: 'POST', body});
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.message || '连接测试失败');
+      const suffix = payload.name_matches ? '' : ` 注意：当前键名“${name}”不在 API 返回的物理节点列表中。`;
+      renderProxmoxNodeTest(result, true, `${payload.message}${suffix}`);
+    } catch (error) {
+      renderProxmoxNodeTest(result, false, error.message || String(error));
+    } finally {
+      if (button) { button.disabled = false; button.textContent = original; }
+    }
+  };
+
+  $$('[data-proxmox-node-test]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const name = button.dataset.nodeName || '';
+      const result = document.querySelector(`[data-proxmox-node-test-result="${CSS.escape(name)}"]`);
+      testProxmoxNode({originalName: name, name, button, result});
+    });
+  });
+
+  const proxmoxNodeForm = $('[data-proxmox-node-form]');
+  if (proxmoxNodeForm) {
+    const button = $('[data-proxmox-node-form-test]', proxmoxNodeForm);
+    button?.addEventListener('click', () => testProxmoxNode({
+      originalName: $('input[name="original_name"]', proxmoxNodeForm)?.value.trim() || '',
+      name: $('[data-proxmox-node-name]', proxmoxNodeForm)?.value.trim() || '',
+      url: $('[data-proxmox-node-url]', proxmoxNodeForm)?.value.trim() || '',
+      token: $('[data-proxmox-node-token]', proxmoxNodeForm)?.value.trim() || '',
+      secret: $('[data-proxmox-node-secret]', proxmoxNodeForm)?.value || '',
+      button,
+      result: $('[data-proxmox-node-form-result]', proxmoxNodeForm),
+    }));
+  }
+
   // v0.3.7 Proxmox bind helper: surface Docker/Proxmox conflicts before saving.
   document.querySelectorAll('[data-proxmox-bind-form]').forEach((form) => {
     const select = form.querySelector('[data-proxmox-service-select]');

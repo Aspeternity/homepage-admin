@@ -29,7 +29,7 @@ def test_login_and_main_pages() -> None:
     assert client.get("/healthz").status_code == 200
     assert client.get("/services", follow_redirects=False).status_code == 303
     login(client)
-    for path in ["/services", "/bookmarks", "/settings", "/widgets", "/widget-center", "/widget-schema", "/docker", "/proxmox", "/yaml/services.yaml", "/backups"]:
+    for path in ["/services", "/bookmarks", "/settings", "/widgets", "/widget-center", "/widget-schema", "/docker", "/proxmox", "/proxmox/nodes", "/yaml/services.yaml", "/backups"]:
         assert client.get(path).status_code == 200
 
 
@@ -2719,7 +2719,7 @@ def test_v045_service_form_disables_integrations_when_discovery_is_unconfigured(
     assert "Proxmox 集成暂不可用" in page.text
     assert page.text.count('class="integration-fieldset" disabled') == 2
     assert "/docker/hosts" in page.text
-    assert "/yaml/proxmox.yaml" in page.text
+    assert "/proxmox/nodes" in page.text
 
 
 def test_v045_docker_service_options_api_returns_safe_container_choices(monkeypatch) -> None:
@@ -2800,7 +2800,7 @@ def test_v046_healthz_reports_release_version() -> None:
     client = TestClient(app)
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.4.7"
+    assert response.json()["version"] == "0.4.8"
 
 
 def test_v046_settings_page_exposes_official_common_controls() -> None:
@@ -3094,3 +3094,185 @@ def test_v047_unknown_widget_keeps_legacy_config_post_compatibility() -> None:
         assert data[0]["futurewidget"] == {"alpha": 2, "beta": True}
     finally:
         path.write_text(original, encoding="utf-8")
+
+
+def test_v048_proxmox_discovery_aggregates_multiple_nodes_without_duplicates(monkeypatch) -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    login(client)
+    proxmox_path = settings.config_dir / "proxmox.yaml"
+    original = proxmox_path.read_text(encoding="utf-8")
+    try:
+        proxmox_path.write_text(
+            """---
+pve-node1:
+  url: https://cluster.example:8006
+  token: api@pve!homepage
+  secret: secret-one
+pve-node2:
+  url: https://cluster.example:8006
+  token: api@pve!homepage
+  secret: secret-one
+pve-remote:
+  url: https://remote.example:8006
+  token: api@pve!homepage
+  secret: secret-two
+""",
+            encoding="utf-8",
+        )
+        calls: list[str] = []
+
+        async def fake_discover(connection):
+            calls.append(connection.name)
+            if "cluster.example" in connection.url:
+                return [
+                    {"vmid": 100, "name": "Home", "type": "qemu", "node": "pve-node1", "status": "running", "cpu_percent": 1.0, "memory_percent": 20.0},
+                    {"vmid": 101, "name": "Docker", "type": "qemu", "node": "pve-node2", "status": "running", "cpu_percent": 2.0, "memory_percent": 30.0},
+                ]
+            return [
+                {"vmid": 200, "name": "Remote", "type": "lxc", "node": "pve-remote", "status": "stopped", "cpu_percent": 0.0, "memory_percent": 10.0},
+            ]
+
+        monkeypatch.setattr(main_module.proxmox_discovery, "discover", fake_discover)
+        page = client.get("/proxmox?server=all")
+        assert page.status_code == 200
+        assert "全部节点（3）" in page.text
+        assert page.text.count("Home</h3>") == 1
+        assert page.text.count("Docker</h3>") == 1
+        assert page.text.count("Remote</h3>") == 1
+        assert "Proxmox 节点管理" in page.text
+        # Same cluster URL is queried once, plus the independent remote URL.
+        assert len(calls) == 2
+    finally:
+        proxmox_path.write_text(original, encoding="utf-8")
+
+
+def test_v048_proxmox_node_manager_hides_secret_and_allows_safe_rename() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    proxmox_path = settings.config_dir / "proxmox.yaml"
+    original = proxmox_path.read_text(encoding="utf-8")
+    try:
+        proxmox_path.write_text(
+            """---
+pve-old:
+  url: https://192.0.2.40:8006/
+  token: api@pve!homepage
+  secret: hidden-secret
+  futureOption: keep-me
+""",
+            encoding="utf-8",
+        )
+        page = client.get("/proxmox/nodes?edit=pve-old")
+        assert page.status_code == 200
+        assert "hidden-secret" not in page.text
+        assert "补齐集群节点" in page.text
+        response = client.post(
+            "/proxmox/nodes/save",
+            data={
+                "csrf": csrf,
+                "original_name": "pve-old",
+                "name": "pve-new",
+                "url": "https://192.0.2.40:8006/",
+                "token": "api@pve!homepage",
+                "secret": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(proxmox_path.read_text(encoding="utf-8"))
+        assert "pve-old" not in data
+        assert data["pve-new"]["url"] == "https://192.0.2.40:8006"
+        assert data["pve-new"]["secret"] == "hidden-secret"
+        assert data["pve-new"]["futureOption"] == "keep-me"
+    finally:
+        proxmox_path.write_text(original, encoding="utf-8")
+
+
+def test_v048_proxmox_cluster_sync_creates_missing_physical_nodes(monkeypatch) -> None:
+    from app import main as main_module
+
+    client = TestClient(app)
+    csrf = login(client)
+    proxmox_path = settings.config_dir / "proxmox.yaml"
+    original = proxmox_path.read_text(encoding="utf-8")
+    try:
+        proxmox_path.write_text(
+            """---
+pve-node1:
+  url: https://cluster.example:8006
+  token: api@pve!homepage
+  secret: cluster-secret
+""",
+            encoding="utf-8",
+        )
+
+        async def fake_nodes(connection):
+            return [{"name": "pve-node1", "status": "online"}, {"name": "pve-node2", "status": "online"}]
+
+        monkeypatch.setattr(main_module.proxmox_discovery, "list_nodes", fake_nodes)
+        response = client.post(
+            "/proxmox/nodes/sync-cluster",
+            data={"csrf": csrf, "node": "pve-node1"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(proxmox_path.read_text(encoding="utf-8"))
+        assert data["pve-node2"]["url"] == "https://cluster.example:8006"
+        assert data["pve-node2"]["token"] == "api@pve!homepage"
+        assert data["pve-node2"]["secret"] == "cluster-secret"
+    finally:
+        proxmox_path.write_text(original, encoding="utf-8")
+
+
+def test_v048_proxmox_delete_can_clear_service_references() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    proxmox_path = settings.config_dir / "proxmox.yaml"
+    services_path = settings.config_dir / "services.yaml"
+    proxmox_original = proxmox_path.read_text(encoding="utf-8")
+    services_original = services_path.read_text(encoding="utf-8")
+    try:
+        proxmox_path.write_text(
+            """---
+pve-node1:
+  url: https://192.0.2.40:8006
+  token: api@pve!homepage
+  secret: secret
+""",
+            encoding="utf-8",
+        )
+        services_path.write_text(
+            """---
+- Core:
+    - Home:
+        href: https://home.example
+        proxmoxNode: pve-node1
+        proxmoxVMID: 100
+        widget:
+          type: homeassistant
+          url: https://home.example
+          key: keep-secret
+""",
+            encoding="utf-8",
+        )
+        delete_page = client.get("/proxmox/nodes/delete/pve-node1")
+        assert delete_page.status_code == 200
+        assert "Core / Home" in delete_page.text
+        response = client.post(
+            "/proxmox/nodes/delete-confirm",
+            data={"csrf": csrf, "node_name": "pve-node1", "clear_refs": "1", "confirm_text": "DELETE"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        proxmox = YAML(typ="safe").load(proxmox_path.read_text(encoding="utf-8")) or {}
+        assert "pve-node1" not in proxmox
+        services = YAML(typ="safe").load(services_path.read_text(encoding="utf-8"))
+        details = services[0]["Core"][0]["Home"]
+        assert "proxmoxNode" not in details
+        assert "proxmoxVMID" not in details
+        assert details["widget"]["key"] == "keep-secret"
+    finally:
+        proxmox_path.write_text(proxmox_original, encoding="utf-8")
+        services_path.write_text(services_original, encoding="utf-8")

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}删除 Proxmox 节点 · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading"><div><a class="back-link" href="/proxmox/nodes">← 返回 Proxmox 节点管理</a><h1>删除 Proxmox 节点</h1><p>删除前会检查 <code>services.yaml</code> 中所有 <code>proxmoxNode:</code> 引用。</p></div></section>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+<section class="form-card delete-guide-card">
+  <h2>{{ node.name }}</h2>
+  <p class="section-help"><code>{{ node.url }}</code> · Token ID <code>{{ node.token }}</code></p>
+  {% if references %}
+  <div class="alert warning"><strong>当前有 {{ references|length }} 个服务引用该节点。</strong><br>删除后如果保留引用，这些服务将无法获得 Proxmox VM/LXC 状态。你也可以让 Admin 同时清除这些服务中的 Proxmox 关联。</div>
+  <div class="docker-reference-preview delete-reference-list">{% for ref in references %}<span>{{ ref.group }} / {{ ref.service }} · {{ ref.type|upper }} {{ ref.vmid }}</span>{% endfor %}</div>
+  {% else %}<div class="alert info">当前没有 Homepage 服务引用该节点，可以直接删除。</div>{% endif %}
+  <form method="post" action="/proxmox/nodes/delete-confirm" class="delete-guide-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="node_name" value="{{ node.name }}">
+    {% if references %}
+    <label class="checkbox-row"><input type="checkbox" name="clear_refs" value="1"><span><strong>同时清除 {{ references|length }} 个服务的 Proxmox 关联</strong><small>只删除 <code>proxmoxNode</code> / <code>proxmoxVMID</code> / <code>proxmoxType</code>，服务、Widget、URL 等保持不变。</small></span></label>
+    <label>输入 <code>DELETE</code> 确认删除<input name="confirm_text" autocomplete="off" placeholder="DELETE" required></label>
+    {% endif %}
+    <div class="form-actions"><a class="button secondary" href="/proxmox/nodes">取消</a><button class="button danger" type="submit">删除 Proxmox 节点</button></div>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Proxmox 节点管理 · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <a class="back-link" href="/proxmox">← 返回 Proxmox 发现</a>
+    <h1>Proxmox 节点管理</h1>
+    <p><code>proxmox.yaml</code> 是 Proxmox 连接的唯一配置源。每个键名都应与 PVE 实际物理节点名一致。</p>
+  </div>
+  <div class="heading-actions"><a class="button secondary" href="/yaml/proxmox.yaml">高级编辑 proxmox.yaml</a></div>
+</section>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+{% if ok %}<div class="alert success">{{ ok }}</div>{% endif %}
+
+<div class="docker-host-manager-grid proxmox-node-manager-grid">
+  <section class="form-card docker-host-list-panel">
+    <div class="section-title-row">
+      <div>
+        <h2>当前 Proxmox 节点</h2>
+        <p class="section-help">Homepage 服务中的 <code>proxmoxNode:</code> 直接引用这里的节点名；同一集群的多个节点可以使用相同 URL 与 Token。</p>
+      </div>
+      <span class="count-pill">{{ nodes|length }} 个</span>
+    </div>
+    {% if nodes %}
+    <div class="docker-host-list">
+      {% for node in nodes %}
+      <article class="docker-host-row">
+        <div class="docker-host-row-main">
+          <div class="docker-host-title-line"><h3>{{ node.name }}</h3></div>
+          <div class="docker-host-row-meta">
+            <span>URL：<code>{{ node.normalized_url }}</code></span>
+            <span>Token ID：<code>{{ node.token }}</code></span>
+          </div>
+          <div class="docker-badges">
+            <span class="role-pill configured-pill">proxmox.yaml</span>
+            {% if not node.configured %}<span class="role-pill warning-pill">配置不完整</span>{% endif %}
+            {% if node.needs_url_normalization %}<span class="role-pill warning-pill">URL 需规范化</span>{% endif %}
+            {% if node.reference_count %}<span class="role-pill reference-pill">被 {{ node.reference_count }} 个服务引用</span>{% else %}<span class="role-pill">暂无服务引用</span>{% endif %}
+          </div>
+          {% if node.reference_preview %}
+          <div class="docker-reference-preview">
+            {% for ref in node.reference_preview %}<span>{{ ref.group }} / {{ ref.service }} · {{ ref.type|upper }} {{ ref.vmid }}</span>{% endfor %}
+            {% if node.reference_count > node.reference_preview|length %}<span>等 {{ node.reference_count }} 个服务</span>{% endif %}
+          </div>
+          {% endif %}
+        </div>
+        <div class="docker-host-row-actions proxmox-node-row-actions">
+          <button type="button" class="button secondary" data-proxmox-node-test data-node-name="{{ node.name }}">测试连接</button>
+          <a class="button secondary" href="/proxmox/nodes?edit={{ node.name|urlencode }}">编辑</a>
+          {% if node.configured %}<form method="post" action="/proxmox/nodes/sync-cluster" data-confirm="从“{{ node.name }}”读取集群节点并为缺失的物理节点补齐同一组 URL/Token/Secret？">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="node" value="{{ node.name }}">
+            <button class="button secondary" type="submit">补齐集群节点</button>
+          </form>{% endif %}
+          <a class="button danger" href="/proxmox/nodes/delete/{{ node.name|urlencode }}">删除</a>
+        </div>
+        <div class="docker-host-test-result" data-proxmox-node-test-result="{{ node.name }}" hidden></div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state compact-empty"><h3>还没有 Proxmox 节点</h3><p>在右侧添加只读 API Token 连接，或者从已有 Proxmox Widget 导入。</p></div>
+    {% endif %}
+
+    {% if widget_candidates %}
+    <details class="proxmox-import-candidates">
+      <summary>从已有 Proxmox Widget 导入连接</summary>
+      <div class="simple-list">
+        {% for candidate in widget_candidates %}
+        <div class="list-row">
+          <span class="list-index">P</span>
+          <div class="list-copy"><h3>{{ candidate.name }}</h3><pre>{{ candidate.group }} · {{ candidate.url }} · node={{ candidate.node }}</pre></div>
+          <form method="post" action="/proxmox/import-connection"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="group_index" value="{{ candidate.group_index }}"><input type="hidden" name="item_index" value="{{ candidate.item_index }}"><button class="button secondary" type="submit">导入</button></form>
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </section>
+
+  <section class="form-card docker-host-form-panel">
+    <div class="section-title-row">
+      <div>
+        <h2>{{ '编辑 Proxmox 节点' if edit_node else '添加 Proxmox 节点' }}</h2>
+        <p class="section-help">建议使用只读 API Token（PVEAuditor）。Token Secret 只写入 <code>proxmox.yaml</code>，不会回显。</p>
+      </div>
+      {% if edit_node %}<a class="button secondary small docker-cancel-edit" href="/proxmox/nodes"><span aria-hidden="true">←</span> 取消编辑</a>{% endif %}
+    </div>
+    <form method="post" action="/proxmox/nodes/save" class="docker-host-form" data-proxmox-node-form>
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="original_name" value="{{ form_values.original_name }}">
+      <div class="form-grid two docker-host-form-grid">
+        <label>Proxmox 节点名
+          <input name="name" value="{{ form_values.name }}" placeholder="pve-node1" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,119}" required data-proxmox-node-name {% if edit_node and edit_node.reference_count %}readonly{% endif %}>
+          <small>{% if edit_node and edit_node.reference_count %}当前被 {{ edit_node.reference_count }} 个服务引用，为避免断开关联暂不可改名。{% else %}必须与 PVE 实际物理节点名一致，也是服务中的 <code>proxmoxNode:</code>。{% endif %}</small>
+        </label>
+        <label>Proxmox URL
+          <input name="url" value="{{ form_values.url }}" placeholder="https://192.0.2.40:8006" required data-proxmox-node-url>
+          <small>不要以 <code>/</code> 结尾；保存时会自动规范化。</small>
+        </label>
+        <label>API Token ID
+          <input name="token" value="{{ form_values.token }}" placeholder="api@pve!homepage" required data-proxmox-node-token>
+          <small>例如 <code>api@pve!homepage</code>；建议分配 PVEAuditor 只读权限。</small>
+        </label>
+        <label>API Token Secret
+          <input name="secret" type="password" value="" placeholder="{{ '留空保留现有 Secret' if edit_node else '输入 Token Secret' }}" data-proxmox-node-secret {% if not edit_node %}required{% endif %} autocomplete="new-password">
+          <small>{{ '编辑时留空会保留原 Secret，不会从服务器回显。' if edit_node else '仅保存在 proxmox.yaml；页面不会再次显示明文。' }}</small>
+        </label>
+      </div>
+      <div class="docker-host-sync-summary" role="note">
+        <strong>多节点提示</strong>
+        <span>同一 PVE Cluster 的多个物理节点可以共享同一个 URL / Token / Secret。保存任意一个可用节点后，可使用“补齐集群节点”自动创建缺失节点键名。</span>
+      </div>
+      <div class="docker-host-form-actions">
+        <button class="button secondary" type="button" data-proxmox-node-form-test>测试连接</button>
+        <button class="button primary" type="submit">{{ '保存修改' if edit_node else '添加 Proxmox 节点' }}</button>
+      </div>
+      <div class="docker-host-test-result" data-proxmox-node-form-result hidden></div>
+    </form>
+  </section>
+</div>
+{% endblock %}

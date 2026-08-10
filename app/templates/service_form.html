@@ -80,7 +80,7 @@
     <div class="alert warning service-runtime-conflict"><strong>检测到双重运行状态集成：</strong> 当前服务同时配置 Docker（<code>{{ values.server }} / {{ values.container }}</code>）和 Proxmox（<code>{{ values.proxmoxNode }} / {{ values.proxmoxVMID }}</code>）。Homepage 会同时渲染两套状态与资源。</div>
     {% endif %}
     {% if not proxmox_integration_available %}
-      <div class="alert info integration-unavailable"><strong>Proxmox 集成暂不可用。</strong> 尚未配置 Proxmox 发现连接。请先前往 <a href="/yaml/proxmox.yaml">高级编辑 proxmox.yaml</a> 配置连接，再回到 <a href="/proxmox">Proxmox 发现</a> 验证。{% if values.proxmoxNode or values.proxmoxVMID %}<br>当前服务已有配置 <code>{{ values.proxmoxNode or '未指定节点' }} / {{ values.proxmoxVMID or '未指定 VMID' }}</code>，本次保存会原样保留。{% endif %}</div>
+      <div class="alert info integration-unavailable"><strong>Proxmox 集成暂不可用。</strong> 尚未配置 Proxmox 发现连接。请先前往 <a href="/proxmox/nodes">Proxmox 节点管理</a> 添加只读连接，再回到 <a href="/proxmox">Proxmox 发现</a> 验证。{% if values.proxmoxNode or values.proxmoxVMID %}<br>当前服务已有配置 <code>{{ values.proxmoxNode or '未指定节点' }} / {{ values.proxmoxVMID or '未指定 VMID' }}</code>，本次保存会原样保留。{% endif %}</div>
     {% endif %}
     <fieldset class="integration-fieldset" {% if not proxmox_integration_available %}disabled{% endif %}>
       <div class="form-grid two integration-select-grid">

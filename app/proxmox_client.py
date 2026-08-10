@@ -81,3 +81,43 @@ class ProxmoxDiscoveryClient:
             )
         resources.sort(key=lambda item: (item["type"] != "qemu", item["vmid"]))
         return resources
+
+    async def list_nodes(self, connection: ProxmoxConnection) -> list[dict[str, Any]]:
+        """Return physical PVE nodes visible to the API token."""
+        base = normalize_proxmox_url(connection.url)
+        if not base:
+            raise ProxmoxDiscoveryError("Proxmox URL 为空。")
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
+                response = await client.get(f"{base}/api2/json/nodes", headers=connection.headers)
+            if response.status_code in {401, 403}:
+                raise ProxmoxDiscoveryError("Proxmox Token 无效或权限不足。")
+            response.raise_for_status()
+            payload = response.json()
+        except ProxmoxDiscoveryError:
+            raise
+        except httpx.TimeoutException as exc:
+            raise ProxmoxDiscoveryError("连接 Proxmox 超时。") from exc
+        except httpx.ConnectError as exc:
+            raise ProxmoxDiscoveryError("无法连接 Proxmox，请检查 URL、网络或证书入口。") from exc
+        except httpx.HTTPStatusError as exc:
+            raise ProxmoxDiscoveryError(f"Proxmox 返回 HTTP {exc.response.status_code}。") from exc
+        except (ValueError, TypeError) as exc:
+            raise ProxmoxDiscoveryError(f"Proxmox 返回数据无法解析：{exc}") from exc
+
+        raw = payload.get("data", []) if isinstance(payload, dict) else []
+        nodes: list[dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("node") or "").strip()
+            if not name:
+                continue
+            nodes.append({
+                "name": name,
+                "status": str(item.get("status") or "unknown"),
+                "cpu_percent": round(float(item.get("cpu") or 0.0) * 100, 1),
+                "memory_percent": round((int(item.get("mem") or 0) / int(item.get("maxmem") or 1)) * 100, 1) if int(item.get("maxmem") or 0) else 0.0,
+            })
+        nodes.sort(key=lambda item: item["name"].casefold())
+        return nodes

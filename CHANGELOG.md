@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.8 - 2026-08-10
+
+- Proxmox 发现升级为多节点聚合视图，支持“全部节点”与单节点切换，并按物理节点 + VMID + 类型去重。
+- 新增 Proxmox 节点管理：新增、编辑、测试、删除连接，`proxmox.yaml` 保持唯一连接配置源。
+- 节点名无服务引用时可安全重命名；有引用时锁定，并在删除前扫描 `services.yaml` 依赖。
+- 删除节点可选择同时清除服务中的 `proxmoxNode` / `proxmoxVMID` / `proxmoxType`，服务和 Widget 本身保留。
+- 新增“补齐集群节点”：从任一可用连接读取 PVE `/nodes`，为同一 Cluster 缺失的物理节点自动复制 URL / Token / Secret。
+- Proxmox 发现增加名称/VMID/节点搜索、QEMU/LXC 类型筛选与运行状态筛选。
+- 多个 `proxmox.yaml` 节点共享同一 Cluster URL 时，Admin 聚合发现只请求一次该 URL，避免重复 API 请求；独立 Cluster 仍并行读取。
+
 ## v0.4.7 - 2026-08-10
 
 - 顶部组件升级为完整 Information Widget 可视化工作区。

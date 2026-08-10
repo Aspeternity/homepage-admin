@@ -1,4 +1,4 @@
-# Homepage Admin v0.4.7
+# Homepage Admin v0.4.8
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
@@ -260,7 +260,7 @@ python -m pytest -q
 ```
 
 
-## v0.4.7 顶部组件工作区
+## v0.4.8 顶部组件工作区
 
 - “顶部组件”从通用 YAML 列表升级为 Homepage Information Widget 工作区。
 - 按当前官方文档内置 12 类 Info Widget：Greeting、Date & Time、Logo、Search、Resources、Glances、Open-Meteo、OpenWeatherMap、Stocks、UniFi Controller、Kubernetes、Longhorn。
@@ -295,3 +295,12 @@ python -m pytest -q
 - Docker Server 当前没有任何服务引用时允许安全重命名；有引用时继续锁定并说明引用数量。
 - 重命名会同步迁移 `docker.yaml` 键名与 Admin-only 元数据，连接配置仍只有 `docker.yaml` 一份。
 - Docker 发现页对已加入 Homepage 的容器提供“编辑服务 / 移除配置”；移除仅删除服务的 `server` / `container`，不会删除服务、Widget 或链接。
+
+## v0.4.8：多节点 Proxmox 发现
+
+- `proxmox.yaml` 是 Proxmox 节点连接的唯一配置源。
+- Proxmox 发现支持“全部节点”聚合和单节点筛选，并可搜索 VM/LXC。
+- 新增节点管理页，可视化添加、编辑、测试、删除 PVE 节点连接。
+- Homepage 要求 `proxmoxNode` 同时匹配 `proxmox.yaml` 键名与 PVE 实际物理节点名；集群场景可用“补齐集群节点”自动创建缺失节点键。
+- 删除节点会先检查 `services.yaml` 引用，可选只删连接或同时清除服务的 Proxmox 关联。
+

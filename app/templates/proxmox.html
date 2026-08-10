@@ -2,48 +2,57 @@
 {% block title %}Proxmox 发现 · Homepage Admin{% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div><h1>Proxmox 发现</h1><p>从 <code>proxmox.yaml</code> 读取只读连接，发现 QEMU VM / LXC，并把它们关联到现有 Homepage 服务。</p></div>
-  <div class="heading-actions"><a class="button secondary" href="/yaml/proxmox.yaml">高级编辑 proxmox.yaml</a></div>
+  <div><h1>Proxmox 发现</h1><p>聚合读取 <code>proxmox.yaml</code> 中的多个只读节点连接，发现 QEMU VM / LXC，并把它们关联到 Homepage 服务。</p></div>
+  <div class="heading-actions"><a class="button secondary" href="/proxmox/nodes">Proxmox 节点管理</a><a class="button secondary" href="/yaml/proxmox.yaml">高级编辑 proxmox.yaml</a></div>
 </section>
 {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+{% if ok %}<div class="alert success">{{ ok }}</div>{% endif %}
 
 {% if not connections %}
 <section class="form-card">
-  <h2>尚未配置 proxmox.yaml</h2>
-  <p class="section-help">可以把现有 Proxmox Service Widget 的只读 Token 安全复制到 <code>proxmox.yaml</code>，无需再次粘贴 Secret。</p>
+  <div class="empty-state compact-empty">
+    <h2>还没有 Proxmox 节点</h2>
+    <p>先进入“Proxmox 节点管理”添加只读 API Token。<code>proxmox.yaml</code> 是唯一连接配置源。</p>
+    <a class="button primary" href="/proxmox/nodes">配置 Proxmox 节点</a>
+  </div>
   {% if widget_candidates %}
   <div class="simple-list">
     {% for candidate in widget_candidates %}
-    <div class="list-row">
-      <span class="list-index">P</span>
-      <div class="list-copy"><h3>{{ candidate.name }}</h3><pre>{{ candidate.group }} · {{ candidate.url }} · node={{ candidate.node }}</pre></div>
-      <form method="post" action="/proxmox/import-connection"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="group_index" value="{{ candidate.group_index }}"><input type="hidden" name="item_index" value="{{ candidate.item_index }}"><button class="button primary" type="submit">从此 Widget 导入</button></form>
-    </div>
+    <div class="list-row"><span class="list-index">P</span><div class="list-copy"><h3>{{ candidate.name }}</h3><pre>{{ candidate.group }} · {{ candidate.url }} · node={{ candidate.node }}</pre></div><form method="post" action="/proxmox/import-connection"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="group_index" value="{{ candidate.group_index }}"><input type="hidden" name="item_index" value="{{ candidate.item_index }}"><button class="button secondary" type="submit">从此 Widget 导入</button></form></div>
     {% endfor %}
   </div>
-  {% else %}<div class="empty-state">没有找到可导入的 Proxmox Widget。可以先在高级编辑里配置 <code>proxmox.yaml</code>。</div>{% endif %}
+  {% endif %}
 </section>
 {% else %}
-<section class="form-card proxmox-toolbar">
-  <div><strong>Proxmox 节点 / 连接</strong><p class="section-help"><code>proxmoxNode</code> 会同时用于选择 <code>proxmox.yaml</code> 连接和请求 PVE 的 <code>/nodes/&lt;node&gt;</code>，因此名称应与 PVE 实际节点名一致。</p></div>
-  <form method="get" action="/proxmox"><select name="server" onchange="this.form.submit()">{% for conn in connections %}<option value="{{ conn.name }}" {% if conn.name == selected %}selected{% endif %}>{{ conn.name }} · {{ conn.url }}</option>{% endfor %}</select></form>
+<section class="form-card proxmox-toolbar proxmox-discovery-toolbar">
+  <div><strong>Proxmox 节点</strong><p class="section-help">选择“全部节点”会聚合所有连接并按物理节点 + VMID 去重；同一集群多个节点共享 URL 时只需在 <code>proxmox.yaml</code> 保留同名物理节点键。</p></div>
+  <form method="get" action="/proxmox"><select name="server" onchange="this.form.submit()"><option value="all" {% if selected == 'all' %}selected{% endif %}>全部节点（{{ connections|length }}）</option>{% for conn in connections %}<option value="{{ conn.name }}" {% if conn.name == selected %}selected{% endif %}>{{ conn.name }} · {{ conn.normalized_url }}</option>{% endfor %}</select></form>
 </section>
 
 {% if selected_connection and selected_connection.needs_url_normalization %}
 <div class="alert warning proxmox-config-warning">
-  <div><strong>检测到 Proxmox URL 末尾包含 /</strong><br>Admin 发现功能会自动兼容，但 Homepage 会自行拼接 <code>/api2/json</code>。官方排错建议 URL 不要以 <code>/</code> 结尾；当前值可能生成双斜杠 API 地址。</div>
+  <div><strong>检测到 Proxmox URL 末尾包含 /</strong><br>Admin 会自动兼容，但 Homepage 会自行拼接 <code>/api2/json</code>。建议在节点管理中保存一次以规范化 URL。</div>
   <form method="post" action="/proxmox/normalize-connection"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="server" value="{{ selected }}"><button class="button secondary small" type="submit">一键修复 URL</button></form>
 </div>
 {% endif %}
 
+{% for connection_error in connection_errors %}<div class="alert warning"><strong>{{ connection_error.name }} 读取失败：</strong> {{ connection_error.error }}</div>{% endfor %}
+
 {% if missing_node_connections %}
-<div class="alert warning"><strong>发现未配置同名连接的实际 PVE 节点：</strong> {{ missing_node_connections|join(', ') }}。这些 VM/LXC 暂不建议绑定；请先在 <code>proxmox.yaml</code> 为实际节点名增加连接。</div>
+<div class="alert warning"><strong>发现未配置同名连接的实际 PVE 节点：</strong> {{ missing_node_connections|join(', ') }}。这些 VM/LXC 暂不能安全绑定。可在“Proxmox 节点管理”对现有集群连接使用“补齐集群节点”。</div>
 {% endif %}
 
-<div class="proxmox-grid">
+<section class="form-card proxmox-filter-bar" data-proxmox-filter-root>
+  <label class="span-2">搜索 VM / LXC<input type="search" placeholder="名称 / VMID / 节点" data-proxmox-search></label>
+  <label>类型<select data-proxmox-type-filter><option value="all">全部类型</option><option value="qemu">QEMU VM</option><option value="lxc">LXC</option></select></label>
+  <label>状态<select data-proxmox-state-filter><option value="all">全部状态</option><option value="running">运行中</option><option value="stopped">已停止</option></select></label>
+</section>
+
+<div class="proxmox-grid" data-proxmox-grid>
 {% for vm in resources %}
-  <article class="proxmox-card {% if vm.binding %}configured{% endif %}">
+  <article class="proxmox-card {% if vm.binding %}configured{% endif %}" data-proxmox-card data-search="{{ (vm.name ~ ' ' ~ vm.vmid ~ ' ' ~ vm.node)|lower }}" data-type="{{ vm.type }}" data-state="{{ vm.status }}">
     <header><div><div class="docker-name-row"><h3>{{ vm.name }}</h3><span class="state-dot {{ 'online' if vm.status == 'running' else 'offline' }}"></span></div><p>{{ vm.type|upper }} {{ vm.vmid }} · {{ vm.node }}</p></div><span class="status-pill {{ 'ok' if vm.status == 'running' else '' }}">{{ vm.status }}</span></header>
+    <div class="docker-badges"><span class="role-pill">节点：{{ vm.node }}</span>{% if vm.source_connection and vm.source_connection != vm.node %}<span class="role-pill">发现连接：{{ vm.source_connection }}</span>{% endif %}</div>
     <div class="proxmox-metrics"><div><span>CPU</span><strong>{{ vm.cpu_percent }}%</strong></div><div><span>内存</span><strong>{{ vm.memory_percent }}%</strong></div><div><span>VMID</span><strong>{{ vm.vmid }}</strong></div></div>
     {% if not vm.connection_available %}
       <div class="proxmox-inline-warning">实际节点 <code>{{ vm.bind_node }}</code> 没有同名 <code>proxmox.yaml</code> 连接，不能安全生成 Homepage per-VM 关联。</div>
@@ -60,19 +69,13 @@
       <div class="proxmox-bound-actions">
         <a class="button secondary full" href="/services/item/{{ vm.binding.group_index }}/{{ vm.binding.item_index }}/edit">编辑服务</a>
         <form method="post" action="/proxmox/unbind" data-confirm="确认取消“{{ vm.binding.name }}”与 {{ vm.type|upper }} {{ vm.vmid }} 的 Proxmox 关联？服务本身不会删除。">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
-          <input type="hidden" name="server" value="{{ selected }}">
-          <input type="hidden" name="node" value="{{ vm.bind_node }}">
-          <input type="hidden" name="vmid" value="{{ vm.vmid }}">
-          <input type="hidden" name="type" value="{{ vm.type }}">
-          <input type="hidden" name="group_index" value="{{ vm.binding.group_index }}">
-          <input type="hidden" name="item_index" value="{{ vm.binding.item_index }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="server" value="{{ selected }}"><input type="hidden" name="node" value="{{ vm.bind_node }}"><input type="hidden" name="vmid" value="{{ vm.vmid }}"><input type="hidden" name="type" value="{{ vm.type }}"><input type="hidden" name="group_index" value="{{ vm.binding.group_index }}"><input type="hidden" name="item_index" value="{{ vm.binding.item_index }}">
           <button class="button danger-outline full" type="submit">取消关联</button>
         </form>
       </div>
     {% elif vm.connection_available %}
       <form method="post" action="/proxmox/bind" class="proxmox-bind-form" data-proxmox-bind-form>
-        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="server" value="{{ vm.bind_node }}"><input type="hidden" name="vmid" value="{{ vm.vmid }}"><input type="hidden" name="type" value="{{ vm.type }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="server" value="{{ vm.bind_node }}"><input type="hidden" name="view_server" value="{{ selected }}"><input type="hidden" name="vmid" value="{{ vm.vmid }}"><input type="hidden" name="type" value="{{ vm.type }}">
         <select name="service_ref" data-proxmox-service-select><option value="">选择已有服务...</option>{% for service in service_choices %}<option value="{{ service.group_index }}:{{ service.item_index }}" data-has-docker="{{ '1' if service.has_docker else '0' }}" data-docker-label="{{ service.docker_server }} / {{ service.docker_container }}">{{ service.group }} / {{ service.name }}</option>{% endfor %}</select>
         <input type="hidden" name="group_index"><input type="hidden" name="item_index">
         <label class="proxmox-clear-docker-option" data-proxmox-docker-conflict hidden><input type="checkbox" name="clear_docker" value="1" checked><span>目标服务已有 Docker 集成（<code data-proxmox-docker-label></code>）；关联时同时清除，避免 Homepage 渲染两套状态。</span></label>
@@ -82,8 +85,9 @@
     {% endif %}
   </article>
 {% else %}
-  <div class="empty-state span-all">当前连接没有发现 QEMU VM / LXC，或 Token 没有读取资源的权限。</div>
+  <div class="empty-state span-all">当前选择没有发现 QEMU VM / LXC，或 Token 没有读取资源的权限。</div>
 {% endfor %}
 </div>
+<div class="empty-state span-all" data-proxmox-filter-empty hidden>没有符合当前筛选条件的 VM / LXC。</div>
 {% endif %}
 {% endblock %}

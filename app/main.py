@@ -1906,6 +1906,147 @@ def _proxmox_connections() -> dict[str, ProxmoxConnection]:
     return connections
 
 
+
+def proxmox_node_references(node_name: str) -> list[dict[str, Any]]:
+    """Return services that reference a proxmox.yaml node key."""
+    target = str(node_name or "").strip().casefold()
+    if not target:
+        return []
+    refs: list[dict[str, Any]] = []
+    for service in _service_choices():
+        details = service["details"]
+        if str(details.get("proxmoxNode") or "").strip().casefold() != target:
+            continue
+        refs.append({
+            "group_index": service["group_index"],
+            "item_index": service["item_index"],
+            "group": service["group"],
+            "service": service["name"],
+            "vmid": str(details.get("proxmoxVMID") or ""),
+            "type": str(details.get("proxmoxType") or "qemu"),
+        })
+    return refs
+
+
+def _clear_proxmox_node_references(data: Any, node_name: str) -> int:
+    target = str(node_name or "").strip().casefold()
+    cleared = 0
+    if not isinstance(data, list):
+        return 0
+    for group_entry in data:
+        try:
+            _, items = first_pair(group_entry)
+        except ConfigError:
+            continue
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            try:
+                _, details = first_pair(item)
+            except ConfigError:
+                continue
+            if not isinstance(details, dict):
+                continue
+            if str(details.get("proxmoxNode") or "").strip().casefold() != target:
+                continue
+            details.pop("proxmoxNode", None)
+            details.pop("proxmoxVMID", None)
+            details.pop("proxmoxType", None)
+            cleared += 1
+    return cleared
+
+
+def _proxmox_connection_rows() -> list[dict[str, Any]]:
+    data = store.load("proxmox.yaml")
+    rows: list[dict[str, Any]] = []
+    if not isinstance(data, dict):
+        return rows
+    for raw_name, config in data.items():
+        name = str(raw_name)
+        cfg = config if isinstance(config, dict) else {}
+        url = str(cfg.get("url") or "").strip()
+        token = str(cfg.get("token") or "").strip()
+        secret = str(cfg.get("secret") or "").strip()
+        refs = proxmox_node_references(name)
+        normalized = normalize_proxmox_url(url)
+        rows.append({
+            "name": name,
+            "url": url,
+            "normalized_url": normalized,
+            "token": token,
+            "configured": bool(url and token and secret),
+            "needs_url_normalization": bool(url and url != normalized),
+            "reference_count": len(refs),
+            "reference_preview": refs[:4],
+        })
+    return rows
+
+
+def _validate_proxmox_connection_values(name: str, url: str, token: str, secret: str) -> tuple[str, str, str, str]:
+    name = str(name or "").strip()
+    url = normalize_proxmox_url(url)
+    token = str(token or "").strip()
+    secret = str(secret or "").strip()
+    if not name or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}", name):
+        raise ConfigError("Proxmox 节点名只能使用字母、数字、点、下划线和短横线，并且必须与 PVE 实际节点名一致。")
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ConfigError("Proxmox URL 必须是完整的 http:// 或 https:// 地址。")
+    if not token:
+        raise ConfigError("Proxmox API Token ID 不能为空。")
+    if not secret:
+        raise ConfigError("Proxmox API Token Secret 不能为空。")
+    return name, url, token, secret
+
+
+async def _discover_proxmox_view(
+    connections: dict[str, ProxmoxConnection], selected: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Discover one or all Proxmox connections while deduplicating cluster results."""
+    if not connections:
+        return [], []
+    targets: list[tuple[str, list[tuple[str, ProxmoxConnection]]]] = []
+    if selected != "all":
+        conn = connections.get(selected)
+        if not conn:
+            return [], [{"name": selected, "error": "Proxmox 节点不存在。"}]
+        targets = [(normalize_proxmox_url(conn.url), [(selected, conn)])]
+    else:
+        grouped: dict[str, list[tuple[str, ProxmoxConnection]]] = {}
+        for name, conn in connections.items():
+            grouped.setdefault(normalize_proxmox_url(conn.url), []).append((name, conn))
+        targets = list(grouped.items())
+
+    async def discover_group(group: tuple[str, list[tuple[str, ProxmoxConnection]]]) -> tuple[list[dict[str, Any]], dict[str, str] | None]:
+        _, entries = group
+        errors: list[str] = []
+        for name, conn in entries:
+            try:
+                rows = await proxmox_discovery.discover(conn)
+                for row in rows:
+                    row["source_connection"] = name
+                return rows, None
+            except ProxmoxDiscoveryError as exc:
+                errors.append(f"{name}: {exc}")
+        label = ", ".join(name for name, _ in entries)
+        return [], {"name": label, "error": "；".join(errors) or "连接失败"}
+
+    results = await asyncio.gather(*(discover_group(group) for group in targets))
+    deduped: dict[tuple[str, int, str], dict[str, Any]] = {}
+    errors: list[dict[str, str]] = []
+    for rows, error in results:
+        if error:
+            errors.append(error)
+        for row in rows:
+            key = (str(row.get("node") or ""), int(row.get("vmid") or 0), str(row.get("type") or "qemu"))
+            deduped.setdefault(key, row)
+    resources = sorted(
+        deduped.values(),
+        key=lambda item: (str(item.get("node") or "").casefold(), str(item.get("type")) != "qemu", int(item.get("vmid") or 0)),
+    )
+    return resources, errors
+
+
 def _proxmox_widget_candidates() -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for service in _service_choices():
@@ -1952,38 +2093,24 @@ def _proxmox_bindings() -> dict[tuple[str, int, str], dict[str, Any]]:
 @app.get("/proxmox", response_class=HTMLResponse)
 async def proxmox_page(
     request: Request,
-    server: str = "",
+    server: str = "all",
     _: None = Depends(auth_guard),
 ) -> HTMLResponse:
-    error = None
-    resources: list[dict[str, Any]] = []
     connections = _proxmox_connections()
-    selected = server if server in connections else (next(iter(connections), ""))
-    if selected:
-        try:
-            resources = await proxmox_discovery.discover(connections[selected])
-        except ProxmoxDiscoveryError as exc:
-            error = str(exc)
+    selected = server if server == "all" or server in connections else "all"
+    resources, connection_errors = await _discover_proxmox_view(connections, selected)
     bindings = _proxmox_bindings()
     physical_nodes: set[str] = set()
     for resource in resources:
-        # Homepage's current per-VM endpoint uses proxmoxNode both as the
-        # proxmox.yaml key and as /nodes/{node}; bind to the physical node name.
-        bind_node = str(resource.get("node") or selected)
+        # Homepage's per-VM endpoint requires proxmoxNode to match both the
+        # proxmox.yaml key and the physical /nodes/{node} name.
+        bind_node = str(resource.get("node") or resource.get("source_connection") or "")
         physical_nodes.add(bind_node)
         resource["bind_node"] = bind_node
         resource["connection_available"] = bind_node in connections
         resource["binding"] = bindings.get((bind_node, int(resource["vmid"]), str(resource["type"])))
 
-    connection_rows = []
-    for name, conn in connections.items():
-        normalized = normalize_proxmox_url(conn.url)
-        connection_rows.append({
-            "name": name,
-            "url": conn.url,
-            "normalized_url": normalized,
-            "needs_url_normalization": bool(conn.url and conn.url != normalized),
-        })
+    connection_rows = [row for row in _proxmox_connection_rows() if row.get("configured")]
     selected_row = next((row for row in connection_rows if row["name"] == selected), None)
     missing_node_connections = sorted(node for node in physical_nodes if node and node not in connections)
 
@@ -2009,9 +2136,206 @@ async def proxmox_page(
             resources=resources,
             service_choices=service_choices,
             widget_candidates=_proxmox_widget_candidates(),
-            error=error,
+            connection_errors=connection_errors,
+            error=request.query_params.get("error"),
+            ok=request.query_params.get("ok"),
         ),
     )
+
+
+@app.get("/proxmox/nodes", response_class=HTMLResponse)
+def proxmox_nodes_page(
+    request: Request,
+    edit: str | None = None,
+    _: None = Depends(auth_guard),
+) -> HTMLResponse:
+    rows = _proxmox_connection_rows()
+    editable = next((row for row in rows if row["name"] == str(edit or "")), None)
+    values = {
+        "original_name": "",
+        "name": "",
+        "url": "",
+        "token": "",
+    }
+    if editable:
+        values.update({
+            "original_name": editable["name"],
+            "name": editable["name"],
+            "url": normalize_proxmox_url(str(editable["url"] or "")),
+            "token": editable["token"],
+        })
+    return templates.TemplateResponse(
+        request,
+        "proxmox_nodes.html",
+        context(
+            request,
+            "proxmox",
+            nodes=rows,
+            edit_node=editable,
+            form_values=values,
+            widget_candidates=_proxmox_widget_candidates(),
+            error=request.query_params.get("error"),
+            ok=request.query_params.get("ok"),
+        ),
+    )
+
+
+@app.post("/api/proxmox/nodes/test")
+async def proxmox_node_test(request: Request, _: None = Depends(auth_guard)) -> JSONResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    original_name = str(form.get("original_name", "")).strip()
+    name = str(form.get("name", "")).strip()
+    url = str(form.get("url", "")).strip()
+    token = str(form.get("token", "")).strip()
+    secret = str(form.get("secret", "")).strip()
+    try:
+        existing_cfg = store.load("proxmox.yaml").get(original_name) if original_name else None
+        if isinstance(existing_cfg, dict):
+            if not name:
+                name = original_name
+            if not url:
+                url = str(existing_cfg.get("url") or "")
+            if not token:
+                token = str(existing_cfg.get("token") or "")
+            if not secret:
+                secret = str(existing_cfg.get("secret") or "")
+        name, url, token, secret = _validate_proxmox_connection_values(name, url, token, secret)
+        connection = ProxmoxConnection(name, url, token, secret)
+        nodes = await proxmox_discovery.list_nodes(connection)
+        resources = await proxmox_discovery.discover(connection)
+        node_names = [str(item.get("name") or "") for item in nodes]
+        return JSONResponse({
+            "ok": True,
+            "message": f"连接成功：发现 {len(nodes)} 个 PVE 节点、{len(resources)} 个 VM/LXC。",
+            "nodes": node_names,
+            "resources": len(resources),
+            "name_matches": name in node_names,
+        })
+    except (ConfigError, ProxmoxDiscoveryError) as exc:
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=400)
+
+
+@app.post("/proxmox/nodes/save")
+async def proxmox_node_save(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    original_name = str(form.get("original_name", "")).strip()
+    name = str(form.get("name", "")).strip()
+    url = str(form.get("url", "")).strip()
+    token = str(form.get("token", "")).strip()
+    secret = str(form.get("secret", "")).strip()
+    try:
+        data = store.load("proxmox.yaml")
+        if not isinstance(data, dict):
+            raise ConfigError("proxmox.yaml 必须是对象映射。")
+        existing_cfg = data.get(original_name) if original_name else None
+        if original_name and not isinstance(existing_cfg, dict):
+            raise ConfigError("要编辑的 Proxmox 节点已不存在，请刷新页面。")
+        if original_name and not secret:
+            secret = str(existing_cfg.get("secret") or "")
+        name, url, token, secret = _validate_proxmox_connection_values(name, url, token, secret)
+        renamed = bool(original_name and original_name != name)
+        if renamed:
+            refs = proxmox_node_references(original_name)
+            if refs:
+                raise ConfigError(f"Proxmox 节点“{original_name}”当前被 {len(refs)} 个服务引用，暂不能改名。请先取消或迁移这些关联。")
+        duplicate = next((key for key in data.keys() if str(key).casefold() == name.casefold() and str(key) != original_name), None)
+        if duplicate:
+            raise ConfigError(f"Proxmox 节点“{name}”已存在。")
+
+        cfg = copy.deepcopy(existing_cfg) if isinstance(existing_cfg, dict) else CommentedMap()
+        cfg["url"] = url
+        cfg["token"] = token
+        cfg["secret"] = secret
+        if renamed:
+            del data[original_name]
+        data[name] = cfg
+        action = "rename" if renamed else ("update" if original_name else "add")
+        store.write_data("proxmox.yaml", data, actor(request), f"{action} proxmox node {name}")
+        return redirect("/proxmox/nodes", ok=f"已保存 Proxmox 节点“{name}”。连接配置只维护在 proxmox.yaml。")
+    except ConfigError as exc:
+        target = f"/proxmox/nodes?edit={quote(original_name)}" if original_name else "/proxmox/nodes"
+        return redirect(target, error=str(exc))
+
+
+@app.post("/proxmox/nodes/sync-cluster")
+async def proxmox_node_sync_cluster(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    source = str(form.get("node", "")).strip()
+    try:
+        connections = _proxmox_connections()
+        connection = connections.get(source)
+        if not connection:
+            raise ConfigError("Proxmox 节点不存在，请刷新后重试。")
+        nodes = await proxmox_discovery.list_nodes(connection)
+        data = store.load("proxmox.yaml")
+        if not isinstance(data, dict):
+            raise ConfigError("proxmox.yaml 必须是对象映射。")
+        created: list[str] = []
+        for node in nodes:
+            name = str(node.get("name") or "").strip()
+            if not name or name in data:
+                continue
+            data[name] = CommentedMap({"url": normalize_proxmox_url(connection.url), "token": connection.token, "secret": connection.secret})
+            created.append(name)
+        if created:
+            store.write_data("proxmox.yaml", data, actor(request), f"sync proxmox cluster nodes from {source}")
+            return redirect("/proxmox/nodes", ok=f"已从“{source}”发现并补齐 {len(created)} 个物理节点：{', '.join(created)}。")
+        return redirect("/proxmox/nodes", ok=f"“{source}”可见的 PVE 节点都已存在于 proxmox.yaml，无需补齐。")
+    except (ConfigError, ProxmoxDiscoveryError) as exc:
+        return redirect("/proxmox/nodes", error=str(exc))
+
+
+@app.get("/proxmox/nodes/delete/{node_name}", response_class=HTMLResponse)
+def proxmox_node_delete_page(node_name: str, request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
+    data = store.load("proxmox.yaml")
+    config = data.get(node_name) if isinstance(data, dict) else None
+    if not isinstance(config, dict):
+        raise HTTPException(404)
+    refs = proxmox_node_references(node_name)
+    return templates.TemplateResponse(
+        request,
+        "proxmox_node_delete.html",
+        context(
+            request,
+            "proxmox",
+            node={"name": node_name, "url": normalize_proxmox_url(str(config.get("url") or "")), "token": str(config.get("token") or "")},
+            references=refs,
+            error=request.query_params.get("error"),
+        ),
+    )
+
+
+@app.post("/proxmox/nodes/delete-confirm")
+async def proxmox_node_delete_confirm(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    node_name = str(form.get("node_name", "")).strip()
+    clear_refs = str(form.get("clear_refs", "")) == "1"
+    confirm_text = str(form.get("confirm_text", "")).strip()
+    try:
+        data = store.load("proxmox.yaml")
+        if not isinstance(data, dict) or node_name not in data:
+            raise ConfigError("Proxmox 节点已不存在，请刷新页面。")
+        refs = proxmox_node_references(node_name)
+        if refs and confirm_text != "DELETE":
+            raise ConfigError(f"该节点当前被 {len(refs)} 个服务引用。请输入 DELETE 确认删除。")
+        cleared = 0
+        if clear_refs and refs:
+            services = store.load("services.yaml")
+            cleared = _clear_proxmox_node_references(services, node_name)
+            if cleared:
+                store.write_data("services.yaml", services, actor(request), f"clear proxmox node references {node_name}")
+        if node_name not in data:
+            raise ConfigError("Proxmox 节点已不存在，请刷新页面。")
+        del data[node_name]
+        store.write_data("proxmox.yaml", data, actor(request), f"delete proxmox node {node_name}")
+        suffix = f"，并清除了 {cleared} 个服务的 Proxmox 关联" if cleared else ""
+        return redirect("/proxmox/nodes", ok=f"已删除 Proxmox 节点“{node_name}”{suffix}。")
+    except ConfigError as exc:
+        return redirect(f"/proxmox/nodes/delete/{quote(node_name)}", error=str(exc))
 
 
 @app.post("/proxmox/import-connection")
@@ -2137,6 +2461,7 @@ async def proxmox_bind_service(request: Request, _: None = Depends(auth_guard)) 
     form = await request.form()
     verify_csrf(request, str(form.get("csrf", "")))
     server = str(form.get("server", "")).strip()
+    view_server = str(form.get("view_server", "")).strip() or server
     try:
         if server not in _proxmox_connections():
             raise ConfigError("Proxmox Server 不存在。")
@@ -2161,9 +2486,9 @@ async def proxmox_bind_service(request: Request, _: None = Depends(auth_guard)) 
             details.pop("server", None)
             details.pop("container", None)
         store.write_data("services.yaml", data, actor(request), f"bind service {service_name} to proxmox {server}/{vmid}")
-        return redirect(f"/proxmox?server={quote(server)}", ok=f"已将“{service_name}”关联到 {ptype.upper()} {vmid}。")
+        return redirect(f"/proxmox?server={quote(view_server)}", ok=f"已将“{service_name}”关联到 {ptype.upper()} {vmid}。")
     except (ConfigError, IndexError, ValueError) as exc:
-        return redirect(f"/proxmox?server={quote(server)}" if server else "/proxmox", error=str(exc))
+        return redirect(f"/proxmox?server={quote(view_server)}" if view_server else "/proxmox", error=str(exc))
 
 
 def _docker_host_safe(host: dict[str, Any]) -> dict[str, Any]:
