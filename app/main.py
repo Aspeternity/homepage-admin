@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import quote, urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
@@ -4254,20 +4254,35 @@ async def save_yaml(filename: str, request: Request, _: None = Depends(auth_guar
 
 @app.get("/backups", response_class=HTMLResponse)
 def backups_page(request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
+    backups = store.list_backups()
     return templates.TemplateResponse(
         request,
         "backups.html",
         context(
             request,
             "backups",
-            backups=store.list_backups(),
+            backups=backups,
+            backup_stats=store.backup_stats(backups),
             backup_limit=store.backup_limit(),
             backup_limit_default=max(1, min(settings.backup_limit, 500)),
             backup_limit_custom=store.backup_limit_is_custom(),
+            allowed_files=list(ALLOWED_FILES.keys()),
             ok=request.query_params.get("ok"),
             error=request.query_params.get("error"),
         ),
     )
+
+
+@app.post("/backups/snapshot")
+async def create_manual_snapshot(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        note = str(form.get("note", "")).strip()
+        backup_id = store.create_snapshot(actor(request), note=note)
+        return redirect("/backups", ok=f"完整配置快照 {backup_id} 已创建。手动快照不会被自动保留策略清理。")
+    except ConfigError as exc:
+        return redirect("/backups", error=str(exc))
 
 
 @app.post("/backups/settings")
@@ -4277,7 +4292,7 @@ async def update_backup_settings(request: Request, _: None = Depends(auth_guard)
     try:
         limit = int(str(form.get("backup_limit", "")).strip())
         saved = store.set_backup_limit(limit, actor(request))
-        return redirect("/backups", ok=f"备份保留上限已更新为 {saved} 组；超出部分已按时间自动清理。")
+        return redirect("/backups", ok=f"自动备份保留上限已更新为 {saved} 组；手动快照和受保护备份不会自动删除。")
     except (TypeError, ValueError):
         return redirect("/backups", error="请输入 1 到 500 之间的整数。")
     except ConfigError as exc:
@@ -4290,7 +4305,58 @@ async def reset_backup_settings(request: Request, _: None = Depends(auth_guard))
     verify_csrf(request, str(form.get("csrf", "")))
     try:
         value = store.reset_backup_limit(actor(request))
-        return redirect("/backups", ok=f"已恢复环境默认备份上限：{value} 组。")
+        return redirect("/backups", ok=f"已恢复环境默认自动备份上限：{value} 组。")
+    except ConfigError as exc:
+        return redirect("/backups", error=str(exc))
+
+
+def _masked_backup_diff_text(filename: str, text: str) -> str:
+    if filename.endswith((".css", ".js")):
+        return text
+    parsed = store.validate_text(filename, text)
+    return store.dump(mask_secrets(parsed))
+
+
+@app.get("/api/backups/{backup_id}/{filename}/diff")
+def backup_diff(backup_id: str, filename: str, _: None = Depends(auth_guard)) -> JSONResponse:
+    try:
+        current_text = _masked_backup_diff_text(filename, store.read_text(filename))
+        backup_text = _masked_backup_diff_text(filename, store.read_backup_text(backup_id, filename))
+        diff = "\n".join(
+            difflib.unified_diff(
+                current_text.splitlines(),
+                backup_text.splitlines(),
+                fromfile=f"{filename} · 当前",
+                tofile=f"{filename} · 恢复后",
+                lineterm="",
+            )
+        )
+        return JSONResponse({"ok": True, "changed": current_text != backup_text, "diff": diff or "当前文件与该备份一致，无需恢复。"})
+    except ConfigError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+
+@app.get("/backups/{backup_id}/download")
+def download_backup(backup_id: str, _: None = Depends(auth_guard)) -> StreamingResponse:
+    try:
+        buffer, filename = store.backup_archive(backup_id)
+    except ConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/backups/{backup_id}/pin")
+async def pin_backup(request: Request, backup_id: str, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        pinned = str(form.get("pinned", "1")).strip() != "0"
+        store.set_backup_pinned(backup_id, pinned, actor(request))
+        return redirect("/backups", ok=("备份已设为保护，不会被自动清理或批量删除。" if pinned else "已取消备份保护。"))
     except ConfigError as exc:
         return redirect("/backups", error=str(exc))
 
@@ -4304,6 +4370,18 @@ async def restore_backup(
     try:
         store.restore(backup_id, filename, actor(request))
         return redirect("/backups", ok=f"已从 {backup_id} 恢复 {filename}。恢复前的当前文件也已自动备份。")
+    except ConfigError as exc:
+        return redirect("/backups", error=str(exc))
+
+
+@app.post("/backups/{backup_id}/restore-all")
+async def restore_backup_all(request: Request, backup_id: str, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        protection_id = store.restore_all(backup_id, actor(request))
+        suffix = f"；恢复前保护点 {protection_id} 已自动创建并锁定。" if protection_id else "。"
+        return redirect("/backups", ok=f"备份 {backup_id} 中的配置文件已整体恢复{suffix}")
     except ConfigError as exc:
         return redirect("/backups", error=str(exc))
 
@@ -4327,7 +4405,7 @@ async def delete_all_backups(request: Request, _: None = Depends(auth_guard)) ->
     verify_csrf(request, str(form.get("csrf", "")))
     try:
         count = store.delete_all_backups(actor(request))
-        return redirect("/backups", ok=f"已删除 {count} 组备份。" if count else "当前没有可删除的备份。")
+        return redirect("/backups", ok=f"已删除 {count} 组未保护备份。受保护备份已保留。" if count else "当前没有可删除的未保护备份。")
     except ConfigError as exc:
         return redirect("/backups", error=str(exc))
 

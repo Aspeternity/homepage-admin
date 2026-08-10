@@ -1,81 +1,171 @@
 {% extends "base.html" %}
-{% block title %}备份回滚 · Homepage Admin{% endblock %}
+{% block title %}备份中心 · Homepage Admin{% endblock %}
 {% block content %}
-<section class="page-heading">
+<section class="page-heading backup-heading">
   <div>
-    <h1>备份回滚</h1>
-    <p>每次保存前都会备份原文件；恢复操作本身也会先备份当前版本。当前最多自动保留 {{ backup_limit }} 组备份。</p>
+    <h1>备份中心</h1>
+    <p>自动保存前备份、手动完整快照、差异预览与安全恢复集中管理。自动保留策略只清理普通自动备份。</p>
   </div>
   {% if backups %}
   <div class="heading-actions">
-    <div class="backup-summary"><span>{{ backups|length }} 组备份</span></div>
-    <form method="post" action="/backups/delete-all" data-confirm="确认删除全部 {{ backups|length }} 组备份？此操作不可撤销。">
+    <form method="post" action="/backups/delete-all" data-confirm="确认删除全部未保护备份？手动快照如果未设为保护也会被删除；受保护备份会保留。">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button class="button danger-outline" type="submit">清空全部备份</button>
+      <button class="button danger-outline" type="submit">清理未保护备份</button>
     </form>
   </div>
   {% endif %}
 </section>
 
-<section class="form-card backup-policy-card">
-  <div class="backup-policy-copy">
+<section class="backup-dashboard">
+  <div class="backup-stat"><span>全部备份</span><strong>{{ backup_stats.count }}</strong><small>{{ backup_stats.size_label }}</small></div>
+  <div class="backup-stat"><span>自动备份</span><strong>{{ backup_stats.auto }}</strong><small>受保留上限管理</small></div>
+  <div class="backup-stat"><span>手动快照</span><strong>{{ backup_stats.manual }}</strong><small>不会自动清理</small></div>
+  <div class="backup-stat"><span>受保护</span><strong>{{ backup_stats.protected }}</strong><small>批量清理会跳过</small></div>
+</section>
+
+<section class="backup-control-grid">
+  <div class="form-card backup-snapshot-card">
     <div class="section-title-row">
       <div>
-        <h2>自动保留策略</h2>
-        <p class="section-help">可直接在后台调整备份数量，无需修改 Portainer Stack。保存后如果现有备份超过新上限，会立即删除最旧的备份。</p>
+        <h2>创建完整配置快照</h2>
+        <p class="section-help">一次备份当前全部 Homepage 配置文件，适合大改版、迁移或批量调整前手动留档。手动快照不会被自动保留策略删除。</p>
       </div>
-      <span class="status-pill {{ 'ok' if backup_limit_custom else '' }}">{{ '自定义' if backup_limit_custom else '环境默认' }}</span>
+      <span class="status-pill ok">推荐</span>
     </div>
-  </div>
-  <div class="backup-policy-controls">
-    <form class="backup-limit-form" method="post" action="/backups/settings">
+    <form method="post" action="/backups/snapshot" class="backup-snapshot-form">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <label>保留备份数量
-        <div class="backup-limit-input-row">
-          <input type="number" name="backup_limit" value="{{ backup_limit }}" min="1" max="500" step="1" inputmode="numeric" required>
-          <span>组</span>
-        </div>
+      <label>备注（可选）
+        <input name="note" maxlength="240" placeholder="例如：升级 Homepage 前 / 调整 Docker 多主机前">
       </label>
-      <button class="button primary" type="submit">保存上限</button>
+      <button class="button primary" type="submit">立即创建完整快照</button>
     </form>
-    {% if backup_limit_custom %}
-    <form method="post" action="/backups/settings/reset" data-confirm="恢复环境默认值 {{ backup_limit_default }} 组？">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button class="button secondary" type="submit">恢复默认 {{ backup_limit_default }}</button>
-    </form>
-    {% else %}
-    <span class="backup-policy-note">当前来自 <code>BACKUP_LIMIT={{ backup_limit_default }}</code></span>
-    {% endif %}
+  </div>
+
+  <div class="form-card backup-policy-card compact-policy">
+    <div class="backup-policy-copy">
+      <div class="section-title-row">
+        <div>
+          <h2>自动备份保留策略</h2>
+          <p class="section-help">仅限制保存配置时产生的普通自动备份；手动快照、恢复前保护点以及手动锁定的备份不会被自动删除。</p>
+        </div>
+        <span class="status-pill {{ 'ok' if backup_limit_custom else '' }}">{{ '自定义' if backup_limit_custom else '环境默认' }}</span>
+      </div>
+    </div>
+    <div class="backup-policy-controls">
+      <form class="backup-limit-form" method="post" action="/backups/settings">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label>自动备份上限
+          <div class="backup-limit-input-row">
+            <input type="number" name="backup_limit" value="{{ backup_limit }}" min="1" max="500" step="1" inputmode="numeric" required>
+            <span>组</span>
+          </div>
+        </label>
+        <button class="button primary" type="submit">保存上限</button>
+      </form>
+      {% if backup_limit_custom %}
+      <form method="post" action="/backups/settings/reset" data-confirm="恢复环境默认值 {{ backup_limit_default }} 组？">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="button secondary" type="submit">恢复默认 {{ backup_limit_default }}</button>
+      </form>
+      {% else %}
+      <span class="backup-policy-note">当前来自 <code>BACKUP_LIMIT={{ backup_limit_default }}</code></span>
+      {% endif %}
+    </div>
   </div>
 </section>
 
-<div class="backup-list">
+{% if backups %}
+<section class="form-card backup-filter-card">
+  <div class="backup-filter-grid">
+    <label>搜索备份
+      <input type="search" placeholder="备注 / 文件 / 操作 / ID" data-backup-search>
+    </label>
+    <label>类型
+      <select data-backup-kind-filter>
+        <option value="">全部类型</option>
+        <option value="auto">自动备份</option>
+        <option value="manual">手动快照</option>
+        <option value="pre_restore">恢复前保护</option>
+      </select>
+    </label>
+    <label>文件
+      <select data-backup-file-filter>
+        <option value="">全部文件</option>
+        {% for filename in allowed_files %}<option value="{{ filename }}">{{ filename }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+</section>
+{% endif %}
+
+<div class="backup-list" data-backup-list>
 {% for backup in backups %}
-  <section class="backup-card">
-    <header>
-      <strong>{{ backup.id }}</strong>
-      <span class="backup-meta">{{ backup.files|length }} 个文件 · {{ backup.size_label }}</span>
-      <div class="backup-header-actions">
+  <section class="backup-card modern-backup-card" data-backup-card data-kind="{{ backup.kind }}" data-files="{{ backup.files|join(' ') }}" data-search="{{ backup.id }} {{ backup.note }} {{ backup.action }} {{ backup.actor }} {{ backup.files|join(' ') }}">
+    <header class="backup-card-header">
+      <div class="backup-card-title">
+        <div class="backup-badges">
+          <span class="status-pill {{ 'ok' if backup.kind == 'manual' else '' }}">{{ backup.kind_label }}</span>
+          {% if backup.pinned %}<span class="status-pill protected">已保护</span>{% endif %}
+          {% if backup.legacy %}<span class="status-pill">旧版兼容</span>{% endif %}
+        </div>
+        <strong><time datetime="{{ backup.created_at }}" data-local-datetime>{{ backup.created_at }}</time></strong>
+        <code class="backup-id">{{ backup.id }}</code>
+        {% if backup.note %}<p class="backup-note">{{ backup.note }}</p>{% endif %}
+        <div class="backup-context">
+          <span>{{ backup.files|length }} 个文件</span>
+          <span>{{ backup.size_label }}</span>
+          {% if backup.actor %}<span>操作者：{{ backup.actor }}</span>{% endif %}
+          {% if backup.action %}<span title="{{ backup.action }}">来源：{{ backup.action }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="backup-header-actions backup-action-cluster">
+        <a class="button small secondary" href="/backups/{{ backup.id }}/download">导出 ZIP</a>
+        <form method="post" action="/backups/{{ backup.id }}/pin">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="pinned" value="{{ '0' if backup.pinned else '1' }}">
+          <button class="button small secondary" type="submit">{{ '取消保护' if backup.pinned else '保护' }}</button>
+        </form>
+        {% if backup.files|length > 1 %}
+        <form method="post" action="/backups/{{ backup.id }}/restore-all" data-confirm="确认恢复这个快照中的 {{ backup.files|length }} 个配置文件？系统会先创建一个受保护的恢复前快照。">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="button small primary" type="submit">恢复全部</button>
+        </form>
+        {% endif %}
         <form method="post" action="/backups/{{ backup.id }}/delete" data-confirm="确认删除备份 {{ backup.id }}？删除后无法从这一版本恢复。">
           <input type="hidden" name="csrf" value="{{ csrf }}">
-          <button class="button small danger-outline" type="submit">删除备份</button>
+          <button class="button small danger-outline" type="submit" {% if backup.pinned %}disabled title="请先取消保护"{% endif %}>删除</button>
         </form>
       </div>
     </header>
-    <div class="backup-files">
+    <div class="backup-files modern-backup-files">
     {% for file in backup.files %}
-      <div>
-        <code>{{ file }}</code>
-        <form method="post" action="/backups/{{ backup.id }}/{{ file }}/restore" data-confirm="确认恢复 {{ file }} 到备份 {{ backup.id }}？">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
-          <button class="button small secondary" type="submit">恢复</button>
-        </form>
+      <div class="backup-file-row">
+        <div><code>{{ file }}</code></div>
+        <div class="backup-file-actions">
+          <button class="button small secondary" type="button" data-backup-diff data-backup-id="{{ backup.id }}" data-backup-file="{{ file }}">对比当前</button>
+          <form method="post" action="/backups/{{ backup.id }}/{{ file }}/restore" data-confirm="确认恢复 {{ file }} 到这个版本？恢复前的当前文件会先自动备份。">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="button small secondary" type="submit">恢复此文件</button>
+          </form>
+        </div>
       </div>
     {% endfor %}
     </div>
   </section>
 {% else %}
-  <section class="empty-state"><div class="empty-icon">↶</div><h2>暂无备份</h2><p>第一次保存配置后，这里会出现自动备份。</p></section>
+  <section class="empty-state"><div class="empty-icon">↶</div><h2>暂无备份</h2><p>保存配置时会自动产生文件级备份，也可以在上方手动创建完整配置快照。</p></section>
 {% endfor %}
+  <section class="empty-state backup-filter-empty" data-backup-filter-empty hidden><div class="empty-icon">⌕</div><h2>没有符合条件的备份</h2><p>调整搜索、类型或文件筛选后再试。</p></section>
 </div>
+
+<dialog class="modal diff-modal" data-backup-diff-dialog>
+  <div class="diff-modal-inner">
+    <div class="section-title-row">
+      <div><h3>恢复前差异预览</h3><p data-backup-diff-title>正在读取备份...</p></div>
+      <button class="icon-button" type="button" data-backup-diff-close>×</button>
+    </div>
+    <pre class="diff-preview"><code data-backup-diff-output>正在生成...</code></pre>
+    <div class="modal-actions"><button class="button secondary" type="button" data-backup-diff-close>关闭</button></div>
+  </div>
+</dialog>
 {% endblock %}

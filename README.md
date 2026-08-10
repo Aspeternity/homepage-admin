@@ -1,7 +1,17 @@
-# Homepage Admin v0.4.9
+# Homepage Admin v0.5.0
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
+
+
+## v0.5.0 备份中心
+
+- 自动保存前继续创建文件级备份。
+- 支持“立即创建完整快照”，一次保存 `services.yaml`、`bookmarks.yaml`、`settings.yaml`、`widgets.yaml`、`docker.yaml`、`proxmox.yaml`、`kubernetes.yaml`、`custom.css`、`custom.js` 等当前存在的配置。
+- 手动快照与恢复前保护点不受自动保留数量上限影响。
+- 支持备注、类型/文件筛选、备份保护、ZIP 导出、当前配置 Diff、单文件恢复和完整快照恢复。
+- 完整恢复会先生成一个受保护的“恢复前保护点”，避免误操作后无法回退。
+- 旧版备份目录无需迁移，v0.5.0 会以兼容模式继续读取。
 
 
 ## v0.4.3：Docker 主机 Single Source of Truth

@@ -2800,7 +2800,7 @@ def test_v046_healthz_reports_release_version() -> None:
     client = TestClient(app)
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.4.9"
+    assert response.json()["version"] == "0.5.0"
 
 
 def test_v046_settings_page_exposes_official_common_controls() -> None:
@@ -3287,3 +3287,133 @@ def test_v049_proxmox_filters_stay_on_one_row() -> None:
     assert 'data-proxmox-type-filter' in template
     assert 'data-proxmox-state-filter' in template
     assert '.proxmox-filter-bar { display: grid; grid-template-columns: minmax(280px, 2fr) minmax(150px, .7fr) minmax(150px, .7fr);' in css
+
+
+def test_v050_backup_center_manual_snapshot_and_archive() -> None:
+    import zipfile
+
+    client = TestClient(app)
+    csrf = login(client)
+    response = client.post(
+        "/backups/snapshot",
+        data={"csrf": csrf, "note": "Before major change"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    rows = store.list_backups()
+    snapshot = next(row for row in rows if row["kind"] == "manual" and row["note"] == "Before major change")
+    assert "services.yaml" in snapshot["files"]
+    assert "settings.yaml" in snapshot["files"]
+    manifest = settings.data_dir / "backups" / snapshot["id"] / ".backup.json"
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert payload["kind"] == "manual"
+    assert payload["note"] == "Before major change"
+
+    downloaded = client.get(f'/backups/{snapshot["id"]}/download')
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"].startswith("application/zip")
+    from io import BytesIO
+    with zipfile.ZipFile(BytesIO(downloaded.content)) as archive:
+        assert "services.yaml" in archive.namelist()
+        assert "backup.json" in archive.namelist()
+
+
+def test_v050_manual_and_pinned_backups_survive_auto_prune() -> None:
+    prefs = settings.data_dir / "admin-settings.json"
+    original_prefs = prefs.read_text(encoding="utf-8") if prefs.exists() else None
+    widgets_path = settings.config_dir / "widgets.yaml"
+    original_widgets = widgets_path.read_text(encoding="utf-8")
+    try:
+        store.set_backup_limit(1, "test")
+        manual_id = store.create_snapshot("test", "protected by kind")
+        # Generate two automatic backups; only the newest ordinary auto backup may remain.
+        store.write_text("widgets.yaml", original_widgets + "\n# v050-a\n", "test", "v050 auto a")
+        store.write_text("widgets.yaml", original_widgets + "\n# v050-b\n", "test", "v050 auto b")
+        rows = store.list_backups()
+        assert any(row["id"] == manual_id and row["kind"] == "manual" for row in rows)
+        autos = [row for row in rows if row["kind"] == "auto"]
+        assert len(autos) <= 1
+        if autos:
+            pinned_id = autos[0]["id"]
+            store.set_backup_pinned(pinned_id, True, "test")
+            store.write_text("widgets.yaml", original_widgets + "\n# v050-c\n", "test", "v050 auto c")
+            rows = store.list_backups()
+            assert any(row["id"] == pinned_id and row["pinned"] for row in rows)
+    finally:
+        widgets_path.write_text(original_widgets, encoding="utf-8")
+        if original_prefs is None:
+            prefs.unlink(missing_ok=True)
+        else:
+            prefs.write_text(original_prefs, encoding="utf-8")
+
+
+def test_v050_backup_diff_masks_secrets() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    services_path = settings.config_dir / "services.yaml"
+    original = services_path.read_text(encoding="utf-8")
+    try:
+        snapshot = client.post("/backups/snapshot", data={"csrf": csrf, "note": "secret diff"}, follow_redirects=False)
+        assert snapshot.status_code == 303
+        backup_id = next(row["id"] for row in store.list_backups() if row["kind"] == "manual" and row["note"] == "secret diff")
+        services_path.write_text(original.replace("super-secret-key", "different-current-secret"), encoding="utf-8")
+        response = client.get(f"/api/backups/{backup_id}/services.yaml/diff")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert "super-secret-key" not in payload["diff"]
+        assert "different-current-secret" not in payload["diff"]
+        assert "__HOMEPAGE_ADMIN_SECRET_" in payload["diff"]
+    finally:
+        services_path.write_text(original, encoding="utf-8")
+
+
+def test_v050_restore_all_creates_pinned_protection_snapshot() -> None:
+    services_path = settings.config_dir / "services.yaml"
+    settings_path = settings.config_dir / "settings.yaml"
+    original_services = services_path.read_text(encoding="utf-8")
+    original_settings = settings_path.read_text(encoding="utf-8")
+    try:
+        backup_id = store.create_snapshot("test", "restore all target")
+        services_path.write_text(original_services + "\n# changed-after-snapshot\n", encoding="utf-8")
+        settings_path.write_text(original_settings + "\n# changed-after-snapshot\n", encoding="utf-8")
+        protection_id = store.restore_all(backup_id, "test")
+        assert protection_id
+        assert services_path.read_text(encoding="utf-8") == original_services
+        assert settings_path.read_text(encoding="utf-8") == original_settings
+        protection = next(row for row in store.list_backups() if row["id"] == protection_id)
+        assert protection["kind"] == "pre_restore"
+        assert protection["pinned"] is True
+        assert "services.yaml" in protection["files"]
+        assert "settings.yaml" in protection["files"]
+    finally:
+        services_path.write_text(original_services, encoding="utf-8")
+        settings_path.write_text(original_settings, encoding="utf-8")
+
+
+def test_v050_backup_center_ui_contains_new_controls() -> None:
+    client = TestClient(app)
+    login(client)
+    page = client.get("/backups")
+    assert page.status_code == 200
+    assert "备份中心" in page.text
+    assert "创建完整配置快照" in page.text
+    assert 'action="/backups/snapshot"' in page.text
+    assert "自动备份保留策略" in page.text
+    assert "data-backup-search" in page.text or "暂无备份" in page.text
+
+
+def test_v050_protected_backup_survives_bulk_delete_and_requires_unpin() -> None:
+    backup_id = store.create_snapshot("test", "pin test")
+    store.set_backup_pinned(backup_id, True, "test")
+    deleted = store.delete_all_backups("test")
+    assert deleted >= 0
+    assert (settings.data_dir / "backups" / backup_id).exists()
+    try:
+        store.delete_backup(backup_id, "test")
+        assert False, "pinned backup should not be deletable"
+    except Exception as exc:
+        assert "先取消保护" in str(exc)
+    store.set_backup_pinned(backup_id, False, "test")
+    store.delete_backup(backup_id, "test")
+    assert not (settings.data_dir / "backups" / backup_id).exists()

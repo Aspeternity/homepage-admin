@@ -1413,4 +1413,55 @@
     provider?.addEventListener('change', syncProviderPanels);
     syncProviderPanels();
   }
+
+  // v0.5.0 Backup Center: client-side filtering and masked restore diff preview.
+  const backupCards = [...document.querySelectorAll('[data-backup-card]')];
+  if (backupCards.length) {
+    const search = document.querySelector('[data-backup-search]');
+    const kind = document.querySelector('[data-backup-kind-filter]');
+    const file = document.querySelector('[data-backup-file-filter]');
+    const empty = document.querySelector('[data-backup-filter-empty]');
+    const applyBackupFilter = () => {
+      const q = (search?.value || '').trim().toLowerCase();
+      const k = kind?.value || '';
+      const f = file?.value || '';
+      let visible = 0;
+      backupCards.forEach((card) => {
+        const matchesQuery = !q || (card.dataset.search || '').toLowerCase().includes(q);
+        const matchesKind = !k || card.dataset.kind === k;
+        const matchesFile = !f || (card.dataset.files || '').split(/\s+/).includes(f);
+        card.hidden = !(matchesQuery && matchesKind && matchesFile);
+        if (!card.hidden) visible += 1;
+      });
+      if (empty) empty.hidden = visible !== 0;
+    };
+    search?.addEventListener('input', applyBackupFilter);
+    kind?.addEventListener('change', applyBackupFilter);
+    file?.addEventListener('change', applyBackupFilter);
+  }
+
+  const backupDiffDialog = document.querySelector('[data-backup-diff-dialog]');
+  if (backupDiffDialog) {
+    const output = backupDiffDialog.querySelector('[data-backup-diff-output]');
+    const title = backupDiffDialog.querySelector('[data-backup-diff-title]');
+    document.querySelectorAll('[data-backup-diff]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const backupId = button.dataset.backupId || '';
+        const filename = button.dataset.backupFile || '';
+        if (title) title.textContent = `${filename} · 当前 → 恢复后`;
+        if (output) output.textContent = '正在读取并生成差异...';
+        backupDiffDialog.showModal();
+        try {
+          const response = await fetch(`/api/backups/${encodeURIComponent(backupId)}/${encodeURIComponent(filename)}/diff`);
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.error || '生成差异失败');
+          if (output) output.textContent = data.diff;
+        } catch (error) {
+          if (output) output.textContent = `生成差异失败：${error.message}`;
+        }
+      });
+    });
+    backupDiffDialog.querySelectorAll('[data-backup-diff-close]').forEach((button) => button.addEventListener('click', () => backupDiffDialog.close()));
+  }
+
 })();

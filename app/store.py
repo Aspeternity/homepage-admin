@@ -6,6 +6,8 @@ import re
 import shutil
 import tempfile
 import uuid
+import zipfile
+from io import BytesIO
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from io import StringIO
@@ -141,16 +143,85 @@ class HomepageStore:
         with FileLock(str(self.lock_path), timeout=15):
             yield
 
-    def _create_backup(self, filename: str) -> str | None:
+    def _new_backup_id(self) -> str:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        return f"{stamp}-{uuid.uuid4().hex[:8]}"
+
+    def _backup_manifest_path(self, directory: Path) -> Path:
+        return directory / ".backup.json"
+
+    def _write_backup_manifest(
+        self,
+        directory: Path,
+        *,
+        kind: str,
+        actor: str,
+        action: str,
+        files: list[str],
+        note: str = "",
+        pinned: bool = False,
+    ) -> None:
+        payload = {
+            "version": 1,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "kind": kind,
+            "actor": actor,
+            "action": action,
+            "files": sorted(files),
+            "note": note.strip()[:240],
+            "pinned": bool(pinned),
+        }
+        self._atomic_write(self._backup_manifest_path(directory), json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+    def _read_backup_manifest(self, directory: Path) -> dict[str, Any]:
+        path = self._backup_manifest_path(directory)
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _create_backup(self, filename: str, *, actor: str = "", action: str = "") -> str | None:
         source = self.path(filename)
         if not source.exists():
             return None
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        backup_id = f"{stamp}-{uuid.uuid4().hex[:8]}"
+        backup_id = self._new_backup_id()
         target_dir = self.backup_dir / backup_id
         target_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target_dir / filename)
+        self._write_backup_manifest(
+            target_dir, kind="auto", actor=actor, action=action, files=[filename]
+        )
         return backup_id
+
+    def create_snapshot(self, actor: str, note: str = "") -> str:
+        """Create a manual full-config snapshot. Manual snapshots are never auto-pruned."""
+        with self.locked():
+            backup_id = self._new_backup_id()
+            target_dir = self.backup_dir / backup_id
+            target_dir.mkdir(parents=True, exist_ok=True)
+            files: list[str] = []
+            for filename in ALLOWED_FILES:
+                source = self.path(filename)
+                if not source.exists():
+                    continue
+                shutil.copy2(source, target_dir / filename)
+                files.append(filename)
+            if not files:
+                shutil.rmtree(target_dir, ignore_errors=True)
+                raise ConfigError("当前没有可备份的 Homepage 配置文件。")
+            self._write_backup_manifest(
+                target_dir,
+                kind="manual",
+                actor=actor,
+                action="manual snapshot",
+                files=files,
+                note=note,
+            )
+            self._audit(actor, f"manual snapshot:{backup_id}", "backups", backup_id)
+            return backup_id
 
     def _atomic_write(self, path: Path, text: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,7 +243,7 @@ class HomepageStore:
     def write_text(self, filename: str, text: str, actor: str, action: str) -> str | None:
         self.validate_text(filename, text)
         with self.locked():
-            backup_id = self._create_backup(filename)
+            backup_id = self._create_backup(filename, actor=actor, action=action)
             self._atomic_write(self.path(filename), text)
             self._audit(actor, action, filename, backup_id)
             self._prune_backups()
@@ -199,6 +270,30 @@ class HomepageStore:
             raise ConfigError("无效备份 ID。") from exc
         return path
 
+    @staticmethod
+    def _backup_kind_label(kind: str) -> str:
+        return {
+            "manual": "手动快照",
+            "pre_restore": "恢复前保护",
+            "auto": "自动备份",
+        }.get(kind, "历史备份")
+
+    @staticmethod
+    def _size_label(total_bytes: int) -> str:
+        if total_bytes < 1024:
+            return f"{total_bytes} B"
+        if total_bytes < 1024 * 1024:
+            return f"{total_bytes / 1024:.1f} KB"
+        return f"{total_bytes / (1024 * 1024):.1f} MB"
+
+    def _legacy_created_at(self, backup_id: str, directory: Path) -> str:
+        try:
+            parts = backup_id.split("-")
+            parsed = datetime.strptime("-".join(parts[:2]), "%Y%m%d-%H%M%S").replace(tzinfo=timezone.utc)
+            return parsed.isoformat()
+        except (ValueError, IndexError):
+            return datetime.fromtimestamp(directory.stat().st_mtime, tz=timezone.utc).isoformat()
+
     def list_backups(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         if not self.backup_dir.exists():
@@ -206,17 +301,84 @@ class HomepageStore:
         for directory in sorted(self.backup_dir.iterdir(), reverse=True):
             if not directory.is_dir():
                 continue
-            file_paths = sorted(x for x in directory.iterdir() if x.is_file())
+            file_paths = sorted(x for x in directory.iterdir() if x.is_file() and x.name in ALLOWED_FILES)
             files = [x.name for x in file_paths]
+            if not files:
+                continue
             total_bytes = sum(x.stat().st_size for x in file_paths)
-            if total_bytes < 1024:
-                size_label = f"{total_bytes} B"
-            elif total_bytes < 1024 * 1024:
-                size_label = f"{total_bytes / 1024:.1f} KB"
-            else:
-                size_label = f"{total_bytes / (1024 * 1024):.1f} MB"
-            rows.append({"id": directory.name, "files": files, "total_bytes": total_bytes, "size_label": size_label})
+            manifest = self._read_backup_manifest(directory)
+            kind = str(manifest.get("kind") or "auto")
+            created_at = str(manifest.get("created_at") or self._legacy_created_at(directory.name, directory))
+            rows.append({
+                "id": directory.name,
+                "files": files,
+                "total_bytes": total_bytes,
+                "size_label": self._size_label(total_bytes),
+                "kind": kind,
+                "kind_label": self._backup_kind_label(kind),
+                "created_at": created_at,
+                "actor": str(manifest.get("actor") or ""),
+                "action": str(manifest.get("action") or ""),
+                "note": str(manifest.get("note") or ""),
+                "pinned": bool(manifest.get("pinned", False)),
+                "legacy": not bool(manifest),
+            })
         return rows
+
+    def backup_stats(self, backups: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        rows = backups if backups is not None else self.list_backups()
+        total_bytes = sum(int(row.get("total_bytes", 0)) for row in rows)
+        return {
+            "count": len(rows),
+            "auto": sum(1 for row in rows if row.get("kind") == "auto"),
+            "manual": sum(1 for row in rows if row.get("kind") == "manual"),
+            "protected": sum(1 for row in rows if row.get("pinned") or row.get("kind") == "pre_restore"),
+            "total_bytes": total_bytes,
+            "size_label": self._size_label(total_bytes),
+        }
+
+    def read_backup_text(self, backup_id: str, filename: str) -> str:
+        if filename not in ALLOWED_FILES:
+            raise ConfigError("不允许访问该备份文件。")
+        source = self._backup_path(backup_id) / filename
+        if not source.exists() or not source.is_file():
+            raise ConfigError("备份文件不存在。")
+        return source.read_text(encoding="utf-8")
+
+    def backup_archive(self, backup_id: str) -> tuple[BytesIO, str]:
+        directory = self._backup_path(backup_id)
+        if not directory.exists() or not directory.is_dir():
+            raise ConfigError("备份不存在或已经删除。")
+        buffer = BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for path in sorted(directory.iterdir()):
+                if path.is_file() and path.name in ALLOWED_FILES:
+                    archive.write(path, arcname=path.name)
+            manifest = self._backup_manifest_path(directory)
+            if manifest.exists():
+                archive.write(manifest, arcname="backup.json")
+        buffer.seek(0)
+        return buffer, f"homepage-backup-{backup_id}.zip"
+
+    def set_backup_pinned(self, backup_id: str, pinned: bool, actor: str) -> bool:
+        directory = self._backup_path(backup_id)
+        if not directory.exists() or not directory.is_dir():
+            raise ConfigError("备份不存在或已经删除。")
+        with self.locked():
+            manifest = self._read_backup_manifest(directory)
+            files = [p.name for p in directory.iterdir() if p.is_file() and p.name in ALLOWED_FILES]
+            kind = str(manifest.get("kind") or "auto")
+            self._write_backup_manifest(
+                directory,
+                kind=kind,
+                actor=str(manifest.get("actor") or actor),
+                action=str(manifest.get("action") or "legacy backup"),
+                files=files,
+                note=str(manifest.get("note") or ""),
+                pinned=bool(pinned),
+            )
+            self._audit(actor, f"{'pin' if pinned else 'unpin'} backup:{backup_id}", "backups", backup_id)
+        return bool(pinned)
 
     def restore(self, backup_id: str, filename: str, actor: str) -> None:
         source = self._backup_path(backup_id) / filename
@@ -225,10 +387,54 @@ class HomepageStore:
         text = source.read_text(encoding="utf-8")
         self.write_text(filename, text, actor=actor, action=f"restore:{backup_id}")
 
+    def restore_all(self, backup_id: str, actor: str) -> str | None:
+        source_dir = self._backup_path(backup_id)
+        if not source_dir.exists() or not source_dir.is_dir():
+            raise ConfigError("备份不存在或已经删除。")
+        payload: dict[str, str] = {}
+        for path in source_dir.iterdir():
+            if not path.is_file() or path.name not in ALLOWED_FILES:
+                continue
+            text = path.read_text(encoding="utf-8")
+            self.validate_text(path.name, text)
+            payload[path.name] = text
+        if not payload:
+            raise ConfigError("该备份中没有可恢复的配置文件。")
+        with self.locked():
+            protection_id = self._new_backup_id()
+            protection_dir = self.backup_dir / protection_id
+            protection_dir.mkdir(parents=True, exist_ok=True)
+            protected_files: list[str] = []
+            for filename in payload:
+                current = self.path(filename)
+                if current.exists():
+                    shutil.copy2(current, protection_dir / filename)
+                    protected_files.append(filename)
+            if protected_files:
+                self._write_backup_manifest(
+                    protection_dir,
+                    kind="pre_restore",
+                    actor=actor,
+                    action=f"protect before restore-all:{backup_id}",
+                    files=protected_files,
+                    note=f"恢复 {backup_id} 前自动创建",
+                    pinned=True,
+                )
+            else:
+                shutil.rmtree(protection_dir, ignore_errors=True)
+                protection_id = None
+            for filename, text in payload.items():
+                self._atomic_write(self.path(filename), text)
+                self._audit(actor, f"restore-all:{backup_id}", filename, protection_id)
+        return protection_id
+
     def delete_backup(self, backup_id: str, actor: str) -> None:
         target = self._backup_path(backup_id)
         if not target.exists() or not target.is_dir():
             raise ConfigError("备份不存在或已经删除。")
+        manifest = self._read_backup_manifest(target)
+        if bool(manifest.get("pinned", False)):
+            raise ConfigError("该备份已保护，请先取消保护后再删除。")
         with self.locked():
             shutil.rmtree(target)
             self._audit(actor, f"delete backup:{backup_id}", "backups", None)
@@ -236,11 +442,16 @@ class HomepageStore:
     def delete_all_backups(self, actor: str) -> int:
         with self.locked():
             directories = [p for p in self.backup_dir.iterdir() if p.is_dir()]
+            deleted = 0
             for directory in directories:
+                manifest = self._read_backup_manifest(directory)
+                if bool(manifest.get("pinned", False)):
+                    continue
                 shutil.rmtree(directory, ignore_errors=True)
-            if directories:
-                self._audit(actor, f"delete all backups:{len(directories)}", "backups", None)
-            return len(directories)
+                deleted += 1
+            if deleted:
+                self._audit(actor, f"delete all unprotected backups:{deleted}", "backups", None)
+            return deleted
 
     def _read_preferences(self) -> dict[str, Any]:
         if not self.preferences_path.exists():
@@ -637,10 +848,20 @@ class HomepageStore:
         return self.backup_limit()
 
     def _prune_backups(self) -> None:
+        # Retention applies only to ordinary automatic backups. Manual snapshots,
+        # restore protection points and explicitly pinned backups are preserved.
         limit = self.backup_limit()
-        dirs = [p for p in self.backup_dir.iterdir() if p.is_dir()]
-        dirs.sort(reverse=True)
-        for old in dirs[limit:]:
+        candidates: list[Path] = []
+        for directory in self.backup_dir.iterdir():
+            if not directory.is_dir():
+                continue
+            manifest = self._read_backup_manifest(directory)
+            kind = str(manifest.get("kind") or "auto")
+            if kind != "auto" or bool(manifest.get("pinned", False)):
+                continue
+            candidates.append(directory)
+        candidates.sort(reverse=True)
+        for old in candidates[limit:]:
             shutil.rmtree(old, ignore_errors=True)
 
 
