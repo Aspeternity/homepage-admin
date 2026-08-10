@@ -1,72 +1,324 @@
 {% extends "base.html" %}
 {% block title %}页面设置 · Homepage Admin{% endblock %}
 {% block content %}
-<section class="page-heading"><div><h1>页面设置</h1><p>管理标题、背景、主题、快速启动和分组布局。</p></div><a class="button secondary" href="{{ homepage_url }}" target="_blank" rel="noopener">查看 Homepage ↗</a></section>
-<form class="editor-form" method="post" action="/settings">
+<section class="page-heading settings-heading">
+  <div>
+    <h1>页面设置</h1>
+    <p>可视化管理 Homepage 的 <code>settings.yaml</code>。常用选项使用表单，未覆盖的高级字段仍可通过 YAML 保留。</p>
+  </div>
+  <div class="page-heading-actions">
+    <a class="button secondary" href="https://gethomepage.dev/configs/settings/" target="_blank" rel="noopener">官方文档 ↗</a>
+    <a class="button secondary" href="{{ homepage_url }}" target="_blank" rel="noopener">查看 Homepage ↗</a>
+  </div>
+</section>
+
+<nav class="settings-section-nav" aria-label="页面设置分区">
+  <a href="#settings-basic">基础</a>
+  <a href="#settings-appearance">外观</a>
+  <a href="#settings-behavior">行为</a>
+  <a href="#settings-quicklaunch">快速启动</a>
+  <a href="#settings-layout">分组布局</a>
+  <a href="#settings-advanced">高级</a>
+</nav>
+
+<form class="editor-form" method="post" action="/settings" data-settings-editor>
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <section class="form-card">
-    <h2>基础设置</h2>
-    <div class="form-grid two">
-      <label>页面标题<input name="title" value="{{ values.title }}"></label>
-      <label>语言<input name="language" value="{{ values.language }}" placeholder="zh-CN"></label>
-      <label class="span-2">页面说明<input name="description" value="{{ values.description }}"></label>
-      <label class="span-2">Favicon<input name="favicon" value="{{ values.favicon }}" placeholder="https://... 或 /images/favicon.png"></label>
-      <label>主题<select name="theme"><option value="">允许页面切换</option><option value="light" {% if values.theme == 'light' %}selected{% endif %}>light</option><option value="dark" {% if values.theme == 'dark' %}selected{% endif %}>dark</option></select></label>
-      <label>配色<input name="color" value="{{ values.color }}" placeholder="slate / zinc / blue ..."></label>
-      <label>页头样式<select name="headerStyle"><option value="">默认</option>{% for x in ['underlined','boxed','clean'] %}<option value="{{ x }}" {% if values.headerStyle == x %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></label>
-      <label>默认链接目标<select name="target"><option value="">默认</option>{% for x in ['_blank','_self','_parent','_top'] %}<option value="{{ x }}" {% if values.target == x %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></label>
-      <label>状态样式<input name="statusStyle" value="{{ values.statusStyle }}" placeholder="dot / basic"></label>
-      <label>前缀图标样式<input name="iconStyle" value="{{ values.iconStyle }}" placeholder="theme / gradient"></label>
-      <label>卡片背景模糊<input name="cardBlur" value="{{ values.cardBlur }}" placeholder="xs / md / xl"></label>
-      <label class="checkbox"><input type="checkbox" name="fullWidth" {% if values.fullWidth %}checked{% endif %}>使用全宽布局</label>
-      <label class="checkbox"><input type="checkbox" name="hideVersion" {% if values.hideVersion %}checked{% endif %}>隐藏 Homepage 版本</label>
+  <input type="hidden" name="settings_form_version" value="3">
+
+  <section class="form-card settings-card" id="settings-basic">
+    <div class="section-heading">
+      <div><h2>基础信息</h2><p class="section-help">标题、语言、PWA 起始地址和反向代理 Base URL。</p></div>
+      <span class="role-pill">settings.yaml</span>
+    </div>
+    <div class="form-grid two aligned-fields">
+      <label>页面标题
+        <input name="title" value="{{ values.title }}" placeholder="My Homepage">
+        <small class="field-help">同时用于 PWA 的名称。</small>
+      </label>
+      <label>语言 / Locale
+        <input name="language" list="homepage-language-options" value="{{ values.language }}" placeholder="zh-Hans / en / de">
+        <small class="field-help">可使用官方语言代码，也可填写区域 Locale。</small>
+      </label>
+      <label class="span-2">页面说明
+        <input name="description" value="{{ values.description }}" placeholder="A dashboard for self-hosted services">
+        <small class="field-help empty" aria-hidden="true">占位</small>
+      </label>
+      <label class="span-2">Favicon
+        <input name="favicon" value="{{ values.favicon }}" placeholder="https://example.com/favicon.ico 或 /images/favicon.png">
+        <small class="field-help">支持完整 URL 或 <code>/app/public</code> 下的本地路径。</small>
+      </label>
+      <label>Start URL
+        <input name="startUrl" value="{{ values.startUrl }}" placeholder="/ 或 https://homepage.example.com">
+        <small class="field-help">用于可安装 PWA 的 <code>start_url</code>。</small>
+      </label>
+      <label>Base URL
+        <input name="base" value="{{ values.base }}" placeholder="https://homepage.example.com">
+        <small class="field-help">仅特殊反代子路径场景需要；必须是绝对 URL。</small>
+      </label>
+    </div>
+    <datalist id="homepage-language-options">
+      {% for language in languages %}<option value="{{ language }}"></option>{% endfor %}
+    </datalist>
+  </section>
+
+  <section class="form-card settings-card" id="settings-appearance">
+    <div class="section-heading">
+      <div><h2>外观与背景</h2><p class="section-help">主题、配色、页头、背景图片及卡片效果。</p></div>
+      <span class="role-pill">Appearance</span>
+    </div>
+    <div class="form-grid three aligned-fields">
+      <label>主题
+        <select name="theme">
+          <option value="">允许 Homepage 页面切换</option>
+          <option value="light" {% if values.theme == 'light' %}selected{% endif %}>浅色 · light</option>
+          <option value="dark" {% if values.theme == 'dark' %}selected{% endif %}>深色 · dark</option>
+          {% if values.theme and values.theme not in ['light','dark'] %}<option value="{{ values.theme }}" selected>{{ values.theme }} · 现有值</option>{% endif %}
+        </select>
+        <small class="field-help">设置固定主题后，Homepage 会隐藏自身主题切换器。</small>
+      </label>
+      <label>配色
+        <select name="color">
+          <option value="">Homepage 默认</option>
+          {% for color in colors %}<option value="{{ color }}" {% if values.color == color %}selected{% endif %}>{{ color }}</option>{% endfor %}
+          {% if values.color and values.color not in colors %}<option value="{{ values.color }}" selected>{{ values.color }} · 现有值</option>{% endif %}
+        </select>
+        <small class="field-help">使用 Homepage 官方支持的 Tailwind 色板。</small>
+      </label>
+      <label>页头样式
+        <select name="headerStyle">
+          <option value="">默认 · underlined</option>
+          {% for item in header_styles %}<option value="{{ item }}" {% if values.headerStyle == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+          {% if values.headerStyle and values.headerStyle not in header_styles %}<option value="{{ values.headerStyle }}" selected>{{ values.headerStyle }} · 现有值</option>{% endif %}
+        </select>
+        <small class="field-help">支持 underlined、boxed、clean、boxedWidgets。</small>
+      </label>
+      <label>前缀图标样式
+        <select name="iconStyle">
+          <option value="">默认 · gradient</option>
+          {% for item in icon_styles %}<option value="{{ item }}" {% if values.iconStyle == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+          {% if values.iconStyle and values.iconStyle not in icon_styles %}<option value="{{ values.iconStyle }}" selected>{{ values.iconStyle }} · 现有值</option>{% endif %}
+        </select>
+        <small class="field-help">影响 MDI 等前缀图标的显示风格。</small>
+      </label>
+      <label>卡片背景模糊
+        <select name="cardBlur" data-card-blur>
+          <option value="">不配置</option>
+          {% for item in card_blurs %}<option value="{{ item }}" {% if values.cardBlur == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+          {% if values.cardBlur and values.cardBlur not in card_blurs %}<option value="{{ values.cardBlur }}" selected>{{ values.cardBlur }} · 现有值</option>{% endif %}
+        </select>
+        <small class="field-help">官方提示：与背景 blur / saturate / brightness 滤镜不兼容。</small>
+      </label>
+      <label>书签样式
+        <select name="bookmarksStyle">
+          <option value="">默认</option>
+          <option value="icons" {% if values.bookmarksStyle == 'icons' %}selected{% endif %}>仅图标 · icons</option>
+          {% if values.bookmarksStyle and values.bookmarksStyle != 'icons' %}<option value="{{ values.bookmarksStyle }}" selected>{{ values.bookmarksStyle }} · 现有值</option>{% endif %}
+        </select>
+        <small class="field-help">全局控制 bookmarks 的图标布局。</small>
+      </label>
+    </div>
+
+    <div class="settings-subcard">
+      <div class="section-heading compact-heading"><div><h3>背景图片</h3><p class="section-help">完整 URL 或挂载到 <code>/app/public/images</code> 的本地图片。</p></div></div>
+      <div class="form-grid two aligned-fields">
+        <label class="span-2">图片地址
+          <input name="background_image" value="{{ values.background.image or '' }}" placeholder="https://example.com/background.jpg 或 /images/background.jpg" data-background-image>
+          <small class="field-help">添加新的本地图片后，Homepage 官方说明可能需要重启容器。</small>
+        </label>
+        <label>背景模糊
+          <select name="background_blur_mode" data-background-filter>
+            <option value="__unset__" {% if values.background_blur_mode == '__unset__' %}selected{% endif %}>未配置 blur</option>
+            <option value="__empty__" {% if values.background_blur_mode == '__empty__' %}selected{% endif %}>无模糊 · 写入 blur: ""</option>
+            {% for item in background_blurs %}<option value="{{ item }}" {% if values.background_blur_mode == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+            {% if values.background_blur_mode not in ['__unset__','__empty__'] and values.background_blur_mode not in background_blurs %}<option value="{{ values.background_blur_mode }}" selected>{{ values.background_blur_mode }} · 现有值</option>{% endif %}
+          </select>
+          <small class="field-help">显式的 <code>blur: ""</code> 会被正确保留。</small>
+        </label>
+        <label>透明度
+          <input type="number" name="background_opacity" value="{{ values.background.get('opacity', '') }}" min="0" max="100" placeholder="0–100">
+          <small class="field-help">0–100。</small>
+        </label>
+        <label>饱和度
+          <input type="number" name="background_saturate" value="{{ values.background.get('saturate', '') }}" min="0" max="200" placeholder="0–200" data-background-filter>
+          <small class="field-help">留空使用 Homepage 默认。</small>
+        </label>
+        <label>亮度
+          <input type="number" name="background_brightness" value="{{ values.background.get('brightness', '') }}" min="0" max="200" placeholder="0–200" data-background-filter>
+          <small class="field-help">留空使用 Homepage 默认。</small>
+        </label>
+      </div>
+      <div class="alert warning settings-compat-warning" data-background-compat hidden>
+        <strong>效果冲突：</strong>Homepage 官方说明 <code>cardBlur</code> 与背景的 blur、saturate、brightness 滤镜不兼容，建议二选一。
+      </div>
+      <div class="settings-background-preview" data-background-preview {% if not values.background.image %}hidden{% endif %} style="{% if values.background.image %}background-image:url('{{ values.background.image|e }}'){% endif %}"><span>背景预览</span></div>
     </div>
   </section>
 
-  <section class="form-card">
-    <h2>背景图</h2>
-    <div class="form-grid two">
-      <label class="span-2">图片地址<input name="background_image" value="{{ values.background.image or '' }}" placeholder="https://... 或 /images/background.png"></label>
-      <label>模糊<input name="background_blur" value="{{ values.background.get('blur', '') }}" placeholder="sm / md / xl；留空会保留现有 blur: &quot;&quot;"></label>
-      <label>饱和度<input type="number" name="background_saturate" value="{{ values.background.get('saturate', '') }}" min="0" max="200"></label>
-      <label>亮度<input type="number" name="background_brightness" value="{{ values.background.get('brightness', '') }}" min="0" max="200"></label>
-      <label>透明度<input type="number" name="background_opacity" value="{{ values.background.get('opacity', '') }}" min="0" max="100"></label>
+  <section class="form-card settings-card" id="settings-behavior">
+    <div class="section-heading">
+      <div><h2>页面行为</h2><p class="section-help">链接、状态、列数、折叠、统计与公开部署相关行为。</p></div>
+      <span class="role-pill">Behavior</span>
     </div>
-    <p class="form-help">官方说明：背景滤镜与 <code>cardBlur</code> 不兼容，建议二选一。<br><strong>注意：</strong>Homepage 的 <code>blur: &quot;&quot;</code> 是有效配置；当前版本会在未修改时原样保留，不再误删。</p>
+    <div class="form-grid three aligned-fields">
+      <label>默认链接目标
+        <select name="target">
+          <option value="">Homepage 默认</option>
+          {% for item in ['_blank','_self','_top'] %}<option value="{{ item }}" {% if values.target == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+          {% if values.target and values.target not in ['_blank','_self','_top'] %}<option value="{{ values.target }}" selected>{{ values.target }} · 现有值</option>{% endif %}
+        </select>
+        <small class="field-help"><code>_blank</code> 新标签；<code>_self</code> 当前页。</small>
+      </label>
+      <label>状态样式
+        <select name="statusStyle">
+          <option value="">默认 · 显示延迟/状态文本</option>
+          {% for item in status_styles %}<option value="{{ item }}" {% if values.statusStyle == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+          {% if values.statusStyle and values.statusStyle not in status_styles %}<option value="{{ values.statusStyle }}" selected>{{ values.statusStyle }} · 现有值</option>{% endif %}
+        </select>
+        <small class="field-help">dot 显示圆点；basic 显示 UP / DOWN。</small>
+      </label>
+      <label>服务分组最大列数
+        <input type="number" name="maxGroupColumns" min="5" max="8" value="{{ values.maxGroupColumns }}" placeholder="5–8">
+        <small class="field-help">仅默认 columns 风格生效；Homepage 默认最多 4。</small>
+      </label>
+      <label>书签分组最大列数
+        <input type="number" name="maxBookmarkGroupColumns" min="1" max="8" value="{{ values.maxBookmarkGroupColumns }}" placeholder="最大 8">
+        <small class="field-help">Homepage 默认最多 6。</small>
+      </label>
+    </div>
+    <div class="settings-toggle-grid">
+      <label class="settings-toggle"><input type="checkbox" name="fullWidth" {% if values.fullWidth %}checked{% endif %}><span><strong>全宽布局</strong><small>让 Homepage 使用整个浏览器宽度。</small></span></label>
+      <label class="settings-toggle"><input type="checkbox" name="useEqualHeights" {% if values.useEqualHeights %}checked{% endif %}><span><strong>全局等高卡片</strong><small>同一行服务卡片保持一致高度。</small></span></label>
+      <label class="settings-toggle"><input type="checkbox" name="groupsInitiallyCollapsed" {% if values.groupsInitiallyCollapsed %}checked{% endif %}><span><strong>分组默认折叠</strong><small>单个布局组可覆盖此设置。</small></span></label>
+      <label class="settings-toggle"><input type="checkbox" name="disableCollapse" {% if values.disableCollapse %}checked{% endif %}><span><strong>禁用分组折叠</strong><small>关闭服务和书签的折叠功能。</small></span></label>
+      <label class="settings-toggle"><input type="checkbox" name="showStats" {% if values.showStats %}checked{% endif %}><span><strong>默认展开容器统计</strong><small>全局开启 Docker / Proxmox stats。</small></span></label>
+      <label class="settings-toggle"><input type="checkbox" name="hideErrors" {% if values.hideErrors %}checked{% endif %}><span><strong>隐藏 Widget API 错误</strong><small>接口失败时不显示错误详情。</small></span></label>
+      <label class="settings-toggle"><input type="checkbox" name="hideVersion" {% if values.hideVersion %}checked{% endif %}><span><strong>隐藏 Homepage 版本</strong><small>隐藏页面底部的版本号。</small></span></label>
+      <label class="settings-toggle"><input type="checkbox" name="disableUpdateCheck" {% if values.disableUpdateCheck %}checked{% endif %}><span><strong>关闭版本更新检查</strong><small>不再从 GitHub 检查 Homepage 新版本。</small></span></label>
+      <label class="settings-toggle"><input type="checkbox" name="disableIndexing" {% if values.disableIndexing %}checked{% endif %}><span><strong>禁止搜索引擎索引</strong><small>生成 noindex / nofollow 和限制 robots.txt。</small></span></label>
+    </div>
   </section>
 
-  <section class="form-card">
-    <h2>快速启动</h2>
-    <div class="form-grid two"><label>搜索提供商<input name="quicklaunch_provider" value="{{ values.quicklaunch_provider }}" placeholder="google / baidu / bing / duckduckgo / brave"></label></div>
+  <section class="form-card settings-card" id="settings-quicklaunch">
+    <div class="section-heading">
+      <div><h2>快速启动 Quick Launch</h2><p class="section-help">直接键入即可搜索服务、联网搜索或打开 URL。</p></div>
+      <span class="role-pill">quicklaunch</span>
+    </div>
+    <div class="form-grid two aligned-fields">
+      <label>搜索提供商
+        <select name="quicklaunch_provider" data-quicklaunch-provider>
+          <option value="">继承 Search Widget / 不指定</option>
+          {% for item in quicklaunch_providers %}<option value="{{ item }}" {% if values.quicklaunch.provider == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+          {% if values.quicklaunch.provider and values.quicklaunch.provider not in quicklaunch_providers %}<option value="{{ values.quicklaunch.provider }}" selected>{{ values.quicklaunch.provider }} · 现有值</option>{% endif %}
+        </select>
+        <small class="field-help">官方支持 google、duckduckgo、bing、baidu、brave 或 custom。</small>
+      </label>
+      <label>移动端按钮位置
+        <select name="quicklaunch_mobileButtonPosition">
+          <option value="">不显示移动按钮</option>
+          {% for item in mobile_button_positions %}<option value="{{ item }}" {% if values.quicklaunch.mobileButtonPosition == item %}selected{% endif %}>{{ item }}</option>{% endfor %}
+          {% if values.quicklaunch.mobileButtonPosition and values.quicklaunch.mobileButtonPosition not in mobile_button_positions %}<option value="{{ values.quicklaunch.mobileButtonPosition }}" selected>{{ values.quicklaunch.mobileButtonPosition }} · 现有值</option>{% endif %}
+        </select>
+        <small class="field-help">手机页面可显示专用 Quick Launch 按钮。</small>
+      </label>
+    </div>
+    <div class="settings-toggle-grid compact-toggle-grid">
+      <label class="settings-toggle"><input type="checkbox" name="quicklaunch_searchDescriptions" {% if values.quicklaunch.searchDescriptions %}checked{% endif %}><span><strong>搜索服务描述</strong><small>名称匹配优先于描述匹配。</small></span></label>
+      <label class="settings-toggle"><input type="checkbox" name="quicklaunch_hideInternetSearch" {% if values.quicklaunch.hideInternetSearch %}checked{% endif %}><span><strong>隐藏联网搜索</strong><small>不自动提供当前搜索引擎选项。</small></span></label>
+      <label class="settings-toggle"><input type="checkbox" name="quicklaunch_showSearchSuggestions" {% if values.quicklaunch.showSearchSuggestions %}checked{% endif %}><span><strong>显示搜索建议</strong><small>自定义提供商需配置 suggestionUrl。</small></span></label>
+      <label class="settings-toggle"><input type="checkbox" name="quicklaunch_hideVisitURL" {% if values.quicklaunch.hideVisitURL %}checked{% endif %}><span><strong>隐藏直接访问 URL</strong><small>关闭自动识别并打开 URL。</small></span></label>
+    </div>
+    <div class="settings-subcard quicklaunch-custom" data-quicklaunch-custom {% if values.quicklaunch.provider != 'custom' %}hidden{% endif %}>
+      <h3>Custom Provider</h3>
+      <div class="form-grid two aligned-fields">
+        <label class="span-2">搜索 URL
+          <input name="quicklaunch_url" value="{{ values.quicklaunch.url }}" placeholder="https://search.example.com/?q=">
+          <small class="field-help">输入的搜索词会追加到该 URL。</small>
+        </label>
+        <label class="span-2">搜索建议 URL
+          <input name="quicklaunch_suggestionUrl" value="{{ values.quicklaunch.suggestionUrl }}" placeholder="https://search.example.com/suggest?q=">
+          <small class="field-help">仅 showSearchSuggestions 开启时使用。</small>
+        </label>
+        <label>搜索结果打开方式
+          <select name="quicklaunch_target">
+            <option value="">默认</option>
+            <option value="_blank" {% if values.quicklaunch.target == '_blank' %}selected{% endif %}>_blank</option>
+            <option value="_self" {% if values.quicklaunch.target == '_self' %}selected{% endif %}>_self</option>
+            {% if values.quicklaunch.target and values.quicklaunch.target not in ['_blank','_self'] %}<option value="{{ values.quicklaunch.target }}" selected>{{ values.quicklaunch.target }} · 现有值</option>{% endif %}
+          </select>
+          <small class="field-help empty" aria-hidden="true">占位</small>
+        </label>
+      </div>
+    </div>
   </section>
 
-  <section class="form-card">
-    <div class="section-heading"><div><h2>分组布局</h2><p class="section-help">顺序就是 Homepage 中的分组顺序。拖动暂未加入设置页，可用上下按钮管理服务和组件顺序。</p></div></div>
-    <div class="layout-table">
+  <section class="form-card settings-card" id="settings-layout">
+    <div class="section-heading">
+      <div><h2>分组布局</h2><p class="section-help">自动汇总 services.yaml 与 bookmarks.yaml 分组。拖动左侧手柄即可调整 Homepage 中的分组顺序。</p></div>
+      <span class="role-pill">{{ values.layout|length }} 个分组</span>
+    </div>
+    <div class="layout-table" data-settings-layout-list>
       {% for row in values.layout %}
-      <details class="layout-row" open>
-        <summary><strong>{{ row.name }}</strong><span>{{ row.style or '默认布局' }}{% if row.columns %} · {{ row.columns }} 列{% endif %}</span></summary>
+      <details class="layout-row settings-layout-row" open draggable="true" data-settings-layout-row>
+        <summary>
+          <span class="layout-summary-main"><span class="layout-drag-handle" data-layout-drag title="拖动调整顺序">⋮⋮</span><strong>{{ row.name }}</strong><span class="source-pill">{{ row.source }}</span>{% if not row.configured %}<span class="role-pill auto-pill">尚未写入 layout</span>{% endif %}</span>
+          <span>{{ row.style or '默认布局' }}{% if row.columns %} · {{ row.columns }} 列{% endif %}{% if row.tab %} · Tab: {{ row.tab }}{% endif %}</span>
+        </summary>
         <input type="hidden" name="layout_name" value="{{ row.name }}">
-        <div class="form-grid four compact">
-          <label>布局<select name="layout_{{ loop.index0 }}_style"><option value="">默认</option><option value="row" {% if row.style == 'row' %}selected{% endif %}>row</option><option value="column" {% if row.style == 'column' %}selected{% endif %}>column</option></select></label>
-          <label>列数<input type="number" min="1" max="12" name="layout_{{ loop.index0 }}_columns" value="{{ row.columns }}"></label>
-          <label>标签页<input name="layout_{{ loop.index0 }}_tab" value="{{ row.tab }}"></label>
-          <label>分组图标<input name="layout_{{ loop.index0 }}_icon" value="{{ row.icon }}"></label>
+        <input type="hidden" name="layout_{{ loop.index0 }}_configured" value="{{ 1 if row.configured else 0 }}" data-layout-configured>
+        <div class="form-grid four compact aligned-fields">
+          <label>布局
+            <select name="layout_{{ loop.index0 }}_style"><option value="">默认</option><option value="row" {% if row.style == 'row' %}selected{% endif %}>row</option><option value="column" {% if row.style == 'column' %}selected{% endif %}>column</option></select>
+            <small class="field-help empty" aria-hidden="true">占位</small>
+          </label>
+          <label>列数
+            <input type="number" min="1" max="12" name="layout_{{ loop.index0 }}_columns" value="{{ row.columns }}" placeholder="自动">
+            <small class="field-help empty" aria-hidden="true">占位</small>
+          </label>
+          <label>标签页
+            <input name="layout_{{ loop.index0 }}_tab" value="{{ row.tab }}" placeholder="例如 Home">
+            <small class="field-help">设置任意 tab 后启用 Homepage 标签页视图。</small>
+          </label>
+          <label>分组图标
+            <input name="layout_{{ loop.index0 }}_icon" value="{{ row.icon }}" placeholder="home-assistant.png / mdi-server">
+            <small class="field-help empty" aria-hidden="true">占位</small>
+          </label>
         </div>
         <div class="checkbox-row">
           <label class="checkbox"><input type="checkbox" name="layout_{{ loop.index0 }}_iconsOnly" {% if row.iconsOnly %}checked{% endif %}>仅图标</label>
           <label class="checkbox"><input type="checkbox" name="layout_{{ loop.index0 }}_header" {% if row.header %}checked{% endif %}>显示标题</label>
           <label class="checkbox"><input type="checkbox" name="layout_{{ loop.index0 }}_useEqualHeights" {% if row.useEqualHeights %}checked{% endif %}>等高卡片</label>
-          <label class="checkbox"><input type="checkbox" name="layout_{{ loop.index0 }}_collapsible" {% if row.collapsible %}checked{% endif %}>允许折叠</label>
           <label class="checkbox"><input type="checkbox" name="layout_{{ loop.index0 }}_initiallyCollapsed" {% if row.initiallyCollapsed %}checked{% endif %}>默认折叠</label>
         </div>
-        <label>额外布局字段<textarea name="layout_{{ loop.index0 }}_extra" rows="4" spellcheck="false">{{ row.extra }}</textarea></label>
+        <details class="settings-inline-advanced">
+          <summary>其他布局字段（YAML）</summary>
+          <label><textarea name="layout_{{ loop.index0 }}_extra" rows="4" spellcheck="false">{{ row.extra }}</textarea></label>
+        </details>
       </details>
       {% endfor %}
     </div>
+    <p class="form-help">未出现在 <code>layout:</code> 中的已发现分组会显示为“尚未写入 layout”；如果保持默认并直接保存，不会自动制造新的空布局配置。</p>
   </section>
 
-  <section class="form-card"><h2>其他 settings.yaml 字段</h2><label>YAML 映射<textarea name="extra" rows="12" spellcheck="false">{{ values.extra }}</textarea></label></section>
-  <div class="sticky-actions"><a class="button secondary" href="/settings">放弃修改</a><button class="button primary" type="submit">保存设置</button></div>
+  <section class="form-card settings-card" id="settings-advanced">
+    <details class="settings-advanced-details">
+      <summary><div><strong>其他 settings.yaml 字段</strong><small>Providers、PWA、blockHighlights、instanceName、logpath 以及未来 Homepage 新字段可继续在这里管理。</small></div><span>高级 YAML</span></summary>
+      <label>YAML 映射<textarea name="extra" rows="14" spellcheck="false">{{ values.extra }}</textarea></label>
+      <p class="form-help">API Key、Token、Password 等敏感值会掩码显示；保存时会恢复原值。</p>
+    </details>
+  </section>
+
+  <div class="sticky-actions">
+    <a class="button secondary" href="/settings">放弃修改</a>
+    <button class="button secondary" type="button" data-settings-preview>预览变更</button>
+    <button class="button primary" type="submit">保存设置</button>
+  </div>
 </form>
+
+<dialog class="modal diff-modal" data-settings-diff-dialog>
+  <div class="diff-modal-inner">
+    <div class="section-title-row"><div><h3>settings.yaml 保存前预览</h3><p>敏感字段会被掩码；确认后才真正写入并创建备份。</p></div><button class="icon-button" type="button" data-settings-diff-close>×</button></div>
+    <pre class="diff-preview"><code data-settings-diff-output>正在生成...</code></pre>
+    <div class="modal-actions"><button class="button secondary" type="button" data-settings-diff-close>继续编辑</button><button class="button primary" type="button" data-settings-diff-confirm>确认保存</button></div>
+  </div>
+</dialog>
 {% endblock %}

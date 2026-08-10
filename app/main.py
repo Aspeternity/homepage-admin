@@ -2821,37 +2821,51 @@ def docker_import_edit_legacy(
     return RedirectResponse(target, status_code=307)
 
 
-@app.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
-    try:
-        data = store.load("settings.yaml")
-        background = data.get("background", {})
-        if isinstance(background, str):
-            background = {"image": background}
-        if not isinstance(background, dict):
-            background = {}
-        quicklaunch = data.get("quicklaunch", {})
-        if not isinstance(quicklaunch, dict):
-            quicklaunch = {}
-        layout = data.get("layout", {})
-        layout_rows = []
-        if isinstance(layout, dict):
-            for name, cfg in layout.items():
-                cfg = cfg if isinstance(cfg, dict) else {}
-                layout_rows.append(
-                    {
-                        "name": str(name),
-                        "style": cfg.get("style", ""),
-                        "columns": cfg.get("columns", ""),
-                        "tab": cfg.get("tab", ""),
-                        "icon": cfg.get("icon", ""),
-                        "iconsOnly": bool(cfg.get("iconsOnly", False)),
-                        "header": cfg.get("header", True) is not False,
-                        "useEqualHeights": bool(cfg.get("useEqualHeights", False)),
-                        "collapsible": bool(cfg.get("collapsible", False)),
-                        "initiallyCollapsed": bool(cfg.get("initiallyCollapsed", False)),
-                        "extra": store.dump_fragment(
-                            mask_secrets(CommentedMap(
+HOMEPAGE_COLOR_OPTIONS = [
+    "slate", "gray", "zinc", "neutral", "stone", "amber", "yellow", "lime", "green", "emerald",
+    "teal", "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink", "rose", "red", "white",
+]
+HOMEPAGE_LANGUAGE_OPTIONS = [
+    "ca", "de", "en", "es", "fr", "he", "hr", "hu", "it", "nb-NO", "nl", "pt", "ru", "sv", "vi",
+    "zh-Hans", "zh-Hant",
+]
+HOMEPAGE_HEADER_STYLES = ["underlined", "boxed", "clean", "boxedWidgets"]
+HOMEPAGE_STATUS_STYLES = ["dot", "basic"]
+HOMEPAGE_ICON_STYLES = ["gradient", "theme"]
+HOMEPAGE_CARD_BLURS = ["xs", "sm", "md", "lg", "xl", "2xl", "3xl"]
+HOMEPAGE_BACKGROUND_BLURS = ["xs", "sm", "md", "lg", "xl", "2xl", "3xl"]
+HOMEPAGE_QUICKLAUNCH_PROVIDERS = ["google", "duckduckgo", "bing", "baidu", "brave", "custom"]
+HOMEPAGE_MOBILE_BUTTON_POSITIONS = ["top-left", "top-right", "bottom-left", "bottom-right"]
+
+
+def _settings_layout_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
+    layout = data.get("layout", {})
+    rows: list[dict[str, Any]] = []
+    service_names = group_names("services.yaml")
+    bookmark_names = group_names("bookmarks.yaml")
+    service_set = set(service_names)
+    bookmark_set = set(bookmark_names)
+
+    if isinstance(layout, dict):
+        for name, raw_cfg in layout.items():
+            cfg = raw_cfg if isinstance(raw_cfg, dict) else {}
+            source = "服务 + 书签" if name in service_set and name in bookmark_set else ("服务" if name in service_set else ("书签" if name in bookmark_set else "仅布局"))
+            rows.append(
+                {
+                    "name": str(name),
+                    "source": source,
+                    "configured": True,
+                    "style": cfg.get("style", ""),
+                    "columns": cfg.get("columns", ""),
+                    "tab": cfg.get("tab", ""),
+                    "icon": cfg.get("icon", ""),
+                    "iconsOnly": bool(cfg.get("iconsOnly", False)),
+                    "header": cfg.get("header", True) is not False,
+                    "useEqualHeights": bool(cfg.get("useEqualHeights", False)),
+                    "initiallyCollapsed": bool(cfg.get("initiallyCollapsed", False)),
+                    "extra": store.dump_fragment(
+                        mask_secrets(
+                            CommentedMap(
                                 (k, copy.deepcopy(v))
                                 for k, v in cfg.items()
                                 if k
@@ -2863,66 +2877,300 @@ def settings_page(request: Request, _: None = Depends(auth_guard)) -> HTMLRespon
                                     "iconsOnly",
                                     "header",
                                     "useEqualHeights",
-                                    "collapsible",
                                     "initiallyCollapsed",
                                 }
-                            ))
-                        ),
-                    }
-                )
-        existing_layout_names = {row["name"] for row in layout_rows}
-        for missing_name in group_names("services.yaml") + group_names("bookmarks.yaml"):
-            if missing_name not in existing_layout_names:
-                layout_rows.append({
-                    "name": missing_name,
-                    "style": "row",
-                    "columns": 4 if missing_name in group_names("services.yaml") else 5,
-                    "tab": "",
-                    "icon": "",
-                    "iconsOnly": False,
-                    "header": True,
-                    "useEqualHeights": True,
-                    "collapsible": False,
-                    "initiallyCollapsed": False,
-                    "extra": "",
-                })
-                existing_layout_names.add(missing_name)
+                            )
+                        )
+                    ),
+                }
+            )
 
-        values = {
-            "title": data.get("title", ""),
-            "description": data.get("description", ""),
-            "language": data.get("language", "zh-CN"),
-            "favicon": data.get("favicon", ""),
-            "theme": data.get("theme", ""),
-            "color": data.get("color", ""),
-            "headerStyle": data.get("headerStyle", ""),
-            "target": data.get("target", ""),
-            "statusStyle": data.get("statusStyle", ""),
-            "iconStyle": data.get("iconStyle", ""),
-            "cardBlur": data.get("cardBlur", ""),
-            "fullWidth": bool(data.get("fullWidth", False)),
-            "hideVersion": bool(data.get("hideVersion", False)),
-            "background": background,
-            "quicklaunch_provider": quicklaunch.get("provider", ""),
-            "layout": layout_rows,
-        }
+    existing = {row["name"] for row in rows}
+    for name in service_names + bookmark_names:
+        if name in existing:
+            continue
+        source = "服务 + 书签" if name in service_set and name in bookmark_set else ("服务" if name in service_set else "书签")
+        rows.append(
+            {
+                "name": name,
+                "source": source,
+                "configured": False,
+                "style": "",
+                "columns": "",
+                "tab": "",
+                "icon": "",
+                "iconsOnly": False,
+                "header": True,
+                "useEqualHeights": False,
+                "initiallyCollapsed": False,
+                "extra": "",
+            }
+        )
+        existing.add(name)
+    return rows
+
+
+def _settings_values(data: dict[str, Any]) -> dict[str, Any]:
+    background = data.get("background", {})
+    if isinstance(background, str):
+        background = {"image": background}
+    if not isinstance(background, dict):
+        background = {}
+    quicklaunch = data.get("quicklaunch", {})
+    if not isinstance(quicklaunch, dict):
+        quicklaunch = {}
+
+    if "blur" not in background:
+        background_blur_mode = "__unset__"
+    elif background.get("blur") == "":
+        background_blur_mode = "__empty__"
+    else:
+        background_blur_mode = str(background.get("blur") or "__unset__")
+
+    return {
+        "title": data.get("title", ""),
+        "description": data.get("description", ""),
+        "startUrl": data.get("startUrl", ""),
+        "base": data.get("base", ""),
+        "language": data.get("language", ""),
+        "favicon": data.get("favicon", ""),
+        "theme": data.get("theme", ""),
+        "color": data.get("color", ""),
+        "headerStyle": data.get("headerStyle", ""),
+        "target": data.get("target", ""),
+        "statusStyle": data.get("statusStyle", ""),
+        "iconStyle": data.get("iconStyle", ""),
+        "cardBlur": data.get("cardBlur", ""),
+        "bookmarksStyle": data.get("bookmarksStyle", ""),
+        "maxGroupColumns": data.get("maxGroupColumns", ""),
+        "maxBookmarkGroupColumns": data.get("maxBookmarkGroupColumns", ""),
+        "fullWidth": bool(data.get("fullWidth", False)),
+        "hideVersion": bool(data.get("hideVersion", False)),
+        "disableUpdateCheck": bool(data.get("disableUpdateCheck", False)),
+        "showStats": bool(data.get("showStats", False)),
+        "hideErrors": bool(data.get("hideErrors", False)),
+        "disableIndexing": bool(data.get("disableIndexing", False)),
+        "useEqualHeights": bool(data.get("useEqualHeights", False)),
+        "disableCollapse": bool(data.get("disableCollapse", False)),
+        "groupsInitiallyCollapsed": bool(data.get("groupsInitiallyCollapsed", False)),
+        "background": background,
+        "background_blur_mode": background_blur_mode,
+        "quicklaunch": {
+            "provider": quicklaunch.get("provider", ""),
+            "searchDescriptions": bool(quicklaunch.get("searchDescriptions", False)),
+            "hideInternetSearch": bool(quicklaunch.get("hideInternetSearch", False)),
+            "showSearchSuggestions": bool(quicklaunch.get("showSearchSuggestions", False)),
+            "hideVisitURL": bool(quicklaunch.get("hideVisitURL", False)),
+            "url": quicklaunch.get("url", ""),
+            "target": quicklaunch.get("target", ""),
+            "suggestionUrl": quicklaunch.get("suggestionUrl", ""),
+            "mobileButtonPosition": quicklaunch.get("mobileButtonPosition", ""),
+        },
+        "layout": _settings_layout_rows(data),
+    }
+
+
+def _set_optional_string(data: CommentedMap, old: dict[str, Any], form: Any, key: str) -> None:
+    value = str(form.get(key, "")).strip()
+    if value:
+        data[key] = value
+    elif key in old and old.get(key) == "":
+        data[key] = ""
+
+
+def _set_optional_bool(data: CommentedMap, old: dict[str, Any], form: Any, key: str) -> None:
+    if form.get(key):
+        data[key] = True
+    elif key in old and old.get(key) is False:
+        data[key] = False
+
+
+def _build_settings_change(form: Any) -> CommentedMap:
+    old = store.load("settings.yaml")
+    data = CommentedMap()
+
+    string_fields = [
+        "language", "title", "description", "startUrl", "base", "favicon", "theme", "color", "headerStyle",
+        "target", "statusStyle", "iconStyle", "cardBlur", "bookmarksStyle",
+    ]
+    for key in string_fields:
+        _set_optional_string(data, old, form, key)
+
+    for key in [
+        "fullWidth", "hideVersion", "disableUpdateCheck", "showStats", "hideErrors", "disableIndexing",
+        "useEqualHeights", "disableCollapse", "groupsInitiallyCollapsed",
+    ]:
+        _set_optional_bool(data, old, form, key)
+
+    for key, minimum, maximum in [
+        ("maxGroupColumns", 5, 8),
+        ("maxBookmarkGroupColumns", 1, 8),
+    ]:
+        raw = str(form.get(key, "")).strip()
+        if not raw:
+            continue
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ConfigError(f"{key} 必须是整数。") from exc
+        if value < minimum or value > maximum:
+            raise ConfigError(f"{key} 必须在 {minimum}–{maximum} 之间。")
+        data[key] = value
+
+    old_background = old.get("background", CommentedMap())
+    if isinstance(old_background, str):
+        old_background = CommentedMap({"image": old_background})
+    background = copy.deepcopy(old_background) if isinstance(old_background, dict) else CommentedMap()
+
+    image = str(form.get("background_image", "")).strip()
+    if image:
+        background["image"] = image
+    else:
+        background.pop("image", None)
+
+    if "background_blur_mode" in form:
+        blur_mode = str(form.get("background_blur_mode", "__unset__"))
+        if blur_mode == "__unset__":
+            background.pop("blur", None)
+        elif blur_mode == "__empty__":
+            background["blur"] = ""
+        else:
+            background["blur"] = blur_mode
+    else:
+        # Backwards compatibility with older form submissions/tests.
+        blur_value = str(form.get("background_blur", "")).strip()
+        if blur_value:
+            background["blur"] = blur_value
+        elif isinstance(old_background, dict) and "blur" in old_background and old_background.get("blur") == "":
+            background["blur"] = ""
+        else:
+            background.pop("blur", None)
+
+    for key in ["saturate", "brightness", "opacity"]:
+        raw = str(form.get(f"background_{key}", "")).strip()
+        if raw:
+            try:
+                value = int(raw)
+            except ValueError as exc:
+                raise ConfigError(f"背景 {key} 必须是整数。") from exc
+            if key == "opacity" and not 0 <= value <= 100:
+                raise ConfigError("背景 opacity 必须在 0–100 之间。")
+            if key in {"saturate", "brightness"} and not 0 <= value <= 200:
+                raise ConfigError(f"背景 {key} 必须在 0–200 之间。")
+            background[key] = value
+        else:
+            background.pop(key, None)
+    if background:
+        data["background"] = background
+
+    existing_ql = old.get("quicklaunch") if isinstance(old.get("quicklaunch"), dict) else CommentedMap()
+    ql = copy.deepcopy(existing_ql)
+    provider = str(form.get("quicklaunch_provider", "")).strip()
+    if provider:
+        ql["provider"] = provider
+    else:
+        ql.pop("provider", None)
+
+    full_form = str(form.get("settings_form_version", "")) == "3"
+    if full_form:
+        for key in ["searchDescriptions", "hideInternetSearch", "showSearchSuggestions", "hideVisitURL"]:
+            if form.get(f"quicklaunch_{key}"):
+                ql[key] = True
+            else:
+                ql.pop(key, None)
+        mobile = str(form.get("quicklaunch_mobileButtonPosition", "")).strip()
+        if mobile:
+            ql["mobileButtonPosition"] = mobile
+        else:
+            ql.pop("mobileButtonPosition", None)
+        if provider == "custom":
+            for key in ["url", "target", "suggestionUrl"]:
+                value = str(form.get(f"quicklaunch_{key}", "")).strip()
+                if value:
+                    ql[key] = value
+                else:
+                    ql.pop(key, None)
+        else:
+            for key in ["url", "target", "suggestionUrl"]:
+                ql.pop(key, None)
+    if ql:
+        data["quicklaunch"] = ql
+
+    layout_names = form.getlist("layout_name")
+    old_layout = old.get("layout") if isinstance(old.get("layout"), dict) else {}
+    layout = CommentedMap()
+    for idx, name_value in enumerate(layout_names):
+        name = str(name_value).strip()
+        if not name:
+            continue
+        cfg = CommentedMap()
+        prefix = f"layout_{idx}_"
+        style = str(form.get(prefix + "style", "")).strip()
+        columns = str(form.get(prefix + "columns", "")).strip()
+        tab = str(form.get(prefix + "tab", "")).strip()
+        icon = str(form.get(prefix + "icon", "")).strip()
+        if style:
+            cfg["style"] = style
+        if columns:
+            try:
+                column_value = int(columns)
+            except ValueError as exc:
+                raise ConfigError(f"分组“{name}”的列数必须是整数。") from exc
+            if not 1 <= column_value <= 12:
+                raise ConfigError(f"分组“{name}”的列数必须在 1–12 之间。")
+            cfg["columns"] = column_value
+        if tab:
+            cfg["tab"] = tab
+        if icon:
+            cfg["icon"] = icon
+        if form.get(prefix + "iconsOnly"):
+            cfg["iconsOnly"] = True
+        if not form.get(prefix + "header"):
+            cfg["header"] = False
+        if form.get(prefix + "useEqualHeights"):
+            cfg["useEqualHeights"] = True
+        if form.get(prefix + "initiallyCollapsed"):
+            cfg["initiallyCollapsed"] = True
+
+        extra_cfg = store.parse_fragment(str(form.get(prefix + "extra", "")), dict)
+        old_cfg = old_layout.get(name, {}) if isinstance(old_layout, dict) else {}
+        if isinstance(old_cfg, dict):
+            try:
+                extra_cfg = restore_masked_secrets(extra_cfg, old_cfg)
+            except ValueError as exc:
+                raise ConfigError(str(exc)) from exc
+        for key, value in extra_cfg.items():
+            if key not in cfg:
+                cfg[key] = value
+
+        was_configured = str(form.get(prefix + "configured", "0")) == "1"
+        if cfg or was_configured:
+            layout[name] = cfg
+    if layout:
+        data["layout"] = layout
+
+    extra = store.parse_fragment(str(form.get("extra", "")), dict)
+    try:
+        extra = restore_masked_secrets(extra, old)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+    for key, value in extra.items():
+        if key not in data:
+            data[key] = value
+    return data
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
+    try:
+        data = store.load("settings.yaml")
+        values = _settings_values(data)
         known = {
-            "title",
-            "description",
-            "language",
-            "favicon",
-            "theme",
-            "color",
-            "headerStyle",
-            "target",
-            "statusStyle",
-            "iconStyle",
-            "cardBlur",
-            "fullWidth",
-            "hideVersion",
-            "background",
-            "quicklaunch",
-            "layout",
+            "title", "description", "startUrl", "base", "language", "favicon", "theme", "color", "headerStyle",
+            "target", "statusStyle", "iconStyle", "cardBlur", "bookmarksStyle", "maxGroupColumns",
+            "maxBookmarkGroupColumns", "fullWidth", "hideVersion", "disableUpdateCheck", "showStats", "hideErrors",
+            "disableIndexing", "useEqualHeights", "disableCollapse", "groupsInitiallyCollapsed", "background",
+            "quicklaunch", "layout",
         }
         extra = CommentedMap((k, copy.deepcopy(v)) for k, v in data.items() if k not in known)
         values["extra"] = store.dump_fragment(mask_secrets(extra)) if extra else ""
@@ -2938,10 +3186,34 @@ def settings_page(request: Request, _: None = Depends(auth_guard)) -> HTMLRespon
             values=values,
             ok=request.query_params.get("ok"),
             error=error,
-            service_groups=group_names("services.yaml"),
-            bookmark_groups=group_names("bookmarks.yaml"),
+            colors=HOMEPAGE_COLOR_OPTIONS,
+            languages=HOMEPAGE_LANGUAGE_OPTIONS,
+            header_styles=HOMEPAGE_HEADER_STYLES,
+            status_styles=HOMEPAGE_STATUS_STYLES,
+            icon_styles=HOMEPAGE_ICON_STYLES,
+            card_blurs=HOMEPAGE_CARD_BLURS,
+            background_blurs=HOMEPAGE_BACKGROUND_BLURS,
+            quicklaunch_providers=HOMEPAGE_QUICKLAUNCH_PROVIDERS,
+            mobile_button_positions=HOMEPAGE_MOBILE_BUTTON_POSITIONS,
         ),
     )
+
+
+@app.post("/api/settings/preview")
+async def preview_settings_change(request: Request, _: None = Depends(auth_guard)) -> JSONResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        current = store.load("settings.yaml")
+        proposed = _build_settings_change(form)
+        before = store.dump(mask_secrets(current)).splitlines()
+        after = store.dump(mask_secrets(proposed)).splitlines()
+        diff = "\n".join(
+            difflib.unified_diff(before, after, fromfile="settings.yaml · 当前", tofile="settings.yaml · 保存后", lineterm="")
+        )
+        return JSONResponse({"ok": True, "changed": before != after, "diff": diff or "无实际变化。"})
+    except (ConfigError, ValueError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
 
 @app.post("/settings")
@@ -2950,131 +3222,9 @@ async def save_settings(request: Request, _: None = Depends(auth_guard)) -> Redi
     verify_csrf(request, str(form.get("csrf", "")))
     try:
         old = store.load("settings.yaml")
-        data = CommentedMap()
-        for key in ["language", "title", "description", "favicon", "theme", "color", "headerStyle", "target", "statusStyle", "iconStyle", "cardBlur"]:
-            value = str(form.get(key, "")).strip()
-            if value:
-                data[key] = value
-            elif key in old and old.get(key) == "":
-                # Preserve an explicitly-empty value when the form is unchanged.
-                # Some Homepage options distinguish an empty value from an absent key.
-                data[key] = ""
-        if form.get("fullWidth"):
-            data["fullWidth"] = True
-        elif "fullWidth" in old and old.get("fullWidth") is False:
-            data["fullWidth"] = False
-        if form.get("hideVersion"):
-            data["hideVersion"] = True
-        elif "hideVersion" in old and old.get("hideVersion") is False:
-            data["hideVersion"] = False
-
-        old_background = old.get("background", CommentedMap())
-        if isinstance(old_background, str):
-            old_background = CommentedMap({"image": old_background})
-        background = copy.deepcopy(old_background) if isinstance(old_background, dict) else CommentedMap()
-
-        image = str(form.get("background_image", "")).strip()
-        if image:
-            background["image"] = image
-        else:
-            background.pop("image", None)
-
-        # Homepage accepts blur: "" as a real filter value.  A blank HTML input
-        # therefore cannot blindly mean "delete blur" when the existing YAML
-        # explicitly contains an empty string.  Preserve that exact state on a
-        # no-op save; clearing a non-empty blur value still removes the key.
-        blur_value = str(form.get("background_blur", "")).strip()
-        if blur_value:
-            background["blur"] = blur_value
-        elif isinstance(old_background, dict) and "blur" in old_background and old_background.get("blur") == "":
-            background["blur"] = ""
-        else:
-            background.pop("blur", None)
-
-        for key in ["saturate", "brightness", "opacity"]:
-            value = str(form.get(f"background_{key}", "")).strip()
-            if value:
-                try:
-                    background[key] = int(value)
-                except ValueError:
-                    raise ConfigError(f"背景 {key} 必须是整数。")
-            else:
-                background.pop(key, None)
-        if background:
-            data["background"] = background
-
-        provider = str(form.get("quicklaunch_provider", "")).strip()
-        existing_ql = old.get("quicklaunch") if isinstance(old.get("quicklaunch"), dict) else CommentedMap()
-        ql = copy.deepcopy(existing_ql)
-        if provider:
-            ql["provider"] = provider
-        else:
-            ql.pop("provider", None)
-        if ql:
-            data["quicklaunch"] = ql
-
-        layout_names = form.getlist("layout_name")
-        layout = CommentedMap()
-        for idx, name_value in enumerate(layout_names):
-            name = str(name_value).strip()
-            if not name:
-                continue
-            cfg = CommentedMap()
-            prefix = f"layout_{idx}_"
-            style = str(form.get(prefix + "style", "")).strip()
-            columns = str(form.get(prefix + "columns", "")).strip()
-            tab = str(form.get(prefix + "tab", "")).strip()
-            icon = str(form.get(prefix + "icon", "")).strip()
-            if style:
-                cfg["style"] = style
-            if columns:
-                try:
-                    cfg["columns"] = int(columns)
-                except ValueError:
-                    raise ConfigError(f"分组“{name}”的列数必须是整数。")
-            if tab:
-                cfg["tab"] = tab
-            if icon:
-                cfg["icon"] = icon
-            if form.get(prefix + "iconsOnly"):
-                cfg["iconsOnly"] = True
-            if not form.get(prefix + "header"):
-                cfg["header"] = False
-            if form.get(prefix + "useEqualHeights"):
-                cfg["useEqualHeights"] = True
-            if form.get(prefix + "collapsible"):
-                cfg["collapsible"] = True
-            if form.get(prefix + "initiallyCollapsed"):
-                cfg["initiallyCollapsed"] = True
-            extra_cfg = store.parse_fragment(str(form.get(prefix + "extra", "")), dict)
-            old_layout = old.get("layout") if isinstance(old.get("layout"), dict) else {}
-            old_cfg = old_layout.get(name, {}) if isinstance(old_layout, dict) else {}
-            if isinstance(old_cfg, dict):
-                try:
-                    extra_cfg = restore_masked_secrets(extra_cfg, old_cfg)
-                except ValueError as exc:
-                    raise ConfigError(str(exc)) from exc
-            for key, value in extra_cfg.items():
-                if key not in cfg:
-                    cfg[key] = value
-            layout[name] = cfg
-        if layout:
-            data["layout"] = layout
-
-        extra = store.parse_fragment(str(form.get("extra", "")), dict)
-        try:
-            extra = restore_masked_secrets(extra, old)
-        except ValueError as exc:
-            raise ConfigError(str(exc)) from exc
-        for key, value in extra.items():
-            if key not in data:
-                data[key] = value
-
-        # A true no-op must not rewrite settings.yaml.  Besides avoiding a noisy
-        # backup, this preserves comments and intentionally-empty YAML values.
+        data = _build_settings_change(form)
         if old == data:
             return redirect("/settings", ok="未检测到设置变化：settings.yaml 未写入，也没有生成新备份。")
-
         store.write_data("settings.yaml", data, actor(request), "update settings")
         return redirect("/settings", ok="页面设置已保存。请在 Homepage 右下角点击刷新图标使设置重新生成。")
     except ConfigError as exc:

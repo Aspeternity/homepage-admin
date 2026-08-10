@@ -1,4 +1,4 @@
-# GitHub + GHCR 部署指南（v0.4.5）
+# GitHub + GHCR 部署指南（v0.4.6）
 
 当前仓库：
 
@@ -14,10 +14,10 @@ ghcr.io/aspeternity/homepage-admin:latest
 
 ## 日常升级流程
 
-1. 解压 `homepage-admin-v0.4.5-web-upload.zip`。
+1. 解压 `homepage-admin-v0.4.6-web-upload.zip`。
 2. GitHub 仓库 → **Add file** → **Upload files**。
 3. 把解压后的文件内容拖进去覆盖。
-4. Commit message：`Release v0.4.5`。
+4. Commit message：`Release v0.4.6`。
 5. 打开 **Actions**。
 6. 等待 `Test and publish Docker image` 全部绿色。
 7. GHCR 的 `latest` 会自动更新。
@@ -35,15 +35,15 @@ ghcr.io/aspeternity/homepage-admin:latest
 - 推送 `latest`
 - 创建 Git Tag 时额外推送语义版本标签
 
-例如创建 Tag `v0.4.5` 会得到：
+例如创建 Tag `v0.4.6` 会得到：
 
 ```text
-ghcr.io/aspeternity/homepage-admin:0.4.5
+ghcr.io/aspeternity/homepage-admin:0.4.6
 ghcr.io/aspeternity/homepage-admin:0.4
 ghcr.io/aspeternity/homepage-admin:latest
 ```
 
-## v0.4.5 特别注意
+## v0.4.6 特别注意
 
 升级不要求修改现有 Homepage YAML 数据。服务新增/编辑页现在直接从 Docker 发现和 Proxmox 发现加载运行状态集成选项；如果没有对应连接，区域会禁用并提供配置入口。
 

@@ -1,4 +1,4 @@
-# Homepage Admin v0.4.5
+# Homepage Admin v0.4.6
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
@@ -258,6 +258,16 @@ docker compose up -d --build
 pip install -r requirements-dev.txt
 python -m pytest -q
 ```
+
+## v0.4.6 页面设置工作区
+
+- 页面设置按“基础 / 外观 / 行为 / Quick Launch / 分组布局 / 高级”重新组织，并提供页内导航。
+- 补齐 Homepage 官方常用 `settings.yaml` 表单：`startUrl`、`base`、`boxedWidgets`、完整色板、`bookmarksStyle`、全局等高、折叠、统计、错误隐藏、更新检查、禁止索引、最大分组列数等。
+- Quick Launch 从单一 provider 输入框升级为完整表单，支持搜索描述、联网搜索、搜索建议、URL 访问、移动按钮位置和 Custom Provider。
+- 背景 blur 使用明确的“未配置 / `blur: ""` / xs...3xl”选择，不再让空字符串语义依赖文本框；同时提示 `cardBlur` 与背景滤镜冲突。
+- 分组布局自动汇总服务与书签分组，未配置组不会在无操作保存时被强制写入；支持拖动手柄调整 `layout:` 顺序。
+- 页面设置新增保存前 Diff 预览，敏感字段继续掩码，确认后才写入并创建备份。
+- 高级字段继续保留 YAML 入口，Providers、PWA、blockHighlights 及未来 Homepage 新字段不会被表单覆盖。
 
 ## v0.4.5 优化
 

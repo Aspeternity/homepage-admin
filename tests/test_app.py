@@ -2796,8 +2796,179 @@ def test_v045_public_ui_source_has_no_personal_environment_examples() -> None:
     assert "192.0.2.10" in text
 
 
-def test_v045_healthz_reports_release_version() -> None:
+def test_v046_healthz_reports_release_version() -> None:
     client = TestClient(app)
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.4.5"
+    assert response.json()["version"] == "0.4.6"
+
+
+def test_v046_settings_page_exposes_official_common_controls() -> None:
+    client = TestClient(app)
+    login(client)
+    page = client.get("/settings")
+    assert page.status_code == 200
+    for needle in [
+        'name="startUrl"',
+        'name="base"',
+        'name="headerStyle"',
+        'value="boxedWidgets"',
+        'name="disableIndexing"',
+        'name="disableUpdateCheck"',
+        'name="showStats"',
+        'name="useEqualHeights"',
+        'name="quicklaunch_showSearchSuggestions"',
+        'name="quicklaunch_mobileButtonPosition"',
+        'data-settings-preview',
+    ]:
+        assert needle in page.text
+
+
+def test_v046_settings_quicklaunch_custom_and_behavior_save() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "settings.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        path.write_text("---\ntitle: Before\n", encoding="utf-8")
+        response = client.post(
+            "/settings",
+            data={
+                "csrf": csrf,
+                "settings_form_version": "3",
+                "title": "After",
+                "headerStyle": "boxedWidgets",
+                "color": "indigo",
+                "fullWidth": "on",
+                "disableIndexing": "on",
+                "showStats": "on",
+                "quicklaunch_provider": "custom",
+                "quicklaunch_searchDescriptions": "on",
+                "quicklaunch_showSearchSuggestions": "on",
+                "quicklaunch_url": "https://search.example.test/?q=",
+                "quicklaunch_suggestionUrl": "https://search.example.test/suggest?q=",
+                "quicklaunch_target": "_blank",
+                "quicklaunch_mobileButtonPosition": "bottom-right",
+                "background_blur_mode": "__unset__",
+                "extra": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        assert data["title"] == "After"
+        assert data["headerStyle"] == "boxedWidgets"
+        assert data["color"] == "indigo"
+        assert data["fullWidth"] is True
+        assert data["disableIndexing"] is True
+        assert data["showStats"] is True
+        assert data["quicklaunch"] == {
+            "provider": "custom",
+            "searchDescriptions": True,
+            "showSearchSuggestions": True,
+            "mobileButtonPosition": "bottom-right",
+            "url": "https://search.example.test/?q=",
+            "target": "_blank",
+            "suggestionUrl": "https://search.example.test/suggest?q=",
+        }
+    finally:
+        path.write_text(original, encoding="utf-8")
+
+
+def test_v046_settings_background_explicit_empty_blur_can_be_selected() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "settings.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        path.write_text("---\ntitle: Blur\nbackground:\n  image: /images/bg.jpg\n  blur: xl\n", encoding="utf-8")
+        response = client.post(
+            "/settings",
+            data={
+                "csrf": csrf,
+                "settings_form_version": "3",
+                "title": "Blur",
+                "background_image": "/images/bg.jpg",
+                "background_blur_mode": "__empty__",
+                "extra": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        assert "blur" in data["background"]
+        assert data["background"]["blur"] == ""
+    finally:
+        path.write_text(original, encoding="utf-8")
+
+
+def test_v046_settings_preview_masks_provider_secret() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "settings.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        path.write_text("---\ntitle: Before\nproviders:\n  openweathermap: super-secret\n", encoding="utf-8")
+        masked_extra = store.dump_fragment(mask_secrets({"providers": {"openweathermap": "super-secret"}}))
+        response = client.post(
+            "/api/settings/preview",
+            data={
+                "csrf": csrf,
+                "settings_form_version": "3",
+                "title": "After",
+                "background_blur_mode": "__unset__",
+                "extra": masked_extra,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is True
+        assert "settings.yaml · 当前" in payload["diff"]
+        assert "super-secret" not in payload["diff"]
+        assert SECRET_PREFIX in payload["diff"]
+    finally:
+        path.write_text(original, encoding="utf-8")
+
+
+def test_v046_unconfigured_discovered_layout_group_is_not_forced_into_yaml() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    settings_path = settings.config_dir / "settings.yaml"
+    services_path = settings.config_dir / "services.yaml"
+    settings_original = settings_path.read_text(encoding="utf-8")
+    services_original = services_path.read_text(encoding="utf-8")
+    try:
+        settings_path.write_text("---\ntitle: Layout Test\n", encoding="utf-8")
+        services_path.write_text("---\n- Media:\n    - Example:\n        href: https://example.test\n", encoding="utf-8")
+        response = client.post(
+            "/settings",
+            data={
+                "csrf": csrf,
+                "settings_form_version": "3",
+                "title": "Layout Test",
+                "background_blur_mode": "__unset__",
+                "layout_name": "Media",
+                "layout_0_configured": "0",
+                "layout_0_header": "on",
+                "layout_0_extra": "",
+                "extra": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(settings_path.read_text(encoding="utf-8"))
+        assert "layout" not in data
+    finally:
+        settings_path.write_text(settings_original, encoding="utf-8")
+        services_path.write_text(services_original, encoding="utf-8")
+
+
+def test_v046_settings_assets_include_drag_and_background_warning() -> None:
+    root = Path(__file__).resolve().parents[1]
+    js = (root / "app/static/app.js").read_text(encoding="utf-8")
+    css = (root / "app/static/app.css").read_text(encoding="utf-8")
+    assert "data-settings-layout-row" in js
+    assert "reindexLayout" in js
+    assert "data-background-compat" in js
+    assert ".settings-toggle-grid" in css
+    assert ".settings-section-nav" in css

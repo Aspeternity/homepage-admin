@@ -1176,4 +1176,123 @@
     removeYaml.addEventListener('change', sync);
     sync();
   }
+
+  // v0.4.6 settings workspace.
+  const settingsEditor = document.querySelector('[data-settings-editor]');
+  if (settingsEditor) {
+    const provider = settingsEditor.querySelector('[data-quicklaunch-provider]');
+    const customPanel = settingsEditor.querySelector('[data-quicklaunch-custom]');
+    const syncQuicklaunch = () => {
+      if (customPanel) customPanel.hidden = provider?.value !== 'custom';
+    };
+    provider?.addEventListener('change', syncQuicklaunch);
+    syncQuicklaunch();
+
+    const backgroundInput = settingsEditor.querySelector('[data-background-image]');
+    const backgroundPreview = settingsEditor.querySelector('[data-background-preview]');
+    const syncBackgroundPreview = () => {
+      const value = backgroundInput?.value.trim() || '';
+      if (!backgroundPreview) return;
+      backgroundPreview.hidden = !value;
+      backgroundPreview.style.backgroundImage = value ? `url(${JSON.stringify(value)})` : '';
+    };
+    backgroundInput?.addEventListener('input', syncBackgroundPreview);
+    syncBackgroundPreview();
+
+    const cardBlur = settingsEditor.querySelector('[data-card-blur]');
+    const backgroundFilters = [...settingsEditor.querySelectorAll('[data-background-filter]')];
+    const compatWarning = settingsEditor.querySelector('[data-background-compat]');
+    const hasBackgroundFilter = () => backgroundFilters.some((control) => {
+      const value = (control.value || '').trim();
+      if (control.name === 'background_blur_mode') return !['', '__unset__', '__empty__'].includes(value);
+      return value !== '';
+    });
+    const syncCompatibility = () => {
+      if (compatWarning) compatWarning.hidden = !(cardBlur?.value && hasBackgroundFilter());
+    };
+    cardBlur?.addEventListener('change', syncCompatibility);
+    backgroundFilters.forEach((control) => {
+      control.addEventListener('change', syncCompatibility);
+      control.addEventListener('input', syncCompatibility);
+    });
+    syncCompatibility();
+
+    const layoutList = settingsEditor.querySelector('[data-settings-layout-list]');
+    const layoutRows = () => [...settingsEditor.querySelectorAll('[data-settings-layout-row]')];
+    const reindexLayout = () => {
+      layoutRows().forEach((row, index) => {
+        row.querySelectorAll('[name]').forEach((field) => {
+          if (/^layout_\d+_/.test(field.name)) field.name = field.name.replace(/^layout_\d+_/, `layout_${index}_`);
+        });
+      });
+    };
+    reindexLayout();
+
+    let draggedLayout = null;
+    layoutRows().forEach((row) => {
+      row.addEventListener('dragstart', (event) => {
+        if (!event.target.closest('[data-layout-drag]')) {
+          event.preventDefault();
+          return;
+        }
+        draggedLayout = row;
+        row.classList.add('dragging');
+        event.dataTransfer.effectAllowed = 'move';
+      });
+      row.addEventListener('dragend', () => {
+        row.classList.remove('dragging');
+        layoutRows().forEach((item) => item.classList.remove('drag-over'));
+        draggedLayout = null;
+        reindexLayout();
+      });
+      row.addEventListener('dragover', (event) => {
+        if (!draggedLayout || draggedLayout === row) return;
+        event.preventDefault();
+        row.classList.add('drag-over');
+      });
+      row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+      row.addEventListener('drop', (event) => {
+        if (!draggedLayout || draggedLayout === row || !layoutList) return;
+        event.preventDefault();
+        row.classList.remove('drag-over');
+        const rect = row.getBoundingClientRect();
+        const before = event.clientY < rect.top + rect.height / 2;
+        layoutList.insertBefore(draggedLayout, before ? row : row.nextSibling);
+        reindexLayout();
+      });
+    });
+
+    const dialog = document.querySelector('[data-settings-diff-dialog]');
+    const output = dialog?.querySelector('[data-settings-diff-output]');
+    let bypassPreview = false;
+    const previewSettings = async () => {
+      reindexLayout();
+      if (output) output.textContent = '正在校验并生成 Diff...';
+      dialog?.showModal();
+      try {
+        const response = await fetch('/api/settings/preview', {method:'POST', body:new FormData(settingsEditor)});
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || '无法生成变更预览');
+        if (output) output.textContent = data.diff;
+        dialog?.classList.toggle('no-change', !data.changed);
+      } catch (error) {
+        if (output) output.textContent = `预览失败：${error.message}`;
+      }
+    };
+    settingsEditor.querySelector('[data-settings-preview]')?.addEventListener('click', previewSettings);
+    settingsEditor.addEventListener('submit', (event) => {
+      reindexLayout();
+      if (bypassPreview) return;
+      event.preventDefault();
+      previewSettings();
+    });
+    dialog?.querySelectorAll('[data-settings-diff-close]').forEach((button) => button.addEventListener('click', () => dialog.close()));
+    dialog?.querySelector('[data-settings-diff-confirm]')?.addEventListener('click', () => {
+      bypassPreview = true;
+      reindexLayout();
+      dialog.close();
+      settingsEditor.submit();
+    });
+  }
+
 })();

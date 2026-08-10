@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.6 - 2026-08-10
+
+- 重构页面设置为分区式可视化工作区，并加入页内导航与官方文档入口。
+- 补齐常用 settings.yaml 字段与官方枚举，包括 boxedWidgets、完整色板、页面行为及 Quick Launch 选项。
+- 背景 blur 改为显式状态选择，保留 Homepage 有意义的 `blur: ""`，并增加 cardBlur 冲突提示与背景预览。
+- 分组布局支持拖动重排；未配置但自动发现的分组保持“建议态”，无操作保存不会写入空 layout。
+- 新增 `/api/settings/preview` 保存前 Diff，Providers 等敏感值只显示掩码。
+- 保留未知顶层、quicklaunch、background 与 layout 扩展字段，避免可视化保存破坏未来 Homepage 配置。
+
 ## v0.4.5 - 2026-08-10
 
 - 新增服务页的 Docker 与 Proxmox 运行状态集成改为发现驱动的选择器。
