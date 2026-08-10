@@ -1,22 +1,97 @@
 {% extends "base.html" %}
 {% block title %}顶部组件 · Homepage Admin{% endblock %}
 {% block content %}
-<section class="page-heading"><div><h1>顶部组件</h1><p>组件按 widgets.yaml 中的顺序显示。</p></div><a class="button primary" href="/widgets/new">新增组件</a></section>
-<div class="simple-list">
-{% for row in rows %}
-  <article class="list-row" data-widget-row data-widget-index="{{ row.index }}">
-    <div class="list-index">{{ loop.index }}</div>
-    <div class="list-copy"><h3>{{ row.name }}</h3><pre>{{ row.config|truncate(180) }}</pre></div>
-    <div class="list-actions">
-      <button class="drag-handle icon-button" type="button" draggable="true" data-widget-drag title="拖动排序">⋮⋮</button>
-      <form method="post" action="/widgets/{{ row.index }}/move"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="direction" value="up"><button class="icon-button" type="submit" {% if loop.first %}disabled{% endif %}>↑</button></form>
-      <form method="post" action="/widgets/{{ row.index }}/move"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="direction" value="down"><button class="icon-button" type="submit" {% if loop.last %}disabled{% endif %}>↓</button></form>
-      <a class="icon-button" href="/widgets/{{ row.index }}/edit">✎</a>
-      <form method="post" action="/widgets/{{ row.index }}/delete" data-confirm="确认删除组件 {{ row.name }}？"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="icon-button danger-text" type="submit">⌫</button></form>
-    </div>
-  </article>
-{% else %}
-  <section class="empty-state"><div class="empty-icon">◫</div><h2>暂无顶部组件</h2><a class="button primary" href="/widgets/new">添加组件</a></section>
-{% endfor %}
-</div>
+<section class="page-heading">
+  <div>
+    <h1>顶部组件</h1>
+    <p>可视化管理 <code>widgets.yaml</code> 中的 Homepage Information Widgets；保留拖动排序与高级 YAML 兼容。</p>
+  </div>
+  <div class="page-heading-actions">
+    <a class="button secondary" href="https://gethomepage.dev/configs/info-widgets/" target="_blank" rel="noopener">官方文档 ↗</a>
+    <a class="button primary" href="/widgets/new">新增组件</a>
+  </div>
+</section>
+
+<section class="info-widget-overview">
+  <div><strong>{{ rows|length }}</strong><span>当前组件</span></div>
+  <div><strong>{{ catalog|length }}</strong><span>官方类型</span></div>
+  <div><strong>{{ catalog|selectattr('count','gt',0)|list|length }}</strong><span>已使用类型</span></div>
+  <p>顺序与 <code>widgets.yaml</code> 一致。天气、搜索和日期时间组件由 Homepage 自身靠右对齐，因此视觉位置可能与 YAML 顺序略有差异。</p>
+</section>
+
+<section class="section-block">
+  <div class="section-heading">
+    <div><h2>当前配置</h2><p class="section-help">拖动组件调整顺序；编辑器会针对官方 Info Widget 提供专属表单。</p></div>
+  </div>
+  <div class="info-widget-list">
+  {% for row in rows %}
+    <article class="info-widget-row" data-widget-row data-widget-index="{{ row.index }}">
+      <div class="list-index">{{ loop.index }}</div>
+      <div class="info-widget-main">
+        <div class="info-widget-title-line">
+          <h3>{{ row.title }}</h3>
+          <code>{{ row.name }}</code>
+          <span class="role-pill">{{ row.category }}</span>
+          {% if row.right_aligned %}<span class="role-pill subtle">Homepage 靠右</span>{% endif %}
+          {% if not row.supported %}<span class="role-pill warning">高级 YAML</span>{% endif %}
+        </div>
+        <p>{{ row.summary }}</p>
+        <small>{{ row.description }}</small>
+      </div>
+      <div class="list-actions info-widget-actions">
+        <button class="drag-handle icon-button" type="button" draggable="true" data-widget-drag title="拖动排序">⋮⋮</button>
+        <form method="post" action="/widgets/{{ row.index }}/move"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="direction" value="up"><button class="icon-button" type="submit" {% if loop.first %}disabled{% endif %} title="上移">↑</button></form>
+        <form method="post" action="/widgets/{{ row.index }}/move"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="direction" value="down"><button class="icon-button" type="submit" {% if loop.last %}disabled{% endif %} title="下移">↓</button></form>
+        {% if row.doc %}<a class="icon-button" href="{{ row.doc }}" target="_blank" rel="noopener" title="官方文档">↗</a>{% endif %}
+        <a class="icon-button" href="/widgets/{{ row.index }}/edit" title="编辑">✎</a>
+        <form method="post" action="/widgets/{{ row.index }}/delete" data-confirm="确认删除组件 {{ row.title }}？"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="icon-button danger-text" type="submit" title="删除">⌫</button></form>
+      </div>
+    </article>
+  {% else %}
+    <section class="empty-state"><div class="empty-icon">◫</div><h2>暂无顶部组件</h2><p>从下面的官方组件目录选择一个开始。</p></section>
+  {% endfor %}
+  </div>
+</section>
+
+<section class="section-block" id="info-widget-catalog">
+  <div class="section-heading">
+    <div><h2>官方 Information Widgets</h2><p class="section-help">当前 Homepage 官方文档列出的 Info Widgets，可直接进入专属可视化表单。</p></div>
+  </div>
+  <div class="info-widget-toolbar">
+    <label>搜索
+      <input type="search" placeholder="搜索日期、天气、资源、Glances…" data-info-widget-search>
+    </label>
+    <label>分类
+      <select data-info-widget-category>
+        <option value="">全部分类</option>
+        {% for category in categories %}<option value="{{ category }}">{{ category }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <div class="info-widget-catalog-grid">
+    {% for item in catalog %}
+    <article class="info-widget-catalog-card" data-info-widget-card data-search="{{ item.id }} {{ item.title }} {{ item.title_zh }} {{ item.description }}" data-category="{{ item.category }}">
+      <header>
+        <div class="widget-catalog-icon">{{ item.title[0] }}</div>
+        <div><h3>{{ item.title_zh }}</h3><code>{{ item.id }}</code></div>
+        {% if item.count %}<span class="role-pill">已添加 {{ item.count }}</span>{% endif %}
+      </header>
+      <p>{{ item.description }}</p>
+      <div class="widget-catalog-meta"><span>{{ item.category }}</span>{% if item.right_aligned %}<span>Homepage 靠右</span>{% endif %}</div>
+      {% if item.id == 'stocks' and not prerequisites.finnhub %}
+      <div class="widget-catalog-notice">使用前需要在 <code>settings.yaml → providers.finnhub</code> 配置 API Key。</div>
+      {% elif item.id == 'longhorn' and not prerequisites.longhorn %}
+      <div class="widget-catalog-notice">使用前需要配置 <code>settings.yaml → providers.longhorn</code>。</div>
+      {% elif item.id == 'kubernetes' and not prerequisites.kubernetes %}
+      <div class="widget-catalog-notice">当前 <code>kubernetes.yaml</code> 未启用 Kubernetes 连接。</div>
+      {% elif item.id == 'openweathermap' and not prerequisites.openweathermap %}
+      <div class="widget-catalog-notice">可在页面设置配置共享 Provider，或在组件中单独填写 API Key。</div>
+      {% endif %}
+      <footer><a href="{{ item.doc }}" target="_blank" rel="noopener">官方文档 ↗</a><a class="button primary compact" href="/widgets/new?type={{ item.id }}">{{ '再添加一个' if item.count else '添加组件' }}</a></footer>
+    </article>
+    {% endfor %}
+  </div>
+  <div class="empty-state compact-empty" data-info-widget-empty hidden><h3>没有符合当前筛选条件的组件</h3></div>
+</section>
 {% endblock %}

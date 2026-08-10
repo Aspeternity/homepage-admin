@@ -1296,3 +1296,46 @@
   }
 
 })();
+
+// v0.4.7 Information Widget catalog and specialized editor helpers.
+(() => {
+  const search = document.querySelector('[data-info-widget-search]');
+  const category = document.querySelector('[data-info-widget-category]');
+  const cards = [...document.querySelectorAll('[data-info-widget-card]')];
+  const empty = document.querySelector('[data-info-widget-empty]');
+  const applyCatalogFilter = () => {
+    if (!cards.length) return;
+    const q = (search?.value || '').trim().toLowerCase();
+    const cat = category?.value || '';
+    let visible = 0;
+    cards.forEach((card) => {
+      const matchesQuery = !q || (card.dataset.search || '').toLowerCase().includes(q);
+      const matchesCategory = !cat || card.dataset.category === cat;
+      card.hidden = !(matchesQuery && matchesCategory);
+      if (!card.hidden) visible += 1;
+    });
+    if (empty) empty.hidden = visible !== 0;
+  };
+  search?.addEventListener('input', applyCatalogFilter);
+  category?.addEventListener('change', applyCatalogFilter);
+
+  const typeSelect = document.querySelector('[data-info-widget-type-select]');
+  typeSelect?.addEventListener('change', () => {
+    const type = encodeURIComponent(typeSelect.value);
+    window.location.assign(`/widgets/new?type=${type}`);
+  });
+
+  const searchForm = document.querySelector('[data-info-search-form]');
+  if (searchForm) {
+    const provider = searchForm.querySelector('[data-info-search-provider]');
+    const multiple = searchForm.querySelector('[data-info-search-multiple]');
+    const custom = searchForm.querySelector('[data-info-search-custom]');
+    const syncProviderPanels = () => {
+      const value = provider?.value || '';
+      if (multiple) multiple.hidden = value !== 'multiple';
+      if (custom) custom.hidden = value !== 'custom';
+    };
+    provider?.addEventListener('change', syncProviderPanels);
+    syncProviderPanels();
+  }
+})();

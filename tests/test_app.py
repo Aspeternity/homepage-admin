@@ -2800,7 +2800,7 @@ def test_v046_healthz_reports_release_version() -> None:
     client = TestClient(app)
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.4.6"
+    assert response.json()["version"] == "0.4.7"
 
 
 def test_v046_settings_page_exposes_official_common_controls() -> None:
@@ -2972,3 +2972,125 @@ def test_v046_settings_assets_include_drag_and_background_warning() -> None:
     assert "data-background-compat" in js
     assert ".settings-toggle-grid" in css
     assert ".settings-section-nav" in css
+
+
+def test_v047_top_widget_catalog_and_all_official_forms_render() -> None:
+    client = TestClient(app)
+    login(client)
+    page = client.get("/widgets")
+    assert page.status_code == 200
+    assert "官方 Information Widgets" in page.text
+    official = [
+        "greeting", "datetime", "logo", "search", "resources", "glances",
+        "openmeteo", "openweathermap", "stocks", "unifi_console", "kubernetes", "longhorn",
+    ]
+    for widget_type in official:
+        assert f"/widgets/new?type={widget_type}" in page.text
+        form = client.get(f"/widgets/new?type={widget_type}")
+        assert form.status_code == 200
+        assert f'value="{widget_type}"' in form.text
+        assert "asp-pve" not in form.text
+        assert "10.10.1." not in form.text
+
+
+def test_v047_create_search_multiple_provider_widget() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "widgets.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        path.write_text("---\n", encoding="utf-8")
+        response = client.post(
+            "/widgets/create",
+            data={
+                "csrf": csrf,
+                "name": "search",
+                "provider_mode": "multiple",
+                "provider_google": "1",
+                "provider_duckduckgo": "1",
+                "focus": "true",
+                "showSearchSuggestions": "false",
+                "target": "_blank",
+                "extra": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        cfg = data[0]["search"]
+        assert cfg["provider"] == ["google", "duckduckgo"]
+        assert cfg["focus"] is True
+        assert cfg["showSearchSuggestions"] is False
+        assert cfg["target"] == "_blank"
+    finally:
+        path.write_text(original, encoding="utf-8")
+
+
+def test_v047_resources_visual_form_builds_disk_list_and_preserves_extra() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "widgets.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        path.write_text("---\n", encoding="utf-8")
+        response = client.post(
+            "/widgets/create",
+            data={
+                "csrf": csrf,
+                "name": "resources",
+                "label": "Storage",
+                "cpu": "true",
+                "memory": "false",
+                "disk_text": "/\n/data",
+                "network": "eth0",
+                "refresh": "3000",
+                "extra": "customFutureField: keep-me",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        cfg = data[0]["resources"]
+        assert cfg["disk"] == ["/", "/data"]
+        assert cfg["network"] == "eth0"
+        assert cfg["refresh"] == 3000
+        assert cfg["customFutureField"] == "keep-me"
+    finally:
+        path.write_text(original, encoding="utf-8")
+
+
+def test_v047_openweathermap_rejects_missing_credentials() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "widgets.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        response = client.post(
+            "/widgets/create",
+            data={"csrf": csrf, "name": "openweathermap", "units": "metric", "extra": ""},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert "error=" in response.headers["location"]
+        assert path.read_text(encoding="utf-8") == original
+    finally:
+        path.write_text(original, encoding="utf-8")
+
+
+def test_v047_unknown_widget_keeps_legacy_config_post_compatibility() -> None:
+    client = TestClient(app)
+    csrf = login(client)
+    path = settings.config_dir / "widgets.yaml"
+    original = path.read_text(encoding="utf-8")
+    try:
+        path.write_text("---\n- futurewidget:\n    alpha: 1\n", encoding="utf-8")
+        response = client.post(
+            "/widgets/0/update",
+            data={"csrf": csrf, "name": "futurewidget", "config": "alpha: 2\nbeta: true"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        data = YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+        assert data[0]["futurewidget"] == {"alpha": 2, "beta": True}
+    finally:
+        path.write_text(original, encoding="utf-8")

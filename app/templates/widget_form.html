@@ -1,15 +1,237 @@
 {% extends "base.html" %}
+{% macro tri(name, label, value, help='不配置时使用 Homepage 默认行为。') -%}
+<label>{{ label }}
+  <select name="{{ name }}">
+    <option value="" {% if not value %}selected{% endif %}>使用 Homepage 默认值</option>
+    <option value="true" {% if value == 'true' %}selected{% endif %}>开启 · true</option>
+    <option value="false" {% if value == 'false' %}selected{% endif %}>关闭 · false</option>
+  </select>
+  <small class="field-help">{{ help }}</small>
+</label>
+{%- endmacro %}
 {% block title %}{{ '新增组件' if mode == 'new' else '编辑组件' }} · Homepage Admin{% endblock %}
 {% block content %}
-<section class="page-heading"><div><a class="back-link" href="/widgets">← 返回顶部组件</a><h1>{{ '新增组件' if mode == 'new' else '编辑组件' }}</h1><p>不同顶部组件参数差异较大，因此这里保留“类型 + YAML 配置”的通用编辑方式；敏感字段会自动遮挡。</p></div></section>
-<form class="editor-form" method="post" action="{% if mode == 'new' %}/widgets/create{% else %}/widgets/{{ index }}/update{% endif %}">
+{% set meta = catalog.get(name) %}
+<section class="page-heading">
+  <div>
+    <a class="back-link" href="/widgets">← 返回顶部组件</a>
+    <h1>{{ '新增组件' if mode == 'new' else '编辑组件' }}</h1>
+    <p>官方 Information Widget 使用专属表单；未覆盖或未来新增字段可继续放在“其他配置 YAML”中。</p>
+  </div>
+  <div class="page-heading-actions">
+    {% if meta %}<a class="button secondary" href="{{ meta.doc }}" target="_blank" rel="noopener">官方文档 ↗</a>{% endif %}
+    <a class="button secondary" href="/yaml/widgets.yaml">高级编辑 widgets.yaml</a>
+  </div>
+</section>
+
+<form class="editor-form" method="post" action="{% if mode == 'new' %}/widgets/create{% else %}/widgets/{{ index }}/update{% endif %}" data-info-widget-editor>
   <input type="hidden" name="csrf" value="{{ csrf }}">
+
   <section class="form-card">
-    <div class="form-grid two">
-      <label>组件类型<input name="name" value="{{ name }}" required placeholder="greeting / datetime / resources / search"></label>
-      <label class="span-2">配置（YAML）<textarea name="config" rows="18" spellcheck="false">{{ config }}</textarea></label>
+    <div class="section-heading">
+      <div><h2>组件类型</h2><p class="section-help">Homepage 官方 Info Widget 类型；同一类型可以添加多个实例。</p></div>
+      {% if meta %}<span class="role-pill">{{ meta.category }}</span>{% endif %}
+    </div>
+    {% if mode == 'new' %}
+    <div class="form-grid two aligned-fields">
+      <label>Information Widget
+        <select name="name" data-info-widget-type-select>
+          {% for item in catalog_items %}<option value="{{ item.id }}" {% if name == item.id %}selected{% endif %}>{{ item.title_zh }} · {{ item.id }}</option>{% endfor %}
+        </select>
+        <small class="field-help">切换类型会加载对应官方配置表单。</small>
+      </label>
+      <div class="info-widget-type-description">
+        <strong>{{ meta.title_zh if meta else name }}</strong>
+        <p>{{ meta.description if meta else '高级 / 自定义 Information Widget。' }}</p>
+      </div>
+    </div>
+    {% else %}
+      <input type="hidden" name="name" value="{{ name }}">
+      <div class="info-widget-edit-type"><strong>{{ meta.title_zh if meta else name }}</strong><code>{{ name }}</code><span>{{ meta.description if meta else '未收录到当前官方目录，使用完整 YAML 编辑。' }}</span></div>
+    {% endif %}
+  </section>
+
+  {% if name == 'greeting' %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>Greeting</h2><p class="section-help">显示一段简单文本，也可以附加跳转链接。</p></div></div>
+    <div class="form-grid two aligned-fields">
+      <label>文字内容<input name="text" value="{{ values.text or '' }}" placeholder="Welcome"><small class="field-help">Homepage 页头显示的文字。</small></label>
+      <label>文字大小<select name="text_size"><option value="">Homepage 默认</option>{% for size in text_sizes %}<option value="{{ size }}" {% if values.text_size == size %}selected{% endif %}>{{ size }}</option>{% endfor %}</select><small class="field-help">官方支持 4xl 至 xs。</small></label>
+      <label>链接地址<input name="href" value="{{ values.href or '' }}" placeholder="https://example.com"><small class="field-help">可选；点击文字时打开。</small></label>
+      <label>链接目标<select name="target"><option value="">继承全局设置</option>{% for target in targets %}<option value="{{ target }}" {% if values.target == target %}selected{% endif %}>{{ target }}</option>{% endfor %}</select><small class="field-help">可覆盖 settings.yaml 的 target。</small></label>
     </div>
   </section>
+
+  {% elif name == 'datetime' %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>Date & Time</h2><p class="section-help">常用 Intl.DateTimeFormat 参数已经可视化；其他参数仍可通过高级格式 YAML 保留。</p></div><span class="role-pill subtle">Homepage 靠右</span></div>
+    <div class="form-grid three aligned-fields">
+      <label>文字大小<select name="text_size"><option value="">Homepage 默认</option>{% for size in text_sizes %}<option value="{{ size }}" {% if values.text_size == size %}selected{% endif %}>{{ size }}</option>{% endfor %}</select><small class="field-help">4xl / 3xl / 2xl / xl / md / sm / xs。</small></label>
+      <label>Locale<input name="locale" value="{{ values.locale or '' }}" placeholder="zh-Hans / en-GB"><small class="field-help">只影响该日期时间组件。</small></label>
+      <label>时区<input name="format_timeZone" value="{{ values.format_timeZone or '' }}" placeholder="Asia/Shanghai / UTC"><small class="field-help">IANA 时区；留空使用浏览器本地时区。</small></label>
+      <label>日期样式<select name="format_dateStyle"><option value="">不显示 / 未指定</option>{% for item in ['full','long','medium','short'] %}<option value="{{ item }}" {% if values.format_dateStyle == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select><small class="field-help">Intl.DateTimeFormat dateStyle。</small></label>
+      <label>时间样式<select name="format_timeStyle"><option value="">不显示 / 未指定</option>{% for item in ['full','long','medium','short'] %}<option value="{{ item }}" {% if values.format_timeStyle == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select><small class="field-help">Intl.DateTimeFormat timeStyle。</small></label>
+      <label>Hour Cycle<select name="format_hourCycle"><option value="">Locale 默认</option>{% for item in ['h11','h12','h23','h24'] %}<option value="{{ item }}" {% if values.format_hourCycle == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select><small class="field-help">例如 h23 显示 00–23。</small></label>
+      {{ tri('format_hour12', '强制 12 小时制', values.format_hour12, '可与 Locale 默认格式分开控制。') }}
+      <label class="span-2">Intl format 其他配置（YAML）<textarea name="format_extra" rows="5" spellcheck="false" placeholder="weekday: long&#10;day: 2-digit">{{ values.format_extra or '' }}</textarea><small class="field-help">不要重复填写上方已可视化的 format 字段。</small></label>
+    </div>
+  </section>
+
+  {% elif name == 'logo' %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>Logo</h2><p class="section-help">使用 Homepage Logo 或指定自定义图标，并可附加链接。</p></div></div>
+    <div class="form-grid two aligned-fields">
+      <label class="span-2">自定义图标<input name="icon" value="{{ values.icon or '' }}" placeholder="https://example.com/logo.svg / homepage.png"><small class="field-help">留空使用 Homepage 默认 Logo；图标语法与服务图标一致。</small></label>
+      <label>链接地址<input name="href" value="{{ values.href or '' }}" placeholder="https://example.com"><small class="field-help">可选。</small></label>
+      <label>链接目标<select name="target"><option value="">继承全局设置</option>{% for target in targets %}<option value="{{ target }}" {% if values.target == target %}selected{% endif %}>{{ target }}</option>{% endfor %}</select><small class="field-help">可覆盖 settings.yaml 的 target。</small></label>
+    </div>
+  </section>
+
+  {% elif name == 'search' %}
+  <section class="form-card" data-info-search-form>
+    <div class="section-heading"><div><h2>Search</h2><p class="section-help">支持单一 Provider、多个内置 Provider 下拉选择，以及 Custom Search。</p></div><span class="role-pill subtle">Homepage 靠右</span></div>
+    <div class="form-grid two aligned-fields">
+      <label>Provider 模式<select name="provider_mode" data-info-search-provider><option value="google" {% if values.provider_mode == 'google' %}selected{% endif %}>Google</option><option value="duckduckgo" {% if values.provider_mode == 'duckduckgo' %}selected{% endif %}>DuckDuckGo</option><option value="bing" {% if values.provider_mode == 'bing' %}selected{% endif %}>Bing</option><option value="baidu" {% if values.provider_mode == 'baidu' %}selected{% endif %}>Baidu</option><option value="brave" {% if values.provider_mode == 'brave' %}selected{% endif %}>Brave</option><option value="multiple" {% if values.provider_mode == 'multiple' %}selected{% endif %}>多个 Provider</option><option value="custom" {% if values.provider_mode == 'custom' %}selected{% endif %}>Custom</option></select><small class="field-help">多个 Provider 会在 Homepage 搜索框中提供下拉切换。</small></label>
+      <label>链接目标<select name="target"><option value="">Homepage 默认</option>{% for target in targets %}<option value="{{ target }}" {% if values.target == target %}selected{% endif %}>{{ target }}</option>{% endfor %}</select><small class="field-help">搜索结果打开方式。</small></label>
+      {{ tri('focus', '页面加载后自动聚焦', values.focus_mode) }}
+      {{ tri('showSearchSuggestions', '搜索建议', values.showSearchSuggestions_mode) }}
+    </div>
+    <div class="settings-subcard" data-info-search-multiple {% if values.provider_mode != 'multiple' %}hidden{% endif %}>
+      <h3>多个搜索引擎</h3>
+      <div class="settings-toggle-grid compact-toggles">{% for provider in search_providers %}<label class="settings-toggle"><input type="checkbox" name="provider_{{ provider }}" value="1" {% if provider in values.providers %}checked{% endif %}><span><strong>{{ provider }}</strong></span></label>{% endfor %}</div>
+    </div>
+    <div class="settings-subcard" data-info-search-custom {% if values.provider_mode != 'custom' %}hidden{% endif %}>
+      <h3>Custom Search</h3>
+      <div class="form-grid two aligned-fields">
+        <label>搜索 URL<input name="url" value="{{ values.url or '' }}" placeholder="https://search.example.com/?q="><small class="field-help">必填；URL 应以查询参数前缀结束。</small></label>
+        <label>Suggestion URL<input name="suggestionUrl" value="{{ values.suggestionUrl or '' }}" placeholder="https://search.example.com/suggest?q="><small class="field-help">可选；使用搜索建议时需要。</small></label>
+      </div>
+    </div>
+  </section>
+
+  {% elif name == 'resources' %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>Resources</h2><p class="section-help">这里显示的是 Homepage 容器自身资源；若要监控宿主机，官方建议使用 Glances。</p></div></div>
+    <div class="form-grid three aligned-fields">
+      <label>标签<input name="label" value="{{ values.label or '' }}" placeholder="System"><small class="field-help">可将多个 Resources 组件按标签分组。</small></label>
+      {{ tri('cpu', 'CPU', values.cpu_mode) }}
+      {{ tri('memory', '内存', values.memory_mode) }}
+      {{ tri('cputemp', 'CPU 温度', values.cputemp_mode) }}
+      {{ tri('uptime', '运行时间', values.uptime_mode) }}
+      {{ tri('expanded', '展开详情', values.expanded_mode) }}
+      <label>温度单位<select name="units"><option value="">默认 · metric</option><option value="metric" {% if values.units == 'metric' %}selected{% endif %}>metric</option><option value="imperial" {% if values.units == 'imperial' %}selected{% endif %}>imperial</option></select><small class="field-help">仅用于 CPU 温度。</small></label>
+      <label>磁盘单位<select name="diskUnits"><option value="">默认 · bytes</option><option value="bytes" {% if values.diskUnits == 'bytes' %}selected{% endif %}>bytes</option><option value="bbytes" {% if values.diskUnits == 'bbytes' %}selected{% endif %}>bbytes</option></select><small class="field-help">仅用于磁盘。</small></label>
+      <label>网络接口<input name="network" value="{{ values.network or '' }}" placeholder="true / eth0"><small class="field-help">填写 true 使用默认接口，或填写具体接口名。</small></label>
+      <label>最低温度<input type="number" name="tempmin" value="{{ values.tempmin if values.tempmin is not none else '' }}" placeholder="0"><small class="field-help">可选。</small></label>
+      <label>最高温度<input type="number" name="tempmax" value="{{ values.tempmax if values.tempmax is not none else '' }}" placeholder="100"><small class="field-help">可选。</small></label>
+      <label>刷新间隔（ms）<input type="number" name="refresh" value="{{ values.refresh if values.refresh is not none else '' }}" min="250" placeholder="3000"><small class="field-help">官方示例使用毫秒。</small></label>
+      <label class="span-2">磁盘挂载点<textarea name="disk_text" rows="5" placeholder="/&#10;/mnt/storage">{{ values.disk_text or '' }}</textarea><small class="field-help">每行一个挂载点。要访问的磁盘需要挂载进 Homepage 容器。</small></label>
+    </div>
+  </section>
+
+  {% elif name == 'glances' %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>Glances</h2><p class="section-help">Glances 必须以 Web Server 模式运行；可添加多个 Glances Info Widget。</p></div></div>
+    <div class="form-grid three aligned-fields">
+      <label class="span-2">Glances URL<input name="url" value="{{ values.url or '' }}" required placeholder="http://192.0.2.20:61208"><small class="field-help">不要使用与部署者强相关的示例地址；这里使用文档保留 TEST-NET IP。</small></label>
+      <label>版本<select name="version"><option value="">默认 · 3</option><option value="3" {% if values.version|string == '3' %}selected{% endif %}>3</option><option value="4" {% if values.version|string == '4' %}selected{% endif %}>4</option></select><small class="field-help">Glances v4 或更高版本填写 4。</small></label>
+      <label>用户名<input name="username" value="{{ values.username or '' }}" autocomplete="username"><small class="field-help">仅启用认证时需要。</small></label>
+      <label>密码<input type="password" name="password" value="{{ values.password or '' }}" autocomplete="new-password"><small class="field-help">敏感字段保存后不会明文回显。</small></label>
+      <label>标签<input name="label" value="{{ values.label or '' }}" placeholder="Server"><small class="field-help">可选显示名称。</small></label>
+      {{ tri('cpu', 'CPU', values.cpu_mode) }}
+      {{ tri('mem', '内存', values.mem_mode) }}
+      {{ tri('cputemp', 'CPU 温度', values.cputemp_mode) }}
+      {{ tri('uptime', '运行时间', values.uptime_mode) }}
+      {{ tri('expanded', '展开详情', values.expanded_mode) }}
+      <label>温度传感器前缀<input name="cpuSensorLabel" value="{{ values.cpuSensorLabel or '' }}" placeholder="Package"><small class="field-help">只在默认传感器匹配不到时使用。</small></label>
+      <label>温度单位<select name="unit"><option value="">默认 · metric</option><option value="metric" {% if values.unit == 'metric' %}selected{% endif %}>metric</option><option value="imperial" {% if values.unit == 'imperial' %}selected{% endif %}>imperial</option></select><small class="field-help">仅用于温度。</small></label>
+      <label>磁盘单位<select name="diskUnits"><option value="">默认 · bytes</option><option value="bytes" {% if values.diskUnits == 'bytes' %}selected{% endif %}>bytes</option><option value="bbytes" {% if values.diskUnits == 'bbytes' %}selected{% endif %}>bbytes</option></select><small class="field-help">仅用于磁盘。</small></label>
+      <label class="span-2">磁盘挂载点<textarea name="disk_text" rows="5" placeholder="/&#10;/data">{{ values.disk_text or '' }}</textarea><small class="field-help">每行一个 Glances 报告的挂载点。</small></label>
+    </div>
+  </section>
+
+  {% elif name in ['openmeteo','openweathermap'] %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>{{ 'Open-Meteo' if name == 'openmeteo' else 'OpenWeatherMap' }}</h2><p class="section-help">经纬度可留空，让 Homepage 在安全上下文中使用浏览器当前位置。</p></div><span class="role-pill subtle">Homepage 靠右</span></div>
+    {% if name == 'openweathermap' and not prerequisites.openweathermap %}<div class="alert warning"><strong>共享 Provider 未配置：</strong>可以在本组件直接填写 API Key，或在页面设置的高级 YAML 中配置 <code>providers.openweathermap</code>。</div>{% endif %}
+    <div class="form-grid three aligned-fields">
+      <label>标签<input name="label" value="{{ values.label or '' }}" placeholder="Current"><small class="field-help">可选。</small></label>
+      <label>纬度<input type="number" step="any" name="latitude" value="{{ values.latitude if values.latitude is not none else '' }}" placeholder="51.5074"><small class="field-help">可留空。</small></label>
+      <label>经度<input type="number" step="any" name="longitude" value="{{ values.longitude if values.longitude is not none else '' }}" placeholder="-0.1278"><small class="field-help">可留空。</small></label>
+      <label>单位<select name="units"><option value="">Homepage 默认</option><option value="metric" {% if values.units == 'metric' %}selected{% endif %}>metric</option><option value="imperial" {% if values.units == 'imperial' %}selected{% endif %}>imperial</option></select><small class="field-help">metric / imperial。</small></label>
+      <label>缓存（分钟）<input type="number" name="cache" min="1" value="{{ values.cache if values.cache is not none else '' }}" placeholder="5"><small class="field-help">减少天气 API 请求。</small></label>
+      <label>小数位上限<input type="number" name="format_maximumFractionDigits" min="0" max="20" value="{{ values.format_maximumFractionDigits or '' }}" placeholder="1"><small class="field-help">Intl.NumberFormat maximumFractionDigits。</small></label>
+      {% if name == 'openmeteo' %}
+      <label>时区<input name="timezone" value="{{ values.timezone or '' }}" placeholder="Europe/London / Asia/Tokyo"><small class="field-help">可选 IANA 时区。</small></label>
+      {% else %}
+      <label>Provider<input name="provider" value="{{ values.provider or '' }}" placeholder="openweathermap"><small class="field-help">使用 settings.yaml 共享 Provider 时填写。</small></label>
+      <label>API Key<input type="password" name="apiKey" value="{{ values.apiKey or '' }}" autocomplete="new-password"><small class="field-help">仅未使用共享 Provider 时填写；属于敏感字段。</small></label>
+      {% endif %}
+      <label class="span-2">数字格式其他配置（YAML）<textarea name="format_extra" rows="4" spellcheck="false">{{ values.format_extra or '' }}</textarea><small class="field-help">不要重复填写 maximumFractionDigits。</small></label>
+    </div>
+  </section>
+
+  {% elif name == 'stocks' %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>Stocks</h2><p class="section-help">官方 Info Widget 当前使用 Finnhub；Watchlist 最多 8 项。</p></div></div>
+    {% if not prerequisites.finnhub %}<div class="alert warning"><strong>缺少 Finnhub Provider：</strong>请先在 <code>settings.yaml → providers.finnhub</code> 配置 API Key，否则 Stocks 无法获取数据。</div>{% endif %}
+    <div class="form-grid two aligned-fields">
+      <label>Provider<input value="finnhub" disabled><input type="hidden" name="provider" value="finnhub"><small class="field-help">官方当前仅支持 Finnhub。</small></label>
+      {{ tri('color', '涨跌颜色', values.color_mode) }}
+      <label>缓存（分钟）<input type="number" name="cache" min="1" value="{{ values.cache if values.cache is not none else '' }}" placeholder="1"><small class="field-help">默认约 1 分钟。</small></label>
+      <label class="span-2">Watchlist<textarea name="watchlist_text" rows="6" placeholder="AAPL&#10;MSFT&#10;NVDA">{{ values.watchlist_text or '' }}</textarea><small class="field-help">每行一个股票代码，最多 8 个。</small></label>
+    </div>
+  </section>
+
+  {% elif name == 'unifi_console' %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>UniFi Controller</h2><p class="section-help">建议使用至少具备只读权限的本地账户，或 API Key。</p></div></div>
+    <div class="form-grid two aligned-fields">
+      <label class="span-2">Controller URL<input name="url" value="{{ values.url or '' }}" required placeholder="https://unifi.example.com"><small class="field-help">UniFi Network Controller 地址。</small></label>
+      <label>Site<input name="site" value="{{ values.site or '' }}" placeholder="default"><small class="field-help">可选；留空使用默认 Site。</small></label>
+      <label>用户名<input name="username" value="{{ values.username or '' }}" autocomplete="username"><small class="field-help">使用用户名/密码认证时填写。</small></label>
+      <label>密码<input type="password" name="password" value="{{ values.password or '' }}" autocomplete="new-password"><small class="field-help">敏感字段。</small></label>
+      <label>API Key<input type="password" name="key" value="{{ values.key or '' }}" autocomplete="new-password"><small class="field-help">使用 API Key 时可不填写用户名/密码。</small></label>
+    </div>
+  </section>
+
+  {% elif name == 'kubernetes' %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>Kubernetes</h2><p class="section-help">显示集群和节点级 CPU / 内存；连接本身由 kubernetes.yaml 配置。</p></div></div>
+    {% if not prerequisites.kubernetes %}<div class="alert warning"><strong>Kubernetes 连接未启用：</strong>当前 <code>kubernetes.yaml</code> 模式为 <code>{{ prerequisites.kubernetes_mode }}</code>。可先配置连接再启用此组件。</div>{% endif %}
+    <div class="info-widget-nested-grid">
+      <div class="settings-subcard"><h3>Cluster</h3><div class="form-grid two aligned-fields">{{ tri('cluster_show','显示集群统计',values.cluster_show) }}{{ tri('cluster_cpu','CPU',values.cluster_cpu) }}{{ tri('cluster_memory','内存',values.cluster_memory) }}{{ tri('cluster_showLabel','显示标签',values.cluster_showLabel) }}<label class="span-2">自定义标签<input name="cluster_label" value="{{ values.cluster_label or '' }}" placeholder="cluster"><small class="field-help">仅 Cluster 支持自定义 label。</small></label><label class="span-2">Cluster 其他配置（YAML）<textarea name="cluster_extra" rows="4">{{ values.cluster_extra or '' }}</textarea><small class="field-help">未来官方新增字段可保留在这里。</small></label></div></div>
+      <div class="settings-subcard"><h3>Nodes</h3><div class="form-grid two aligned-fields">{{ tri('nodes_cfg_show','显示节点统计',values.nodes_cfg_show) }}{{ tri('nodes_cfg_cpu','CPU',values.nodes_cfg_cpu) }}{{ tri('nodes_cfg_memory','内存',values.nodes_cfg_memory) }}{{ tri('nodes_cfg_showLabel','显示节点名称',values.nodes_cfg_showLabel) }}<label class="span-2">Nodes 其他配置（YAML）<textarea name="nodes_extra" rows="4">{{ values.nodes_extra or '' }}</textarea><small class="field-help">未来官方新增字段可保留在这里。</small></label></div></div>
+    </div>
+  </section>
+
+  {% elif name == 'longhorn' %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>Longhorn</h2><p class="section-help">Longhorn 地址和凭据由 settings.yaml 的 providers.longhorn 提供。</p></div></div>
+    {% if not prerequisites.longhorn %}<div class="alert warning"><strong>Longhorn Provider 未配置：</strong>请先在 <code>settings.yaml → providers.longhorn</code> 配置 URL，以及可选用户名和密码。</div>{% endif %}
+    <div class="form-grid two aligned-fields">
+      {{ tri('expanded','展开详情',values.expanded_mode) }}
+      {{ tri('total','显示聚合总量',values.total_mode) }}
+      {{ tri('labels','显示节点标签',values.labels_mode) }}
+      {{ tri('nodes','显示节点',values.nodes_mode) }}
+      <label class="span-2">只显示这些节点<textarea name="include_text" rows="6" placeholder="node-1&#10;node-2">{{ values.include_text or '' }}</textarea><small class="field-help">每行一个节点；留空且 nodes=true 时显示全部节点。</small></label>
+    </div>
+  </section>
+
+  {% else %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>完整 YAML 配置</h2><p class="section-help">该组件未收录到当前官方 Info Widget 目录，因此使用通用 YAML 编辑器。</p></div><span class="role-pill warning">兼容模式</span></div>
+    <label>配置（YAML）<textarea name="raw_config" rows="20" spellcheck="false">{{ raw_config }}</textarea></label>
+  </section>
+  {% endif %}
+
+  {% if meta %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>高级兼容</h2><p class="section-help">仅填写上方表单没有覆盖的顶层字段；这样未来 Homepage 新增参数也不会被 Admin 丢弃。</p></div><span class="role-pill">YAML</span></div>
+    <label>其他配置（YAML 映射）<textarea name="extra" rows="8" spellcheck="false" placeholder="href: https://example.com">{{ values.extra or '' }}</textarea><small class="field-help">不要重复填写已经在专属表单出现的字段；保存前会校验冲突。</small></label>
+  </section>
+  {% endif %}
+
   <div class="sticky-actions"><a class="button secondary" href="/widgets">取消</a><button class="button primary" type="submit">保存组件</button></div>
 </form>
 {% endblock %}

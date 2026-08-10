@@ -57,6 +57,16 @@ from .widget_catalog import (
     widget_schema_sync_job_status,
 )
 from .widget_tester import WidgetTestError, test_widget
+from .info_widget_catalog import (
+    INFO_WIDGET_BY_ID,
+    INFO_WIDGET_TYPES,
+    KNOWN_FIELDS as INFO_WIDGET_KNOWN_FIELDS,
+    SEARCH_PROVIDERS as INFO_SEARCH_PROVIDERS,
+    TARGETS as INFO_WIDGET_TARGETS,
+    TEXT_SIZES as INFO_TEXT_SIZES,
+    catalog_categories as info_catalog_categories,
+    public_catalog as public_info_catalog,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -3231,15 +3241,398 @@ async def save_settings(request: Request, _: None = Depends(auth_guard)) -> Redi
         return redirect("/settings", error=str(exc))
 
 
+
+def _info_widget_bool(value: Any) -> str:
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    return ""
+
+
+def _info_widget_list_text(value: Any) -> str:
+    if isinstance(value, list):
+        return "\n".join(str(item) for item in value if item not in (None, ""))
+    if value in (None, "", False):
+        return ""
+    return str(value)
+
+
+def _info_widget_extra(cfg: dict[str, Any], widget_type: str) -> str:
+    known = INFO_WIDGET_KNOWN_FIELDS.get(widget_type, set())
+    extra = CommentedMap((key, value) for key, value in cfg.items() if key not in known)
+    return store.dump_fragment(mask_secrets(extra)) if extra else ""
+
+
+def _info_widget_nested_extra(value: Any, known: set[str]) -> str:
+    if not isinstance(value, dict):
+        return ""
+    extra = CommentedMap((key, child) for key, child in value.items() if key not in known)
+    return store.dump_fragment(mask_secrets(extra)) if extra else ""
+
+
+def info_widget_form_values(widget_type: str, cfg: Any) -> dict[str, Any]:
+    plain = cfg if isinstance(cfg, dict) else {}
+    masked = mask_secrets(plain)
+    values: dict[str, Any] = {"type": widget_type}
+    values.update(masked if isinstance(masked, dict) else {})
+    values["extra"] = _info_widget_extra(plain, widget_type)
+
+    for key in ("focus", "showSearchSuggestions", "cpu", "memory", "cputemp", "uptime", "expanded", "mem", "color", "total", "labels", "nodes"):
+        if key in plain:
+            values[f"{key}_mode"] = _info_widget_bool(plain.get(key))
+
+    values["disk_text"] = _info_widget_list_text(plain.get("disk"))
+    values["include_text"] = _info_widget_list_text(plain.get("include"))
+    values["watchlist_text"] = _info_widget_list_text(plain.get("watchlist"))
+
+    provider = plain.get("provider")
+    if widget_type == "search":
+        if isinstance(provider, list):
+            values["provider_mode"] = "multiple"
+            values["providers"] = [str(x) for x in provider]
+        else:
+            values["provider_mode"] = str(provider or "google")
+            values["providers"] = []
+
+    fmt = plain.get("format") if isinstance(plain.get("format"), dict) else {}
+    values["format_dateStyle"] = str(fmt.get("dateStyle", "") or "")
+    values["format_timeStyle"] = str(fmt.get("timeStyle", "") or "")
+    values["format_hourCycle"] = str(fmt.get("hourCycle", "") or "")
+    values["format_hour12"] = _info_widget_bool(fmt.get("hour12"))
+    values["format_timeZone"] = str(fmt.get("timeZone", "") or "")
+    values["format_maximumFractionDigits"] = str(fmt.get("maximumFractionDigits", "") if fmt.get("maximumFractionDigits") is not None else "")
+    values["format_extra"] = _info_widget_nested_extra(
+        fmt, {"dateStyle", "timeStyle", "hourCycle", "hour12", "timeZone", "maximumFractionDigits"}
+    )
+
+    cluster = plain.get("cluster") if isinstance(plain.get("cluster"), dict) else {}
+    nodes_cfg = plain.get("nodes") if isinstance(plain.get("nodes"), dict) else {}
+    if widget_type == "kubernetes":
+        for prefix, source in (("cluster", cluster), ("nodes_cfg", nodes_cfg)):
+            for key in ("show", "cpu", "memory", "showLabel"):
+                values[f"{prefix}_{key}"] = _info_widget_bool(source.get(key))
+        values["cluster_label"] = str(cluster.get("label", "") or "")
+        values["cluster_extra"] = _info_widget_nested_extra(cluster, {"show", "cpu", "memory", "showLabel", "label"})
+        values["nodes_extra"] = _info_widget_nested_extra(nodes_cfg, {"show", "cpu", "memory", "showLabel"})
+    return values
+
+
+def _form_text(form: Any, key: str) -> str | None:
+    value = str(form.get(key, "")).strip()
+    return value or None
+
+
+def _form_number(form: Any, key: str, *, integer: bool = False) -> int | float | None:
+    value = _form_text(form, key)
+    if value is None:
+        return None
+    try:
+        return int(value) if integer else float(value)
+    except ValueError as exc:
+        raise ConfigError(f"{key} 必须是{'整数' if integer else '数字'}。") from exc
+
+
+def _form_tri_bool(form: Any, key: str) -> bool | None:
+    value = str(form.get(key, "")).strip().lower()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    return None
+
+
+def _form_lines(form: Any, key: str, *, max_items: int | None = None) -> list[str]:
+    raw = str(form.get(key, ""))
+    values = [line.strip() for line in raw.replace(",", "\n").splitlines() if line.strip()]
+    if max_items is not None and len(values) > max_items:
+        raise ConfigError(f"{key} 最多允许 {max_items} 项。")
+    return values
+
+
+def _merge_yaml_extra(target: CommentedMap, text: str, reserved: set[str], label: str) -> None:
+    extra = store.parse_fragment(text, dict)
+    conflicts = sorted(str(key) for key in extra if str(key) in reserved)
+    if conflicts:
+        raise ConfigError(f"{label} 中不要重复填写可视化字段：{', '.join(conflicts)}")
+    for key, value in extra.items():
+        target[key] = value
+
+
+def _set_if(target: CommentedMap, key: str, value: Any) -> None:
+    if value not in (None, ""):
+        target[key] = value
+
+
+def build_info_widget_config(form: Any, widget_type: str) -> CommentedMap:
+    if widget_type not in INFO_WIDGET_TYPES:
+        return store.parse_fragment(str(form.get("raw_config", form.get("config", ""))), dict)
+
+    cfg = CommentedMap()
+    _merge_yaml_extra(cfg, str(form.get("extra", "")), INFO_WIDGET_KNOWN_FIELDS.get(widget_type, set()), "其他配置")
+
+    if widget_type == "greeting":
+        _set_if(cfg, "text_size", _form_text(form, "text_size"))
+        _set_if(cfg, "text", _form_text(form, "text"))
+        _set_if(cfg, "href", _form_text(form, "href"))
+        _set_if(cfg, "target", _form_text(form, "target"))
+
+    elif widget_type == "datetime":
+        _set_if(cfg, "text_size", _form_text(form, "text_size"))
+        _set_if(cfg, "locale", _form_text(form, "locale"))
+        fmt = CommentedMap()
+        _merge_yaml_extra(
+            fmt,
+            str(form.get("format_extra", "")),
+            {"dateStyle", "timeStyle", "hourCycle", "hour12", "timeZone", "maximumFractionDigits"},
+            "Intl format 其他配置",
+        )
+        for key, form_key in (("dateStyle", "format_dateStyle"), ("timeStyle", "format_timeStyle"), ("hourCycle", "format_hourCycle"), ("timeZone", "format_timeZone")):
+            _set_if(fmt, key, _form_text(form, form_key))
+        hour12 = _form_tri_bool(form, "format_hour12")
+        if hour12 is not None:
+            fmt["hour12"] = hour12
+        if fmt:
+            cfg["format"] = fmt
+        _set_if(cfg, "href", _form_text(form, "href"))
+        _set_if(cfg, "target", _form_text(form, "target"))
+
+    elif widget_type == "logo":
+        _set_if(cfg, "icon", _form_text(form, "icon"))
+        _set_if(cfg, "href", _form_text(form, "href"))
+        _set_if(cfg, "target", _form_text(form, "target"))
+
+    elif widget_type == "search":
+        mode = str(form.get("provider_mode", "google")).strip() or "google"
+        if mode == "multiple":
+            providers = [item for item in INFO_SEARCH_PROVIDERS if str(form.get(f"provider_{item}", "")) == "1"]
+            if not providers:
+                raise ConfigError("多搜索引擎模式至少选择一个 Provider。")
+            cfg["provider"] = CommentedSeq(providers)
+        else:
+            cfg["provider"] = mode
+        for key in ("focus", "showSearchSuggestions"):
+            value = _form_tri_bool(form, key)
+            if value is not None:
+                cfg[key] = value
+        _set_if(cfg, "target", _form_text(form, "target"))
+        if mode == "custom":
+            url = _form_text(form, "url")
+            if not url:
+                raise ConfigError("Custom Search 必须填写搜索 URL。")
+            cfg["url"] = url
+            _set_if(cfg, "suggestionUrl", _form_text(form, "suggestionUrl"))
+
+    elif widget_type == "resources":
+        _set_if(cfg, "label", _form_text(form, "label"))
+        for key in ("cpu", "memory", "cputemp", "uptime", "expanded"):
+            value = _form_tri_bool(form, key)
+            if value is not None:
+                cfg[key] = value
+        disks = _form_lines(form, "disk_text")
+        if len(disks) == 1:
+            cfg["disk"] = disks[0]
+        elif disks:
+            cfg["disk"] = CommentedSeq(disks)
+        _set_if(cfg, "units", _form_text(form, "units"))
+        _set_if(cfg, "diskUnits", _form_text(form, "diskUnits"))
+        network = _form_text(form, "network")
+        if network:
+            cfg["network"] = True if network.lower() == "true" else network
+        for key in ("tempmin", "tempmax", "refresh"):
+            value = _form_number(form, key, integer=True)
+            if value is not None:
+                cfg[key] = value
+
+    elif widget_type == "glances":
+        url = _form_text(form, "url")
+        if not url:
+            raise ConfigError("Glances URL 不能为空。")
+        cfg["url"] = url
+        for key in ("username", "password", "cpuSensorLabel", "label"):
+            _set_if(cfg, key, _form_text(form, key))
+        version = _form_number(form, "version", integer=True)
+        if version is not None:
+            cfg["version"] = version
+        for key in ("cpu", "mem", "cputemp", "uptime", "expanded"):
+            value = _form_tri_bool(form, key)
+            if value is not None:
+                cfg[key] = value
+        disks = _form_lines(form, "disk_text")
+        if len(disks) == 1:
+            cfg["disk"] = disks[0]
+        elif disks:
+            cfg["disk"] = CommentedSeq(disks)
+        _set_if(cfg, "unit", _form_text(form, "unit"))
+        _set_if(cfg, "diskUnits", _form_text(form, "diskUnits"))
+
+    elif widget_type in {"openmeteo", "openweathermap"}:
+        _set_if(cfg, "label", _form_text(form, "label"))
+        for key in ("latitude", "longitude"):
+            value = _form_number(form, key)
+            if value is not None:
+                cfg[key] = value
+        _set_if(cfg, "units", _form_text(form, "units"))
+        if widget_type == "openmeteo":
+            _set_if(cfg, "timezone", _form_text(form, "timezone"))
+        else:
+            _set_if(cfg, "provider", _form_text(form, "provider"))
+            _set_if(cfg, "apiKey", _form_text(form, "apiKey"))
+            if not cfg.get("provider") and not cfg.get("apiKey"):
+                raise ConfigError("OpenWeatherMap 需要 provider 或 API Key。")
+        cache = _form_number(form, "cache", integer=True)
+        if cache is not None:
+            cfg["cache"] = cache
+        fmt = CommentedMap()
+        _merge_yaml_extra(fmt, str(form.get("format_extra", "")), {"maximumFractionDigits"}, "数字格式其他配置")
+        digits = _form_number(form, "format_maximumFractionDigits", integer=True)
+        if digits is not None:
+            fmt["maximumFractionDigits"] = digits
+        if fmt:
+            cfg["format"] = fmt
+
+    elif widget_type == "stocks":
+        cfg["provider"] = "finnhub"
+        color = _form_tri_bool(form, "color")
+        if color is not None:
+            cfg["color"] = color
+        cache = _form_number(form, "cache", integer=True)
+        if cache is not None:
+            cfg["cache"] = cache
+        watchlist = _form_lines(form, "watchlist_text", max_items=8)
+        if not watchlist:
+            raise ConfigError("Stocks 至少需要一个股票代码。")
+        cfg["watchlist"] = CommentedSeq(watchlist)
+
+    elif widget_type == "unifi_console":
+        url = _form_text(form, "url")
+        if not url:
+            raise ConfigError("UniFi Controller URL 不能为空。")
+        cfg["url"] = url
+        for key in ("site", "username", "password", "key"):
+            _set_if(cfg, key, _form_text(form, key))
+        if not cfg.get("key") and not (cfg.get("username") and cfg.get("password")):
+            raise ConfigError("UniFi Controller 需要 API Key，或同时填写用户名和密码。")
+
+    elif widget_type == "kubernetes":
+        cluster = CommentedMap()
+        nodes_cfg = CommentedMap()
+        _merge_yaml_extra(cluster, str(form.get("cluster_extra", "")), {"show", "cpu", "memory", "showLabel", "label"}, "Cluster 其他配置")
+        _merge_yaml_extra(nodes_cfg, str(form.get("nodes_extra", "")), {"show", "cpu", "memory", "showLabel"}, "Nodes 其他配置")
+        for key in ("show", "cpu", "memory", "showLabel"):
+            value = _form_tri_bool(form, f"cluster_{key}")
+            if value is not None:
+                cluster[key] = value
+            value = _form_tri_bool(form, f"nodes_cfg_{key}")
+            if value is not None:
+                nodes_cfg[key] = value
+        _set_if(cluster, "label", _form_text(form, "cluster_label"))
+        if cluster:
+            cfg["cluster"] = cluster
+        if nodes_cfg:
+            cfg["nodes"] = nodes_cfg
+
+    elif widget_type == "longhorn":
+        for key in ("expanded", "total", "labels", "nodes"):
+            value = _form_tri_bool(form, key)
+            if value is not None:
+                cfg[key] = value
+        include = _form_lines(form, "include_text")
+        if include:
+            cfg["include"] = CommentedSeq(include)
+
+    return cfg
+
+
+def info_widget_prerequisites() -> dict[str, Any]:
+    try:
+        settings_data = store.load("settings.yaml")
+    except ConfigError:
+        settings_data = {}
+    providers = settings_data.get("providers") if isinstance(settings_data, dict) else {}
+    providers = providers if isinstance(providers, dict) else {}
+    try:
+        kubernetes = store.load("kubernetes.yaml")
+    except ConfigError:
+        kubernetes = {}
+    mode = str(kubernetes.get("mode", "disabled") or "disabled") if isinstance(kubernetes, dict) else "disabled"
+    return {
+        "finnhub": bool(providers.get("finnhub")),
+        "openweathermap": bool(providers.get("openweathermap")),
+        "longhorn": isinstance(providers.get("longhorn"), dict) and bool(providers.get("longhorn", {}).get("url")),
+        "kubernetes": mode not in {"", "disabled"},
+        "kubernetes_mode": mode,
+    }
+
+
+def info_widget_summary(widget_type: str, cfg: Any) -> str:
+    if not isinstance(cfg, dict):
+        return "配置格式异常"
+    if widget_type == "greeting":
+        return str(cfg.get("text") or "问候文字")
+    if widget_type == "datetime":
+        fmt = cfg.get("format") if isinstance(cfg.get("format"), dict) else {}
+        parts = [str(x) for x in (fmt.get("dateStyle"), fmt.get("timeStyle")) if x]
+        return " / ".join(parts) or "日期与时间"
+    if widget_type == "search":
+        provider = cfg.get("provider", "google")
+        return "搜索：" + (", ".join(str(x) for x in provider) if isinstance(provider, list) else str(provider))
+    if widget_type in {"openmeteo", "openweathermap"}:
+        return str(cfg.get("label") or "天气")
+    if widget_type == "resources":
+        enabled = [label for key, label in (("cpu", "CPU"), ("memory", "内存"), ("disk", "磁盘"), ("network", "网络"), ("cputemp", "温度"), ("uptime", "运行时间")) if cfg.get(key) not in (None, False, "")]
+        return " · ".join(enabled) or "系统资源"
+    if widget_type == "glances":
+        return str(cfg.get("label") or cfg.get("url") or "Glances")
+    if widget_type == "stocks":
+        return " · ".join(str(x) for x in (cfg.get("watchlist") or [])[:4]) or "股票"
+    if widget_type == "unifi_console":
+        return str(cfg.get("site") or cfg.get("url") or "UniFi")
+    if widget_type == "kubernetes":
+        return "集群 / 节点资源"
+    if widget_type == "longhorn":
+        return "Longhorn 存储"
+    if widget_type == "logo":
+        return str(cfg.get("icon") or "Homepage Logo")
+    return "高级 / 自定义组件"
+
+
 def widgets_view() -> list[dict[str, Any]]:
     data = store.load("widgets.yaml")
     rows = []
     for index, entry in enumerate(data):
         try:
             name, cfg = first_pair(entry)
-            rows.append({"index": index, "name": name, "config": store.dump_fragment(mask_secrets(cfg))})
+            meta = INFO_WIDGET_BY_ID.get(name)
+            rows.append(
+                {
+                    "index": index,
+                    "name": name,
+                    "title": str(meta.get("title_zh") or meta.get("title")) if meta else name,
+                    "category": str(meta.get("category")) if meta else "自定义",
+                    "description": str(meta.get("description")) if meta else "未收录到当前官方 Info Widget 目录，仍可通过高级 YAML 编辑。",
+                    "doc": str(meta.get("doc")) if meta else "",
+                    "right_aligned": bool(meta.get("right_aligned")) if meta else False,
+                    "summary": info_widget_summary(name, cfg),
+                    "config": store.dump_fragment(mask_secrets(cfg)),
+                    "supported": meta is not None,
+                }
+            )
         except ConfigError:
-            rows.append({"index": index, "name": f"无效组件 #{index + 1}", "config": store.dump_fragment(mask_secrets(entry))})
+            rows.append(
+                {
+                    "index": index,
+                    "name": f"无效组件 #{index + 1}",
+                    "title": f"无效组件 #{index + 1}",
+                    "category": "异常",
+                    "description": "当前条目无法解析，请使用高级编辑检查 widgets.yaml。",
+                    "doc": "",
+                    "right_aligned": False,
+                    "summary": "配置格式异常",
+                    "config": store.dump_fragment(mask_secrets(entry)),
+                    "supported": False,
+                }
+            )
     return rows
 
 
@@ -3250,6 +3643,9 @@ def widgets_page(request: Request, _: None = Depends(auth_guard)) -> HTMLRespons
         error = request.query_params.get("error")
     except ConfigError as exc:
         rows, error = [], str(exc)
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["name"]] = counts.get(row["name"], 0) + 1
     return templates.TemplateResponse(
         request,
         "widgets.html",
@@ -3257,6 +3653,9 @@ def widgets_page(request: Request, _: None = Depends(auth_guard)) -> HTMLRespons
             request,
             "widgets",
             rows=rows,
+            catalog=public_info_catalog(counts),
+            categories=info_catalog_categories(),
+            prerequisites=info_widget_prerequisites(),
             ok=request.query_params.get("ok"),
             error=error,
         ),
@@ -3265,23 +3664,68 @@ def widgets_page(request: Request, _: None = Depends(auth_guard)) -> HTMLRespons
 
 @app.get("/widgets/new", response_class=HTMLResponse)
 def new_widget(request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
+    requested = str(request.query_params.get("type", "greeting")).strip().lower()
+    widget_type = requested if requested in INFO_WIDGET_TYPES else "greeting"
+    values = info_widget_form_values(widget_type, {})
+    if widget_type == "greeting":
+        values.update({"text": "Hello!", "text_size": "xl"})
+    elif widget_type == "datetime":
+        values.update({"text_size": "xl", "format_timeStyle": "short"})
+    elif widget_type == "search":
+        values.update({"provider_mode": "google", "focus_mode": "true"})
+    elif widget_type == "resources":
+        values.update({"cpu_mode": "true", "memory_mode": "true"})
+    elif widget_type == "openmeteo":
+        values.update({"units": "metric", "cache": 5})
+    elif widget_type == "stocks":
+        values.update({"provider": "finnhub", "color_mode": "true", "cache": 1})
     return templates.TemplateResponse(
         request,
         "widget_form.html",
-        context(request, "widgets", mode="new", index=None, name="", config="{}"),
+        context(
+            request,
+            "widgets",
+            mode="new",
+            index=None,
+            name=widget_type,
+            values=values,
+            catalog=INFO_WIDGET_BY_ID,
+            catalog_items=public_info_catalog(),
+            text_sizes=INFO_TEXT_SIZES,
+            search_providers=INFO_SEARCH_PROVIDERS,
+            targets=INFO_WIDGET_TARGETS,
+            prerequisites=info_widget_prerequisites(),
+            raw_config="{}",
+        ),
     )
 
 
 @app.get("/widgets/{index}/edit", response_class=HTMLResponse)
 def edit_widget(request: Request, index: int, _: None = Depends(auth_guard)) -> HTMLResponse:
     try:
-        row = widgets_view()[index]
+        data = store.load("widgets.yaml")
+        name, cfg = first_pair(data[index])
+        masked_cfg = mask_secrets(cfg)
     except (ConfigError, IndexError) as exc:
         return redirect("/widgets", error=str(exc))
     return templates.TemplateResponse(
         request,
         "widget_form.html",
-        context(request, "widgets", mode="edit", index=index, name=row["name"], config=row["config"]),
+        context(
+            request,
+            "widgets",
+            mode="edit",
+            index=index,
+            name=name,
+            values=info_widget_form_values(name, cfg),
+            catalog=INFO_WIDGET_BY_ID,
+            catalog_items=public_info_catalog(),
+            text_sizes=INFO_TEXT_SIZES,
+            search_providers=INFO_SEARCH_PROVIDERS,
+            targets=INFO_WIDGET_TARGETS,
+            prerequisites=info_widget_prerequisites(),
+            raw_config=store.dump_fragment(masked_cfg),
+        ),
     )
 
 
@@ -3289,17 +3733,24 @@ async def save_widget(request: Request, index: int | None) -> RedirectResponse:
     form = await request.form()
     verify_csrf(request, str(form.get("csrf", "")))
     try:
-        name = str(form.get("name", "")).strip()
+        name = str(form.get("name", "")).strip().lower()
         if not name:
             raise ConfigError("组件类型不能为空。")
-        cfg = store.parse_any(str(form.get("config", "")))
         data = store.load("widgets.yaml")
+        old_cfg: Any = {}
         if index is not None:
             try:
                 _, old_cfg = first_pair(data[index])
+            except (ConfigError, IndexError) as exc:
+                raise ConfigError("要编辑的顶部组件不存在。") from exc
+
+        cfg = build_info_widget_config(form, name)
+        if index is not None:
+            try:
                 cfg = restore_masked_secrets(cfg, old_cfg)
             except ValueError as exc:
                 raise ConfigError(str(exc)) from exc
+
         entry = CommentedMap({name: cfg})
         if index is None:
             data.append(entry)

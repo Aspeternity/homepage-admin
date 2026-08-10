@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.7 - 2026-08-10
+
+- 顶部组件升级为完整 Information Widget 可视化工作区。
+- 新增 12 个当前官方 Info Widget 的目录、搜索、分类、官方文档与专属表单。
+- 支持 Search 多 Provider/Custom、Resources/Glances 多磁盘、DateTime 常用 Intl 格式、天气、Stocks、UniFi、Kubernetes 与 Longhorn 专属配置。
+- 增加 providers / kubernetes 前置条件提示，同时保持高级 YAML 与未来字段兼容。
+- 未知 Info Widget 继续支持完整 YAML，并保留旧版 POST 字段兼容。
+
 ## v0.4.6 - 2026-08-10
 
 - 重构页面设置为分区式可视化工作区，并加入页内导航与官方文档入口。

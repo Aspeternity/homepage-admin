@@ -1,4 +1,4 @@
-# Homepage Admin v0.4.6
+# Homepage Admin v0.4.7
 
 一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
 
@@ -258,6 +258,17 @@ docker compose up -d --build
 pip install -r requirements-dev.txt
 python -m pytest -q
 ```
+
+
+## v0.4.7 顶部组件工作区
+
+- “顶部组件”从通用 YAML 列表升级为 Homepage Information Widget 工作区。
+- 按当前官方文档内置 12 类 Info Widget：Greeting、Date & Time、Logo、Search、Resources、Glances、Open-Meteo、OpenWeatherMap、Stocks、UniFi Controller、Kubernetes、Longhorn。
+- 新增官方组件目录、搜索/分类、已添加数量、官方文档入口和 Homepage 靠右布局提示。
+- 官方类型使用专属可视化表单；未知/未来类型继续通过完整 YAML 兼容。
+- Search 支持单 Provider、多 Provider 和 Custom；Resources/Glances 支持多磁盘；DateTime 暴露常用 Intl.DateTimeFormat；天气、Stocks、UniFi、Kubernetes、Longhorn 均提供对应字段与依赖提示。
+- API Key、Password、Key 等敏感字段继续遮挡并在编辑保存时恢复原值。
+- 未覆盖字段保存在“其他配置 YAML”，避免未来 Homepage 新增字段被可视化编辑器丢弃。
 
 ## v0.4.6 页面设置工作区
 
