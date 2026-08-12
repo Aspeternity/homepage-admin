@@ -1,0 +1,24 @@
+# Optional example for Docker discovery.
+# Deploy this stack on each Docker host that you want Homepage Admin to discover.
+# The proxy is not required for Homepage Admin itself.
+services:
+  docker-socket-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:latest
+    pull_policy: always
+    container_name: docker-socket-proxy
+    restart: unless-stopped
+
+    environment:
+      CONTAINERS: "1"
+      PING: "1"
+      SERVICES: "1"
+      TASKS: "1"
+      POST: "0"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    ports:
+      # Replace 192.0.2.20 with this Docker host's trusted LAN address.
+      # Restrict access to this port with a firewall. Do not expose it to the Internet.
+      - "192.0.2.20:2375:2375"

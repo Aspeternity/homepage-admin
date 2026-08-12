@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.2 - 2026-08-12
+
+- 将默认 Docker 部署简化为单个 `homepage-admin` 容器，只要求挂载 Homepage `/config` 与 Admin `/data`。
+- 默认 Compose 不再创建或依赖 `homepage-tools` 等共享 Docker Network，也不再强制部署 `docker-socket-proxy`。
+- Docker 发现明确改为可选集成：通过 `docker.yaml` / Docker 主机管理连接目标主机的 HTTP(S) API。
+- 新增独立 `docker-compose.docker-proxy.example.yml`，仅供需要 Docker 发现时在目标 Docker 主机部署只读 Proxy。
+- `docker-compose.ghcr.yml`、`docker-compose.portainer.yml`、源码 `docker-compose.yml` 与 `.env.example` 全部同步精简。
+- README 重写快速部署章节，明确多 Docker 主机通过 IP / DNS 访问，不需要跨主机或共享 Docker Network。
+- 保留旧 `DOCKER_DISCOVERY_URL` 等环境变量的运行时兼容逻辑，现有共享网络部署无需强制迁移。
+
 ## v0.5.1 - 2026-08-12
 
 - 重构 GitHub 首页 README，改为面向新用户的项目介绍、架构、功能总览和快速开始，而不是在首页堆叠历史版本说明。

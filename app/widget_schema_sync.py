@@ -14,7 +14,7 @@ from ruamel.yaml import YAML
 GITHUB_REPO = "gethomepage/homepage"
 DOCS_API = "https://api.github.com/repos/gethomepage/homepage/contents/docs/widgets/services"
 REGISTRY_RAW = "https://raw.githubusercontent.com/gethomepage/homepage/{ref}/src/widgets/widgets.js"
-USER_AGENT = "Homepage-Admin-Widget-Schema-Sync/0.5.1"
+USER_AGENT = "Homepage-Admin-Widget-Schema-Sync/0.5.2"
 
 _SECRET_HINTS = (
     "password",

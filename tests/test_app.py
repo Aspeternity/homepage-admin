@@ -2800,7 +2800,7 @@ def test_v046_healthz_reports_release_version() -> None:
     client = TestClient(app)
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.5.1"
+    assert response.json()["version"] == "0.5.2"
 
 
 def test_v046_settings_page_exposes_official_common_controls() -> None:
