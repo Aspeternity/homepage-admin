@@ -21,6 +21,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import __version__
+from .auth_store import AuthError, auth_store
 from .docker_client import (
     DockerDiscoveryClient,
     dedupe_ports,
@@ -103,7 +104,7 @@ async def app_lifespan(_: FastAPI):
 app = FastAPI(title="Homepage Admin", version=__version__, docs_url=None, redoc_url=None, lifespan=app_lifespan)
 app.add_middleware(
     SessionMiddleware,
-    secret_key=settings.session_secret,
+    secret_key=auth_store.session_secret(),
     same_site="lax",
     https_only=settings.cookie_secure,
     max_age=60 * 60 * 12,
@@ -773,8 +774,58 @@ def healthz() -> dict[str, str]:
     return {"status": "ok", "version": __version__}
 
 
+@app.get("/setup", response_class=HTMLResponse)
+def setup_page(request: Request) -> HTMLResponse:
+    if auth_store.is_configured():
+        return RedirectResponse("/services" if request.session.get("authenticated") else "/login", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "setup.html",
+        {
+            "request": request,
+            "csrf": ensure_csrf(request),
+            "error": request.query_params.get("error"),
+            "version": __version__,
+        },
+    )
+
+
+@app.post("/setup", response_class=HTMLResponse)
+async def setup_account(request: Request) -> HTMLResponse:
+    if auth_store.is_configured():
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    username = str(form.get("username", ""))
+    password = str(form.get("password", ""))
+    password_confirm = str(form.get("password_confirm", ""))
+    if password != password_confirm:
+        return templates.TemplateResponse(
+            request,
+            "setup.html",
+            {"request": request, "csrf": ensure_csrf(request), "error": "两次输入的密码不一致。", "version": __version__},
+            status_code=400,
+        )
+    try:
+        username = auth_store.create_initial_account(username, password)
+    except AuthError as exc:
+        return templates.TemplateResponse(
+            request,
+            "setup.html",
+            {"request": request, "csrf": ensure_csrf(request), "error": str(exc), "version": __version__},
+            status_code=400,
+        )
+    request.session.clear()
+    request.session["authenticated"] = True
+    request.session["username"] = username
+    ensure_csrf(request)
+    return RedirectResponse("/services?ok=" + quote("管理员账号创建成功。"), status_code=303)
+
+
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request) -> HTMLResponse:
+    if not auth_store.is_configured():
+        return RedirectResponse("/setup", status_code=303)
     if request.session.get("authenticated"):
         return RedirectResponse("/services", status_code=303)
     return templates.TemplateResponse(
@@ -786,6 +837,8 @@ def login_page(request: Request) -> HTMLResponse:
 
 @app.post("/login", response_class=HTMLResponse)
 async def login(request: Request) -> HTMLResponse:
+    if not auth_store.is_configured():
+        return RedirectResponse("/setup", status_code=303)
     form = await request.form()
     username = str(form.get("username", ""))
     password = str(form.get("password", ""))
@@ -797,7 +850,7 @@ async def login(request: Request) -> HTMLResponse:
             {"request": request, "error": "尝试次数过多，请稍后再试。", "version": __version__},
             status_code=429,
         )
-    if username != settings.username or not verify_password(password):
+    if username != auth_store.username() or not verify_password(password):
         login_limiter.record_failure(ip)
         return templates.TemplateResponse(
             request,

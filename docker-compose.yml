@@ -3,29 +3,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: homepage-admin:0.5.2
+    image: homepage-admin:0.5.3
     container_name: homepage-admin
     restart: unless-stopped
-    user: "${PUID:-1000}:${PGID:-1000}"
-
     ports:
-      - "${HOMEPAGE_ADMIN_PORT:-3001}:3001"
-
-    env_file:
-      - .env
-
-    environment:
-      HOMEPAGE_CONFIG_DIR: /config
-      ADMIN_DATA_DIR: /data
-
+      - "3001:3001"
     volumes:
-      - ${HOMEPAGE_HOST_CONFIG_DIR:-/opt/docker/HomePage/data/config}:/config
-      - ${HOMEPAGE_ADMIN_DATA_DIR:-/opt/docker/homepage-admin/data}:/data
+      - ./example-config:/config
+      - homepage-admin-dev-data:/data
 
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,mode=1777
+volumes:
+  homepage-admin-dev-data:

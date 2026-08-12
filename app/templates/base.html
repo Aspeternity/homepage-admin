@@ -40,7 +40,7 @@
         <a class="nav-item {% if active == 'backups' %}active{% endif %}" href="/backups"><span>↶</span>备份中心</a>
       </nav>
       <div class="sidebar-footer">
-        <a class="button secondary full" href="{{ homepage_url }}" target="_blank" rel="noopener">打开 Homepage ↗</a>
+        {% if homepage_url %}<a class="button secondary full" href="{{ homepage_url }}" target="_blank" rel="noopener">打开 Homepage ↗</a>{% endif %}
         <div class="user-row">
           <span class="avatar">{{ username[:1]|upper }}</span>
           <span class="user-name">{{ username }}</span>

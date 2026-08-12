@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.3 - 2026-08-12
+
+- 新增首次运行初始化：未配置管理员账号时，第一次访问自动进入 `/setup` 创建用户名和密码。
+- 管理员密码只保存 bcrypt 哈希到 `/data/auth.json`，不再要求在 Compose / `.env` 中保存明文凭据。
+- Session Secret 自动生成并持久化到 `/data/auth.json`，默认 Compose 不再要求 `SESSION_SECRET`。
+- 兼容旧版 `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_PASSWORD_HASH`：首次启动自动迁移到持久化认证文件，旧环境变量可随后删除。
+- Docker Compose 再次精简为端口 + Homepage `/config` 挂载 + `/data` Named Volume；默认不再要求 `.env`、PUID/PGID 或安全选项堆叠。
+- 新增首次初始化安全提示，并将 `/data` 明确为账号、Session、备份和 Admin 设置的持久化位置。
+
 ## v0.5.2 - 2026-08-12
 
 - 将默认 Docker 部署简化为单个 `homepage-admin` 容器，只要求挂载 Homepage `/config` 与 Admin `/data`。

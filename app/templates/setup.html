@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark" data-theme-mode="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <script>
+    (() => {
+      try {
+        const saved = localStorage.getItem('homepage-admin-theme') || 'dark';
+        const mode = ['light', 'dark', 'system'].includes(saved) ? saved : 'dark';
+        const resolved = mode === 'system'
+          ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+          : mode;
+        document.documentElement.dataset.themeMode = mode;
+        document.documentElement.dataset.theme = resolved;
+      } catch (_) {}
+    })();
+  </script>
+  <title>首次设置 · Homepage Admin</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <script defer src="{{ url_for('static', path='app.js') }}"></script>
+</head>
+<body class="login-page setup-page">
+  <button class="icon-button login-theme-toggle" type="button" data-theme-cycle aria-label="切换主题" title="切换主题"><span data-theme-icon>☀</span></button>
+  <main class="login-card setup-card">
+    <div class="brand login-brand">
+      <span class="brand-mark">H</span>
+      <span><strong>Homepage Admin</strong><small>首次初始化</small></span>
+    </div>
+    <div class="setup-kicker">第一次运行</div>
+    <h1>创建管理员账号</h1>
+    <p class="muted">账号会安全保存在 <code>/data/auth.json</code>，密码只保存 bcrypt 哈希。以后启动容器不需要再在 Compose 中填写用户名、密码或 Session Secret。</p>
+    {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+    <form method="post" action="/setup" class="form-stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>管理员用户名<input name="username" autocomplete="username" minlength="3" maxlength="64" placeholder="admin" required autofocus></label>
+      <label>管理员密码<input type="password" name="password" autocomplete="new-password" minlength="10" required><small class="field-help">至少 10 个字符，建议使用密码管理器生成。</small></label>
+      <label>确认密码<input type="password" name="password_confirm" autocomplete="new-password" minlength="10" required></label>
+      <button class="button primary full" type="submit">创建账号并进入 Homepage Admin</button>
+    </form>
+    <div class="setup-security-note">
+      <strong>安全提示</strong>
+      <span>首次初始化完成前，请只在可信局域网中访问 3001 端口，不要先暴露到公网。</span>
+    </div>
+    <small class="muted">Homepage Admin v{{ version }}</small>
+  </main>
+</body>
+</html>

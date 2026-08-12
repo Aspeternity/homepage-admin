@@ -6,10 +6,9 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from typing import Deque
 
-import bcrypt
 from fastapi import HTTPException, Request, status
 
-from .settings import settings
+from .auth_store import auth_store
 
 
 class LoginLimiter:
@@ -40,15 +39,12 @@ login_limiter = LoginLimiter()
 
 
 def verify_password(candidate: str) -> bool:
-    if settings.password_hash:
-        try:
-            return bcrypt.checkpw(candidate.encode("utf-8"), settings.password_hash.encode("utf-8"))
-        except ValueError:
-            return False
-    return bool(settings.password) and hmac.compare_digest(candidate, settings.password)
+    return auth_store.verify_password(candidate)
 
 
 def require_auth(request: Request) -> None:
+    if not auth_store.is_configured():
+        raise HTTPException(status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/setup"})
     if not request.session.get("authenticated"):
         raise HTTPException(status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/login"})
 

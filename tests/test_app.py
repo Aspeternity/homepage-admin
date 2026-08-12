@@ -2800,7 +2800,7 @@ def test_v046_healthz_reports_release_version() -> None:
     client = TestClient(app)
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.5.2"
+    assert response.json()["version"] == "0.5.3"
 
 
 def test_v046_settings_page_exposes_official_common_controls() -> None:
@@ -3417,3 +3417,102 @@ def test_v050_protected_backup_survives_bulk_delete_and_requires_unpin() -> None
     store.set_backup_pinned(backup_id, False, "test")
     store.delete_backup(backup_id, "test")
     assert not (settings.data_dir / "backups" / backup_id).exists()
+
+
+def test_v053_first_run_auth_store_creates_hashed_account(tmp_path: Path) -> None:
+    from app.auth_store import AuthStore
+
+    auth = AuthStore(
+        tmp_path,
+        legacy_username="",
+        legacy_password="",
+        legacy_password_hash="",
+        session_secret_override="",
+    )
+    assert auth.is_configured() is False
+    first_secret = auth.session_secret()
+    assert len(first_secret) >= 32
+
+    username = auth.create_initial_account("owner", "strong-password-123")
+    assert username == "owner"
+    assert auth.is_configured() is True
+    assert auth.username() == "owner"
+    assert auth.verify_password("strong-password-123") is True
+    assert auth.verify_password("wrong-password") is False
+
+    payload = json.loads((tmp_path / "auth.json").read_text(encoding="utf-8"))
+    assert payload["username"] == "owner"
+    assert payload["password_hash"].startswith("$2")
+    assert "strong-password-123" not in (tmp_path / "auth.json").read_text(encoding="utf-8")
+    assert payload["session_secret"] == first_secret
+
+
+def test_v053_legacy_credentials_migrate_to_auth_file(tmp_path: Path) -> None:
+    from app.auth_store import AuthStore
+
+    migrated = AuthStore(
+        tmp_path,
+        legacy_username="legacy-admin",
+        legacy_password="legacy-password-123",
+        legacy_password_hash="",
+        session_secret_override="legacy-session-secret-that-is-long-enough-123",
+    )
+    assert migrated.is_configured() is True
+    assert migrated.verify_password("legacy-password-123") is True
+    payload = json.loads((tmp_path / "auth.json").read_text(encoding="utf-8"))
+    assert payload["username"] == "legacy-admin"
+    assert payload["password_hash"].startswith("$2")
+    assert "legacy-password-123" not in (tmp_path / "auth.json").read_text(encoding="utf-8")
+
+    # After removing legacy Compose variables, the persisted account still works.
+    persisted = AuthStore(
+        tmp_path,
+        legacy_username="",
+        legacy_password="",
+        legacy_password_hash="",
+        session_secret_override="",
+    )
+    assert persisted.is_configured() is True
+    assert persisted.username() == "legacy-admin"
+    assert persisted.verify_password("legacy-password-123") is True
+
+
+def test_v053_unconfigured_instance_redirects_to_setup_and_creates_account(tmp_path: Path, monkeypatch) -> None:
+    from app.auth_store import AuthStore
+    from app import main as main_module
+    from app import security as security_module
+
+    fresh = AuthStore(
+        tmp_path,
+        legacy_username="",
+        legacy_password="",
+        legacy_password_hash="",
+        session_secret_override="",
+    )
+    monkeypatch.setattr(main_module, "auth_store", fresh)
+    monkeypatch.setattr(security_module, "auth_store", fresh)
+
+    client = TestClient(app)
+    login_redirect = client.get("/login", follow_redirects=False)
+    assert login_redirect.status_code == 303
+    assert login_redirect.headers["location"] == "/setup"
+
+    page = client.get("/setup")
+    assert page.status_code == 200
+    assert "创建管理员账号" in page.text
+    csrf = re.search(r'name="csrf" value="([^"]+)"', page.text).group(1)
+
+    created = client.post(
+        "/setup",
+        data={
+            "csrf": csrf,
+            "username": "first-admin",
+            "password": "first-run-password-123",
+            "password_confirm": "first-run-password-123",
+        },
+        follow_redirects=False,
+    )
+    assert created.status_code == 303
+    assert created.headers["location"].startswith("/services")
+    assert fresh.is_configured() is True
+    assert client.get("/services").status_code == 200

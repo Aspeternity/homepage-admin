@@ -55,6 +55,7 @@ Homepage Admin
       │                   └── ...
       │
       ├── /data ────────> Admin 数据
+      │                   ├── auth.json（管理员账号 / Session Secret）
       │                   ├── 备份
       │                   ├── 审计日志
       │                   └── 管理偏好
@@ -70,86 +71,47 @@ Homepage Admin
 
 ## Docker Compose（推荐）
 
-### 1. 创建目录
+Homepage Admin 的标准部署现在只需要 **一个容器、一个 Homepage 配置目录和一个持久化数据卷**。
 
-把下面的 Homepage 配置目录替换成你的实际路径：
+> [!IMPORTANT]
+> v0.5.3 起，首次部署**不需要**在 Compose 中填写用户名、密码或 `SESSION_SECRET`。第一次打开网页时会进入初始化页面，由你创建管理员账号。密码只保存 bcrypt 哈希，Session Secret 由程序自动生成并保存在 `/data/auth.json`。
 
-```bash
-mkdir -p /opt/docker/homepage-admin/data
-mkdir -p /opt/docker/homepage-admin
-cd /opt/docker/homepage-admin
-```
+### 1. 创建 `compose.yml`
 
-### 2. 创建 `.env`
-
-生成 Session Secret：
-
-```bash
-openssl rand -hex 32
-```
-
-创建 `.env`：
-
-```env
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=请替换为强密码
-SESSION_SECRET=请粘贴上一步生成的随机字符串
-
-PUID=1000
-PGID=1000
-TZ=Asia/Shanghai
-
-HOMEPAGE_URL=https://homepage.example.com
-HOMEPAGE_HOST_CONFIG_DIR=/opt/docker/HomePage/data/config
-HOMEPAGE_ADMIN_DATA_DIR=/opt/docker/homepage-admin/data
-
-ADMIN_COOKIE_SECURE=false
-ADMIN_ALLOWED_HOSTS=*
-```
-
-> `PUID/PGID` 对应的用户必须对 Homepage 配置目录与 Admin 数据目录具有读写权限。通过 HTTPS 反向代理访问时，建议将 `ADMIN_COOKIE_SECURE` 改为 `true`。
-
-### 3. 创建 `compose.yml`
+把 `/path/to/homepage/config` 改成 Homepage 实际的配置目录：
 
 ```yaml
 services:
   homepage-admin:
     image: ghcr.io/aspeternity/homepage-admin:latest
-    pull_policy: always
     container_name: homepage-admin
     restart: unless-stopped
-    user: "${PUID:-1000}:${PGID:-1000}"
-
     ports:
       - "3001:3001"
-
-    environment:
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      SESSION_SECRET: ${SESSION_SECRET}
-      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
-      ADMIN_ALLOWED_HOSTS: ${ADMIN_ALLOWED_HOSTS:-*}
-      HOMEPAGE_URL: ${HOMEPAGE_URL}
-      HOMEPAGE_CONFIG_DIR: /config
-      ADMIN_DATA_DIR: /data
-      TZ: ${TZ:-UTC}
-
     volumes:
-      - ${HOMEPAGE_HOST_CONFIG_DIR}:/config
-      - ${HOMEPAGE_ADMIN_DATA_DIR}:/data
+      - /path/to/homepage/config:/config
+      - homepage-admin-data:/data
 
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,mode=1777
+volumes:
+  homepage-admin-data:
 ```
 
-这里没有 `networks:`、没有 `depends_on:`、没有 Docker Socket，也没有 Docker Socket Proxy。
+这就是完整的标准部署。默认不需要 `.env`，也不需要配置：
 
-### 4. 启动
+```text
+ADMIN_USERNAME
+ADMIN_PASSWORD
+ADMIN_PASSWORD_HASH
+SESSION_SECRET
+PUID / PGID
+共享 Docker Network
+Docker Socket
+Docker Socket Proxy
+```
+
+镜像本身以非 root 用户运行。`/data` 使用 Docker Named Volume 持久化管理员账号、Session Secret、备份、审计日志与 Admin 偏好。
+
+### 2. 启动
 
 ```bash
 docker compose pull
@@ -163,11 +125,13 @@ docker ps --filter name=homepage-admin
 curl -s http://127.0.0.1:3001/healthz ; echo
 ```
 
-正常会返回类似：
+正常返回类似：
 
 ```json
-{"status":"ok","version":"0.5.2"}
+{"status":"ok","version":"0.5.3"}
 ```
+
+### 3. 第一次打开网页创建账号
 
 浏览器访问：
 
@@ -175,11 +139,67 @@ curl -s http://127.0.0.1:3001/healthz ; echo
 http://<服务器地址>:3001
 ```
 
-使用 `.env` 中的管理员账号登录。
+第一次运行时不会出现登录框，而是进入：
+
+```text
+第一次运行
+创建管理员账号
+
+管理员用户名
+管理员密码
+确认密码
+```
+
+创建成功后会自动登录。之后再次访问才显示普通登录页面。
+
+账号信息保存在：
+
+```text
+/data/auth.json
+```
+
+其中密码只保存 bcrypt 哈希，不保存明文；Session Secret 也自动生成并持久化，因此重建/升级容器不会要求重新创建账号。
+
+> [!WARNING]
+> 首次初始化完成以前，只应在可信局域网中开放 3001 端口。不要先把一个尚未创建管理员账号的实例暴露到公网。
 
 ## Portainer Stack
 
-也可以直接把仓库中的 `docker-compose.portainer.yml` 粘贴到 Portainer Stack，并设置必要环境变量与两个宿主机目录。它同样只部署 **一个 `homepage-admin` 容器**。
+Portainer 中也只需要粘贴同一份 Compose，并把：
+
+```text
+/path/to/homepage/config
+```
+
+替换为 Homepage 的真实配置目录，然后 Deploy the stack。**不需要再创建一长串 Environment variables。**
+
+## 从旧版本升级
+
+如果 v0.5.2 或更早版本仍在 Compose 中使用：
+
+```text
+ADMIN_USERNAME
+ADMIN_PASSWORD / ADMIN_PASSWORD_HASH
+SESSION_SECRET
+```
+
+v0.5.3 第一次启动时会把旧账号安全迁移到 `/data/auth.json`：明文密码会转换为 bcrypt 哈希，已有密码哈希直接保留。确认新版本可以正常登录后，即可从 Compose 中删除这些旧认证环境变量。
+
+原来的 `/data` **必须继续挂载**，否则账号、Session Secret、备份与 Admin 设置不会持久化。
+
+## 可选高级环境变量
+
+正常部署完全不需要 `.env`。只有有特殊需求时才添加，例如：
+
+```yaml
+environment:
+  HOMEPAGE_URL: https://homepage.example.com
+  ADMIN_COOKIE_SECURE: "true"
+  ADMIN_ALLOWED_HOSTS: admin.example.com
+  TZ: UTC
+```
+
+通过 HTTPS 反向代理访问时建议启用 `ADMIN_COOKIE_SECURE=true`。
 
 ---
 
@@ -339,16 +359,10 @@ Admin 数据默认保存在 `/data`，请务必持久化这个目录。
 - 使用 Docker 发现时推荐只读 Docker Socket Proxy，并保持 `POST=0`。
 - 对外提供 2375 时只允许可信内网访问，并使用防火墙限制来源。
 - 公网访问 Homepage Admin 时建议放在 HTTPS 反向代理后，并设置 `ADMIN_COOKIE_SECURE=true`。
-- 使用强管理员密码与长随机 `SESSION_SECRET`。
-- 可以使用 `ADMIN_PASSWORD_HASH` 代替明文管理员密码。
-- 不要把 `.env`、API Token、密码或真实 `proxmox.yaml` 上传到公开仓库。
-
-生成 bcrypt 密码哈希：
-
-```bash
-docker run --rm -it ghcr.io/aspeternity/homepage-admin:latest \
-  python -m app.hash_password
-```
+- 首次运行时在可信局域网完成管理员账号初始化，再配置公网反向代理。
+- 管理员密码只以 bcrypt 哈希形式保存在 `/data/auth.json`；Session Secret 由程序自动生成并持久化。
+- 请可靠持久化 `/data`，并保护其访问权限。
+- 不要把 API Token、密码或真实 `proxmox.yaml` 上传到公开仓库。
 
 ---
 
@@ -366,7 +380,7 @@ docker compose up -d
 也可以固定版本：
 
 ```yaml
-image: ghcr.io/aspeternity/homepage-admin:0.5.2
+image: ghcr.io/aspeternity/homepage-admin:0.5.3
 ```
 
 版本变化请查看 [`CHANGELOG.md`](CHANGELOG.md)。
@@ -378,8 +392,6 @@ image: ghcr.io/aspeternity/homepage-admin:0.5.2
 ```bash
 git clone https://github.com/Aspeternity/homepage-admin.git
 cd homepage-admin
-cp .env.example .env
-
 docker compose up -d --build
 ```
 

@@ -1,44 +1,14 @@
 services:
   homepage-admin:
     image: ghcr.io/aspeternity/homepage-admin:latest
-    pull_policy: always
     container_name: homepage-admin
     restart: unless-stopped
-    user: "${PUID:-1000}:${PGID:-1000}"
-
     ports:
-      - "${HOMEPAGE_ADMIN_PORT:-3001}:3001"
-
-    environment:
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
-      SESSION_SECRET: ${SESSION_SECRET}
-      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
-      ADMIN_ALLOWED_HOSTS: ${ADMIN_ALLOWED_HOSTS:-*}
-      HOMEPAGE_URL: ${HOMEPAGE_URL:-http://localhost:3000}
-      HOMEPAGE_CONFIG_DIR: /config
-      ADMIN_DATA_DIR: /data
-      BACKUP_LIMIT: ${BACKUP_LIMIT:-50}
-      DOCKER_HIDE_INTERNAL: ${DOCKER_HIDE_INTERNAL:-true}
-      WIDGET_SCHEMA_AUTO_SYNC: ${WIDGET_SCHEMA_AUTO_SYNC:-true}
-      WIDGET_SCHEMA_SYNC_MODE: ${WIDGET_SCHEMA_SYNC_MODE:-interval}
-      WIDGET_SCHEMA_SYNC_INTERVAL_HOURS: ${WIDGET_SCHEMA_SYNC_INTERVAL_HOURS:-24}
-      WIDGET_SCHEMA_SYNC_TIME: ${WIDGET_SCHEMA_SYNC_TIME:-03:00}
-      WIDGET_SCHEMA_TIMEZONE: ${WIDGET_SCHEMA_TIMEZONE:-Asia/Shanghai}
-      WIDGET_SCHEMA_REF: ${WIDGET_SCHEMA_REF:-dev}
-      WIDGET_SCHEMA_TIMEOUT: ${WIDGET_SCHEMA_TIMEOUT:-8}
-      WIDGET_SCHEMA_WORKERS: ${WIDGET_SCHEMA_WORKERS:-10}
-      TZ: ${TZ:-Asia/Shanghai}
-
+      - "3001:3001"
     volumes:
-      - ${HOMEPAGE_HOST_CONFIG_DIR:-/opt/docker/HomePage/data/config}:/config
-      - ${HOMEPAGE_ADMIN_DATA_DIR:-/opt/docker/homepage-admin/data}:/data
+      # Replace this with the real Homepage config directory on your host.
+      - /path/to/homepage/config:/config
+      - homepage-admin-data:/data
 
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,mode=1777
+volumes:
+  homepage-admin-data:

@@ -981,3 +981,10 @@ html[data-theme="light"] .info-widget-catalog-card footer > a:first-child { colo
   .backup-dashboard { grid-template-columns:1fr; }
   .backup-file-row { align-items:flex-start !important; flex-direction:column; }
 }
+
+/* v0.5.3 first-run account setup */
+.setup-card { width: min(520px, 100%); }
+.setup-kicker { display: inline-flex; align-items: center; width: fit-content; margin: -8px 0 10px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); font-size: 12px; font-weight: 700; }
+.setup-card code { font-size: .92em; }
+.setup-security-note { display: grid; gap: 4px; margin: 18px 0 20px; padding: 12px 14px; border: 1px solid color-mix(in srgb, #f59e0b 40%, var(--border)); border-radius: 12px; background: color-mix(in srgb, #f59e0b 8%, transparent); font-size: 13px; }
+.setup-security-note span { color: var(--muted); line-height: 1.55; }
