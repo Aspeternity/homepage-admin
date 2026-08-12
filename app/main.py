@@ -785,6 +785,7 @@ def setup_page(request: Request) -> HTMLResponse:
             "request": request,
             "csrf": ensure_csrf(request),
             "error": request.query_params.get("error"),
+            "username": "",
             "version": __version__,
         },
     )
@@ -803,7 +804,7 @@ async def setup_account(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(
             request,
             "setup.html",
-            {"request": request, "csrf": ensure_csrf(request), "error": "两次输入的密码不一致。", "version": __version__},
+            {"request": request, "csrf": ensure_csrf(request), "error": "两次输入的密码不一致。", "username": username.strip(), "version": __version__},
             status_code=400,
         )
     try:
@@ -812,7 +813,7 @@ async def setup_account(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(
             request,
             "setup.html",
-            {"request": request, "csrf": ensure_csrf(request), "error": str(exc), "version": __version__},
+            {"request": request, "csrf": ensure_csrf(request), "error": str(exc), "username": username.strip(), "version": __version__},
             status_code=400,
         )
     request.session.clear()

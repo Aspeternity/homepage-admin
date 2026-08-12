@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.4 - 2026-08-12
+
+- 默认 Compose 将 `/data` 从 Docker Named Volume 改为宿主机 `./data:/data`，数据位置更直观，便于备份与迁移。
+- 所有标准 Compose 示例显式使用 `network_mode: bridge`；Docker Socket Proxy 端口统一使用 `2375:2375`，不再在端口映射中写死宿主机 IP。
+- 重构首次初始化页面：正式 Logo、三步引导、密码显示/隐藏、实时强度、确认匹配、Caps Lock 提示和折叠式高级安全说明。
+- 首次账号提交增加创建中状态；服务端校验失败时保留用户名但绝不回填密码。
+- README、Portainer、GHCR、源码 Compose、Docker Proxy 示例与部署文档全部同步 v0.5.4。
+
 ## v0.5.3 - 2026-08-12
 
 - 新增首次运行初始化：未配置管理员账号时，第一次访问自动进入 `/setup` 创建用户名和密码。

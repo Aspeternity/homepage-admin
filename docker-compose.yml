@@ -3,14 +3,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: homepage-admin:0.5.3
+    image: homepage-admin:0.5.4
     container_name: homepage-admin
     restart: unless-stopped
+    network_mode: bridge
     ports:
       - "3001:3001"
     volumes:
       - ./example-config:/config
-      - homepage-admin-dev-data:/data
-
-volumes:
-  homepage-admin-dev-data:
+      - ./data:/data

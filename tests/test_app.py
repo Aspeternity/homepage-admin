@@ -2800,7 +2800,7 @@ def test_v046_healthz_reports_release_version() -> None:
     client = TestClient(app)
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.5.3"
+    assert response.json()["version"] == "0.5.4"
 
 
 def test_v046_settings_page_exposes_official_common_controls() -> None:
@@ -3477,6 +3477,40 @@ def test_v053_legacy_credentials_migrate_to_auth_file(tmp_path: Path) -> None:
     assert persisted.verify_password("legacy-password-123") is True
 
 
+
+def test_v054_setup_validation_preserves_username_but_never_password(tmp_path: Path, monkeypatch) -> None:
+    from app.auth_store import AuthStore
+    from app import main as main_module
+    from app import security as security_module
+
+    fresh = AuthStore(
+        tmp_path,
+        legacy_username="",
+        legacy_password="",
+        legacy_password_hash="",
+        session_secret_override="",
+    )
+    monkeypatch.setattr(main_module, "auth_store", fresh)
+    monkeypatch.setattr(security_module, "auth_store", fresh)
+
+    client = TestClient(app)
+    page = client.get("/setup")
+    csrf = re.search(r'name="csrf" value="([^"]+)"', page.text).group(1)
+    response = client.post(
+        "/setup",
+        data={
+            "csrf": csrf,
+            "username": "remember-me",
+            "password": "first-password-123",
+            "password_confirm": "different-password-123",
+        },
+    )
+    assert response.status_code == 400
+    assert 'value="remember-me"' in response.text
+    assert "first-password-123" not in response.text
+    assert "different-password-123" not in response.text
+    assert "两次输入的密码不一致" in response.text
+
 def test_v053_unconfigured_instance_redirects_to_setup_and_creates_account(tmp_path: Path, monkeypatch) -> None:
     from app.auth_store import AuthStore
     from app import main as main_module
@@ -3500,6 +3534,12 @@ def test_v053_unconfigured_instance_redirects_to_setup_and_creates_account(tmp_p
     page = client.get("/setup")
     assert page.status_code == 200
     assert "创建管理员账号" in page.text
+    assert "欢迎使用" in page.text
+    assert "data-setup-form" in page.text
+    assert "data-password-strength" in page.text
+    assert "data-password-toggle" in page.text
+    assert "查看高级安全说明" in page.text
+    assert "homepage-admin.png" in page.text
     csrf = re.search(r'name="csrf" value="([^"]+)"', page.text).group(1)
 
     created = client.post(

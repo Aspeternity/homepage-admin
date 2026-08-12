@@ -71,10 +71,10 @@ Homepage Admin
 
 ## Docker Compose（推荐）
 
-Homepage Admin 的标准部署现在只需要 **一个容器、一个 Homepage 配置目录和一个持久化数据卷**。
+Homepage Admin 的标准部署只需要 **一个容器、一个 Homepage 配置目录和一个宿主机数据目录**。
 
 > [!IMPORTANT]
-> v0.5.3 起，首次部署**不需要**在 Compose 中填写用户名、密码或 `SESSION_SECRET`。第一次打开网页时会进入初始化页面，由你创建管理员账号。密码只保存 bcrypt 哈希，Session Secret 由程序自动生成并保存在 `/data/auth.json`。
+> v0.5.3 起，首次部署**不需要**在 Compose 中填写用户名、密码或 `SESSION_SECRET`。第一次打开网页时会进入初始化页面，由你创建管理员账号。v0.5.4 进一步优化了首次引导页面，并默认使用宿主机目录持久化 `/data`。
 
 ### 1. 创建 `compose.yml`
 
@@ -86,14 +86,12 @@ services:
     image: ghcr.io/aspeternity/homepage-admin:latest
     container_name: homepage-admin
     restart: unless-stopped
+    network_mode: bridge
     ports:
       - "3001:3001"
     volumes:
       - /path/to/homepage/config:/config
-      - homepage-admin-data:/data
-
-volumes:
-  homepage-admin-data:
+      - ./data:/data
 ```
 
 这就是完整的标准部署。默认不需要 `.env`，也不需要配置：
@@ -109,7 +107,10 @@ Docker Socket
 Docker Socket Proxy
 ```
 
-镜像本身以非 root 用户运行。`/data` 使用 Docker Named Volume 持久化管理员账号、Session Secret、备份、审计日志与 Admin 偏好。
+镜像本身以非 root 用户运行。`./data:/data` 会把管理员账号、Session Secret、备份、审计日志与 Admin 偏好直接保存在 Compose 文件旁边的宿主机 `data` 目录中，迁移和备份都更直观。
+
+> [!NOTE]
+> `/config` 和 `/data` 都需要允许容器内 UID/GID `1000:1000` 读写。若宿主机目录权限不兼容，请先调整目录所有者或权限。
 
 ### 2. 启动
 
@@ -128,7 +129,7 @@ curl -s http://127.0.0.1:3001/healthz ; echo
 正常返回类似：
 
 ```json
-{"status":"ok","version":"0.5.3"}
+{"status":"ok","version":"0.5.4"}
 ```
 
 ### 3. 第一次打开网页创建账号
@@ -183,7 +184,7 @@ ADMIN_PASSWORD / ADMIN_PASSWORD_HASH
 SESSION_SECRET
 ```
 
-v0.5.3 第一次启动时会把旧账号安全迁移到 `/data/auth.json`：明文密码会转换为 bcrypt 哈希，已有密码哈希直接保留。确认新版本可以正常登录后，即可从 Compose 中删除这些旧认证环境变量。
+v0.5.4 会继续兼容 v0.5.3 的首次账号机制；从 v0.5.2 或更早版本升级时，第一次启动会把旧账号安全迁移到 `/data/auth.json`：明文密码会转换为 bcrypt 哈希，已有密码哈希直接保留。确认新版本可以正常登录后，即可从 Compose 中删除这些旧认证环境变量。
 
 原来的 `/data` **必须继续挂载**，否则账号、Session Secret、备份与 Admin 设置不会持久化。
 
@@ -223,6 +224,7 @@ services:
     image: ghcr.io/tecnativa/docker-socket-proxy:latest
     container_name: docker-socket-proxy
     restart: unless-stopped
+    network_mode: bridge
 
     environment:
       CONTAINERS: "1"
@@ -235,10 +237,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
     ports:
-      - "192.0.2.20:2375:2375"
+      - "2375:2375"
 ```
 
-`192.0.2.20` 是文档示例地址，请替换成 Docker 主机自己的可信内网地址，并使用防火墙限制 2375 的访问来源。不要把未加密的 Docker API 暴露到公网。
+`2375:2375` 默认绑定宿主机端口，不在 Compose 中固定某一个 IP。请使用宿主机防火墙限制 2375 只允许可信局域网来源访问，不要把未加密的 Docker API 暴露到公网。
 
 部署 Proxy 后进入：
 
@@ -380,7 +382,7 @@ docker compose up -d
 也可以固定版本：
 
 ```yaml
-image: ghcr.io/aspeternity/homepage-admin:0.5.3
+image: ghcr.io/aspeternity/homepage-admin:0.5.4
 ```
 
 版本变化请查看 [`CHANGELOG.md`](CHANGELOG.md)。

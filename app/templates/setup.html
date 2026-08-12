@@ -21,29 +21,107 @@
   <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
   <script defer src="{{ url_for('static', path='app.js') }}"></script>
 </head>
-<body class="login-page setup-page">
+<body class="setup-page">
   <button class="icon-button login-theme-toggle" type="button" data-theme-cycle aria-label="切换主题" title="切换主题"><span data-theme-icon>☀</span></button>
-  <main class="login-card setup-card">
-    <div class="brand login-brand">
-      <span class="brand-mark">H</span>
-      <span><strong>Homepage Admin</strong><small>首次初始化</small></span>
-    </div>
-    <div class="setup-kicker">第一次运行</div>
-    <h1>创建管理员账号</h1>
-    <p class="muted">账号会安全保存在 <code>/data/auth.json</code>，密码只保存 bcrypt 哈希。以后启动容器不需要再在 Compose 中填写用户名、密码或 Session Secret。</p>
-    {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
-    <form method="post" action="/setup" class="form-stack">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <label>管理员用户名<input name="username" autocomplete="username" minlength="3" maxlength="64" placeholder="admin" required autofocus></label>
-      <label>管理员密码<input type="password" name="password" autocomplete="new-password" minlength="10" required><small class="field-help">至少 10 个字符，建议使用密码管理器生成。</small></label>
-      <label>确认密码<input type="password" name="password_confirm" autocomplete="new-password" minlength="10" required></label>
-      <button class="button primary full" type="submit">创建账号并进入 Homepage Admin</button>
-    </form>
-    <div class="setup-security-note">
-      <strong>安全提示</strong>
-      <span>首次初始化完成前，请只在可信局域网中访问 3001 端口，不要先暴露到公网。</span>
-    </div>
-    <small class="muted">Homepage Admin v{{ version }}</small>
+
+  <main class="setup-shell">
+    <section class="setup-intro" aria-label="Homepage Admin 首次初始化说明">
+      <div class="setup-brand-row">
+        <img class="setup-logo" src="{{ url_for('static', path='homepage-admin.png') }}" alt="Homepage Admin">
+        <div>
+          <span class="setup-version-badge">首次初始化 · v{{ version }}</span>
+          <h1>欢迎使用<br>Homepage Admin</h1>
+        </div>
+      </div>
+
+      <p class="setup-lead">用可视化方式管理 Homepage 配置。第一次运行只需要创建一个本地管理员账号，其余安全配置由系统自动完成。</p>
+
+      <ol class="setup-steps" aria-label="初始化步骤">
+        <li class="active">
+          <span class="setup-step-index">1</span>
+          <span><strong>创建管理员</strong><small>设置本地登录账号</small></span>
+        </li>
+        <li>
+          <span class="setup-step-index">2</span>
+          <span><strong>初始化安全配置</strong><small>自动生成 Session Secret</small></span>
+        </li>
+        <li>
+          <span class="setup-step-index">3</span>
+          <span><strong>进入管理后台</strong><small>开始管理 Homepage</small></span>
+        </li>
+      </ol>
+
+      <div class="setup-trust-card">
+        <div class="setup-trust-icon" aria-hidden="true">✓</div>
+        <div>
+          <strong>认证信息只保存在本地</strong>
+          <p>密码不会以明文保存。管理员账号与随机 Session Secret 会持久化到你的 <code>/data</code> 目录。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="setup-card" aria-labelledby="setup-title">
+      <div class="setup-card-head">
+        <div>
+          <span class="setup-eyebrow">步骤 1 / 3</span>
+          <h2 id="setup-title">创建管理员账号</h2>
+          <p>这个账号只用于登录 Homepage Admin。</p>
+        </div>
+      </div>
+
+      {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+      <form method="post" action="/setup" class="setup-form" data-setup-form novalidate>
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+
+        <label class="setup-field">
+          <span class="setup-field-label">管理员用户名</span>
+          <input name="username" autocomplete="username" minlength="3" maxlength="64" placeholder="admin" value="{{ username or '' }}" required autofocus>
+          <small>3–64 个字符，可使用你熟悉的管理员名称。</small>
+        </label>
+
+        <label class="setup-field">
+          <span class="setup-field-label">管理员密码</span>
+          <span class="password-input-wrap">
+            <input id="setup-password" type="password" name="password" autocomplete="new-password" minlength="10" required aria-describedby="password-strength-text setup-caps-lock">
+            <button type="button" class="password-toggle" data-password-toggle="setup-password" aria-label="显示密码" title="显示密码">显示</button>
+          </span>
+          <span class="password-strength" data-password-strength aria-hidden="true">
+            <i></i><i></i><i></i><i></i>
+          </span>
+          <small id="password-strength-text" data-password-strength-text>至少 10 个字符，建议 14 个以上并混合字母、数字或符号。</small>
+          <small id="setup-caps-lock" class="setup-caps-lock" data-caps-lock hidden>Caps Lock 已开启</small>
+        </label>
+
+        <label class="setup-field">
+          <span class="setup-field-label">确认密码</span>
+          <span class="password-input-wrap">
+            <input id="setup-password-confirm" type="password" name="password_confirm" autocomplete="new-password" minlength="10" required aria-describedby="password-match-text">
+            <button type="button" class="password-toggle" data-password-toggle="setup-password-confirm" aria-label="显示确认密码" title="显示确认密码">显示</button>
+          </span>
+          <small id="password-match-text" data-password-match>请再次输入密码。</small>
+        </label>
+
+        <button class="button primary setup-submit" type="submit" data-setup-submit>
+          <span class="setup-submit-label">创建账号并进入 Homepage Admin</span>
+          <span class="setup-submit-spinner" aria-hidden="true"></span>
+        </button>
+      </form>
+
+      <details class="setup-advanced">
+        <summary>查看高级安全说明</summary>
+        <div class="setup-advanced-grid">
+          <span>认证数据</span><code>/data/auth.json</code>
+          <span>密码存储</span><code>bcrypt hash</code>
+          <span>Session Secret</span><span>首次运行自动随机生成</span>
+        </div>
+      </details>
+
+      <div class="setup-security-note">
+        <strong>安全提示</strong>
+        <span>首次初始化完成前，请只在可信局域网中访问 3001 端口，不要先暴露到公网。</span>
+      </div>
+    </section>
   </main>
 </body>
 </html>

@@ -1465,3 +1465,100 @@
   }
 
 })();
+
+// v0.5.4 First-run setup experience: password visibility, strength, match and submit state.
+(() => {
+  const form = document.querySelector('[data-setup-form]');
+  if (!form) return;
+
+  const password = form.querySelector('input[name="password"]');
+  const confirmation = form.querySelector('input[name="password_confirm"]');
+  const strength = form.querySelector('[data-password-strength]');
+  const strengthText = form.querySelector('[data-password-strength-text]');
+  const matchText = form.querySelector('[data-password-match]');
+  const capsLock = form.querySelector('[data-caps-lock]');
+  const submitButton = form.querySelector('[data-setup-submit]');
+  const submitLabel = form.querySelector('.setup-submit-label');
+
+  form.querySelectorAll('[data-password-toggle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const input = document.getElementById(button.dataset.passwordToggle || '');
+      if (!input) return;
+      const reveal = input.type === 'password';
+      input.type = reveal ? 'text' : 'password';
+      button.textContent = reveal ? '隐藏' : '显示';
+      button.setAttribute('aria-label', reveal ? '隐藏密码' : '显示密码');
+      button.title = reveal ? '隐藏密码' : '显示密码';
+      input.focus({preventScroll: true});
+    });
+  });
+
+  const passwordScore = (value) => {
+    if (!value) return 0;
+    let score = value.length >= 10 ? 1 : 0;
+    if (value.length >= 14) score += 1;
+    if (/[a-z]/.test(value) && /[A-Z]/.test(value)) score += 1;
+    if (/\d/.test(value) && /[^A-Za-z0-9]/.test(value)) score += 1;
+    return Math.min(4, score);
+  };
+
+  const syncStrength = () => {
+    const value = password?.value || '';
+    const level = passwordScore(value);
+    if (strength) strength.dataset.level = String(level);
+    if (!strengthText) return;
+    const labels = [
+      '至少 10 个字符，建议 14 个以上并混合字母、数字或符号。',
+      '密码强度：较弱',
+      '密码强度：一般',
+      '密码强度：良好',
+      '密码强度：很强',
+    ];
+    strengthText.textContent = labels[level];
+  };
+
+  const syncMatch = () => {
+    if (!matchText || !confirmation) return;
+    const value = confirmation.value;
+    if (!value) {
+      matchText.textContent = '请再次输入密码。';
+      matchText.dataset.state = '';
+      confirmation.setCustomValidity('');
+      return;
+    }
+    const matches = value === (password?.value || '');
+    matchText.textContent = matches ? '两次输入的密码一致。' : '两次输入的密码不一致。';
+    matchText.dataset.state = matches ? 'ok' : 'error';
+    confirmation.setCustomValidity(matches ? '' : '两次输入的密码不一致');
+  };
+
+  const syncCapsLock = (event) => {
+    if (!capsLock || typeof event.getModifierState !== 'function') return;
+    capsLock.hidden = !event.getModifierState('CapsLock');
+  };
+
+  password?.addEventListener('input', () => {
+    syncStrength();
+    syncMatch();
+  });
+  confirmation?.addEventListener('input', syncMatch);
+  [password, confirmation].forEach((input) => {
+    input?.addEventListener('keyup', syncCapsLock);
+    input?.addEventListener('keydown', syncCapsLock);
+  });
+
+  form.addEventListener('submit', (event) => {
+    syncMatch();
+    if (!form.checkValidity()) {
+      event.preventDefault();
+      form.reportValidity();
+      return;
+    }
+    form.classList.add('is-submitting');
+    if (submitButton) submitButton.disabled = true;
+    if (submitLabel) submitLabel.textContent = '正在创建管理员账号…';
+  });
+
+  syncStrength();
+  syncMatch();
+})();

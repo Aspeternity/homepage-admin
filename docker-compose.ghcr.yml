@@ -3,12 +3,11 @@ services:
     image: ghcr.io/aspeternity/homepage-admin:latest
     container_name: homepage-admin
     restart: unless-stopped
+    network_mode: bridge
     ports:
       - "3001:3001"
     volumes:
       # Replace this with the real Homepage config directory on your host.
       - /path/to/homepage/config:/config
-      - homepage-admin-data:/data
-
-volumes:
-  homepage-admin-data:
+      # Host directory: account, backups, audit log and Admin settings.
+      - ./data:/data
