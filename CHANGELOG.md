@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.1 - 2026-08-12
+
+- 重构 GitHub 首页 README，改为面向新用户的项目介绍、架构、功能总览和快速开始，而不是在首页堆叠历史版本说明。
+- 新增推荐 Docker Compose 部署示例：GHCR 镜像、共享网络、持久化目录与只读 Docker Socket Proxy。
+- 新增无 Docker 发现的最小部署示例，以及多 Docker 主机只读代理部署示例。
+- README 增加 Proxmox 多节点、备份、安全、升级、源码运行和常见配置说明。
+- 新增 Homepage Admin 1:1 项目图标资源 `docs/assets/homepage-admin.png`，用于 GitHub 首页品牌展示。
+- 本版本以文档与开源首页体验优化为主，不改变现有 Homepage 配置数据模型。
+
 ## v0.5.0 - 2026-08-10
 
 - 将“备份回滚”升级为“备份中心”，增加统计概览、搜索与类型/文件筛选。

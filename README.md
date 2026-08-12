@@ -1,321 +1,520 @@
-# Homepage Admin v0.5.0
-
-一个独立的 Homepage 可视化配置后台。它不修改 Homepage 本体，而是与 Homepage 共享配置目录，以官方 YAML 文件为唯一配置源。
-
-
-
-## v0.5.0 备份中心
-
-- 自动保存前继续创建文件级备份。
-- 支持“立即创建完整快照”，一次保存 `services.yaml`、`bookmarks.yaml`、`settings.yaml`、`widgets.yaml`、`docker.yaml`、`proxmox.yaml`、`kubernetes.yaml`、`custom.css`、`custom.js` 等当前存在的配置。
-- 手动快照与恢复前保护点不受自动保留数量上限影响。
-- 支持备注、类型/文件筛选、备份保护、ZIP 导出、当前配置 Diff、单文件恢复和完整快照恢复。
-- 完整恢复会先生成一个受保护的“恢复前保护点”，避免误操作后无法回退。
-- 旧版备份目录无需迁移，v0.5.0 会以兼容模式继续读取。
-
-
-## v0.4.3：Docker 主机 Single Source of Truth
-
-- `docker.yaml` 现在是 Docker 主机连接的唯一事实来源：Server、Host、Port、Protocol、Socket、TLS、Header 只维护一份。
-- `/data/admin-settings.json` 不再复制 Docker 连接，只保留 Admin 专属元数据：显示名称、Public Host，以及必要时的 Discovery Override。
-- v0.4.0-v0.4.2 的 `docker_discovery_hosts` 旧数据启动时自动迁移；若旧 Discovery URL 与 `docker.yaml` 一致，会直接丢弃重复 URL；只有地址确实不同时才保留为显式 Override。
-- 新增/编辑 Docker 主机时，连接地址只写入 `docker.yaml`，Admin 元数据独立保存；默认发现直接使用 `docker.yaml`。
-- Docker 主机删除时直接删除 `docker.yaml` Server，并自动清理该 Server 的 Admin 元数据；服务引用保护继续保留。
-- 主机编辑页新增“Admin Discovery Override（可选）”，仅用于 Socket / 容器 DNS 等 Admin 无法直接访问 `docker.yaml` 地址的特殊部署。
-
-详细说明见 `UPGRADE_V0.4.3_ZH.md`。
-
-## v0.4.2 Docker 主机管理统一化
-
-- Docker 发现主页移除重复的主机状态卡，只保留主机选择、容器筛选和必要的连接错误提示。
-- `docker.yaml` 已有 Server 与后来添加的远程主机统一使用同一个“编辑 Docker 主机”表单。
-- 新增 Docker 主机时固定同时保存 Admin 发现信息并创建/更新同名 `docker.yaml` Server，不再区分“原生 Server / Admin 自定义”的配置流程。
-- 编辑已有主机时保留 TLS、Header 和未知扩展字段；Homepage Server 名称继续锁定，避免打断已有服务引用。
-- 删除页默认完整删除该主机的管理信息与 `docker.yaml` Server，并继续提供服务引用保护。
-
-## v0.4.1：Docker 主机统一 CRUD 与依赖保护
-
-- `docker.yaml` 自动发现的 Server 现在也有“编辑 / 删除”，不再只能通过高级 YAML 调整。
-- `docker.yaml` 可视化编辑支持 Remote / Socket、Host、Port、Protocol、Socket 路径，并保留未回显的 TLS、Header 与未来扩展字段。
-- Docker 主机列表显示每个 Server 被多少 Homepage 服务引用，并给出引用预览。
-- 删除改为安全向导：可分别删除 Admin 自定义发现层、`docker.yaml` Server，并可选择同时清除相关服务的 `server` / `container`。
-- 被服务引用的 `docker.yaml` Server 删除前必须输入 `DELETE`，避免误操作导致大量 Docker 状态失效。
-- 已映射到 `docker.yaml` 的 Admin 自定义连接在编辑时锁定 Homepage Server 键名，避免无意断开已有服务引用。
-
-详细说明见 `UPGRADE_V0.4.1_ZH.md`。
-
-## v0.4.0：多 Docker 主机发现
-
-- Docker 发现不再绑定单一 `DOCKER_DISCOVERY_URL`；会自动读取 `docker.yaml` 中的多个远程 Docker Server。
-- 新增“Docker 主机管理”，可添加 Game-Server VM 等额外只读代理地址，并映射到 Homepage 的 `server`。
-- 支持“全部 Docker 主机”聚合视图，每张容器卡片显示来源主机和 `server`。
-- 同名容器按 `(server, container)` 匹配，避免跨主机误判。
-- 导入容器时自动写入来源主机对应的 `server`，并使用该主机的 Public Host 推断发布端口访问地址。
-- 自定义发现连接保存在 `/data/admin-settings.json`；可选同步创建 `docker.yaml` Server，但不会覆盖地址不同的既有 Server。
-- 连接测试、搜索、状态筛选、已添加/未添加筛选均支持多主机。
-
-详细升级和 Game-Server VM 只读代理示例见 `UPGRADE_V0.4.0_ZH.md`。
-
-
-## v0.3.9 修复
-
-- Proxmox 发现页已关联卡片中的“编辑服务 / 取消关联”统一为相同高度、宽度与拉伸规则，避免 `<a>` 与 `<form><button>` 在 CSS Grid 中因默认拉伸方式不同而视觉尺寸不一致。
-
-
-## v0.3.8 修复
-
-- Proxmox VM / LXC 集成三列字段统一行高，帮助文字不再导致输入框错位。
-- Proxmox 发现页已关联卡片同时提供“编辑服务”和“取消关联”。
-- 取消关联只移除 `proxmoxNode` / `proxmoxVMID` / `proxmoxType`，不会删除服务、Widget 或其他配置，并在写入前校验当前关联未发生变化。
-
-## v0.3.7 修复
-
-- Proxmox 发现会检测 `proxmox.yaml` URL 末尾 `/`，并提供一键去除，避免 Homepage 拼接 `/api2/json` 时形成双斜杠。
-- 从 Proxmox Service Widget 导入连接时自动规范化 URL。
-- VM/LXC 绑定改为使用 PVE 返回的真实物理节点名；若 `proxmox.yaml` 缺少同名节点连接，会显示兼容性警告并阻止错误绑定。
-- 检测服务同时配置 Docker 与 Proxmox 的情况。Homepage 会同时渲染两套状态/资源，因此绑定时可选择清除 Docker 集成；已绑定服务也可在 Proxmox 发现页一键清除错误/过期 Docker 映射。
-- 服务编辑页在 Docker + Proxmox 同时存在时显示明确警告，并把字段文案改为“Proxmox 节点名”。
-
-## v0.3.6 修复
-
-- 动态 Widget 表单为每个字段保留统一的“标题 / 输入控件 / 帮助说明”三段布局；像 Backrest 这种只有部分字段带官方说明的表单也能保持同一行输入框对齐。
-- “立即同步官方 Schema”改为后台任务，不再让浏览器长时间等待整页 POST；页面实时显示读取目录、解析文档、读取注册表、合并、写缓存等阶段及百分比/文档计数。
-- 同步失败时直接在进度面板显示错误并恢复按钮；同步成功后自动刷新 Schema 状态。
-
-
-## v0.3.5 修复
-
-- 自动同步计划中的“计划时区”与同步方式 / 每天同步时间顶部对齐，辅助说明不再把输入框顶高。
-- Home Assistant `custom`（自定义状态 / 模板）明确改为可选；连接测试只验证实际需要的 URL 与长期访问令牌。
-- 官方 Schema 自动表单采用保守的必填判定：仅当官方 inline comment 明确标记 required / mandatory / 必填时才自动标为必填。
-- 旧版 Schema 缓存会在加载时清除历史错误 required 推断，再叠加 Admin 已知的深度增强必填规则，无需手工清缓存。
-- Home Assistant 表单提示 `custom` 最多 4 项，并说明设置 `fields` 后 Homepage 会忽略 `custom`。
-
-
-> v0.3.2 的主题是：**Homepage 官方 Widget Schema 自动同步 + 全量动态表单 + Schema 管理 + 全局回到顶部**。
-
-## v0.3.2 新功能
-
-### Widget 中心：从人工目录升级为官方 Schema 驱动
-
-v0.3.2 不再把“15 个增强表单 + 其余通用 YAML”作为长期方案。Admin 会自动同步 Homepage 官方：
-
-- `docs/widgets/services/*.md`：读取 Widget YAML 配置示例、Allowed fields。
-- `src/widgets/widgets.js`：读取真实 Widget 注册表和兼容别名。
-
-同步器会把官方配置示例转换为动态表单：文本、布尔、数字、YAML、Secret 等字段自动识别；`Allowed fields` 自动变成展示字段复选框。官方以后新增 Service Widget 时，Admin 会在后台同步后自动出现，不必等待 Homepage Admin 发版。
-
-现有 Jellyfin、Portainer、Proxmox、Home Assistant、qBittorrent 等深度增强会叠加在官方自动 Schema 上，继续提供更友好的标签和深度连接测试，同时不会挡住官方新增字段。
-
-### Widget Schema 管理与缓存
-
-新增 **Widget 中心 → Schema 管理**：
-
-- 查看来源、Ref、最后同步时间和 Widget / 字段数量。
-- 手动立即同步。
-- 查看部分解析警告。
-- 清除 `/data/widget-schema-cache.json` 并恢复内置离线目录。
-- 无法访问 GitHub 时可离线导入 Widget Schema JSON。
-
-默认每 24 小时后台检查一次官方 Schema；同步失败不会影响现有管理功能。GitHub Actions 发布 GHCR 镜像前也会生成一份近期官方 Schema 快照。
-
-### 通用文案与长页面体验
-
-- 书签管理不再默认提到 PT 站点，统一描述为“网站书签、快捷链接和分类”。
-- 全站长页面滚动超过约 520px 后显示“回到顶部”，Widget 中心、Docker 发现、Proxmox 发现、高级编辑等页面均可使用。
-
-### 保存前“测试连接”
-
-每个 Widget 编辑块提供 **测试连接**：
-
-- Jellyfin / Portainer / Proxmox / Home Assistant / qBittorrent / Transmission / Glances / Custom API：API 深度测试。
-- DiskStation / OpenWRT / Uptime Kuma / NGINX Proxy Manager / Grafana：基础 HTTP 连通测试。
-- Minecraft / GameDig：配置完整性校验，不主动扫描非 HTTP 端口。
-
-编辑已有服务时，后台可直接复用已经保存的 API Key / Token / Password 进行测试，真实 Secret 不回传浏览器。
-
-> 测试请求从 Homepage Admin 容器发起。如果目标只在 Homepage 自己的独立 Docker 网络中可解析，而 Admin 不在该网络，测试结果可能与 Homepage 本体不同。
-
-### 一个服务支持多个 Widget
-
-服务编辑器支持：
-
-- `+ 添加 Widget`
-- 上移 / 下移 / 删除 Widget
-- 单个 Widget 时兼容写回 `widget:`
-- 多个 Widget 时写回 Homepage 的 `widgets:` 列表
-- 每个 Widget 独立连接测试
-- 每个 Widget 独立高级 YAML 映射
-- 原有敏感字段留空时继续保留旧值
-
-### Widget fields 可视化
-
-对支持 `fields` 的 Widget 显示复选框，最多选择 4 个展示字段。例如：
-
-- Proxmox：VM / LXC / CPU / Memory
-- Portainer：Running / Stopped / Total
-- qBittorrent / Transmission：Leech / Download / Seed / Upload
-- Home Assistant：People Home / Lights On / Switches On
-
-### Proxmox 发现与 VM/LXC 绑定
-
-新增 **Proxmox 发现** 页面：
-
-- 读取 `proxmox.yaml` 中的只读 API Token 连接。
-- 自动列出 QEMU VM / LXC、VMID、运行状态、CPU、内存。
-- 可把 VM/LXC 直接关联到已有 Homepage 服务。
-- 可从 VM/LXC 一键预填新服务。
-- 如果 `proxmox.yaml` 为空，但已有 Proxmox Service Widget，可在服务端直接把现有 Token 配置复制到 `proxmox.yaml`，不需要再次在浏览器输入 Secret。
-
-绑定会写入服务的 `proxmoxNode`、`proxmoxVMID`，LXC 额外写入 `proxmoxType: lxc`。
-
-### 保存前 Diff
-
-服务编辑器和高级 YAML 编辑器增加 **保存前变更预览**：
-
-- 展示当前配置与保存后配置的统一 Diff。
-- API Key / Password / Token / Secret 在 Diff 中始终掩码。
-- 没有实际变化时不会写配置，也不会生成备份。
-
-## 数据存储与 MySQL
-
-v0.3.2 **不要求 MySQL**。当前项目的数据模型仍然适合保持文件原生：
-
-- Homepage 配置继续以官方 YAML 为唯一事实来源。
-- 管理后台偏好继续保存在 `/data/admin-settings.json`。
-- 自动备份、审计日志继续保存在 `/data`。
-
-这样升级不需要新增数据库账号、Schema、迁移和数据库可用性依赖。未来如果加入多用户权限、跨实例管理、历史版本索引或大量运行指标，再考虑可选 MySQL 后端更合适。
-
-## Docker 安全架构
-
-主 Docker VM 继续沿用 v0.2.1 之后的共享只读代理；v0.4.0 只是把发现层扩展为多个主机：
+<p align="center">
+  <img src="docs/assets/homepage-admin.png" width="160" alt="Homepage Admin Logo">
+</p>
+
+<h1 align="center">Homepage Admin</h1>
+
+<p align="center">
+  一个面向 <a href="https://gethomepage.dev/">Homepage</a> 的可视化配置后台。<br>
+  直接管理官方 YAML 配置，不修改 Homepage 本体，不引入额外配置数据库。
+</p>
+
+<p align="center">
+  <a href="https://github.com/Aspeternity/homepage-admin/actions/workflows/docker-publish.yml"><img src="https://github.com/Aspeternity/homepage-admin/actions/workflows/docker-publish.yml/badge.svg?branch=main" alt="Build"></a>
+  <a href="https://github.com/Aspeternity/homepage-admin/releases"><img src="https://img.shields.io/github/v/release/Aspeternity/homepage-admin?display_name=tag&sort=semver" alt="Release"></a>
+  <a href="https://github.com/Aspeternity/homepage-admin/pkgs/container/homepage-admin"><img src="https://img.shields.io/badge/GHCR-homepage--admin-2496ED?logo=docker&logoColor=white" alt="GHCR"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Aspeternity/homepage-admin" alt="License"></a>
+</p>
+
+> [!NOTE]
+> Homepage Admin 是社区项目，不是 Homepage 官方项目，与 `gethomepage/homepage` 没有隶属关系。
+
+## 项目简介
+
+Homepage Admin 与 Homepage **共享同一个配置目录**，直接读取和写入 Homepage 官方配置文件。Homepage 的 YAML 仍然是唯一事实来源，因此你可以随时回到手工编辑，也可以继续使用 Homepage 官方支持的全部配置能力。
+
+适合以下场景：
+
+- 已经运行 Homepage，希望减少手工维护 YAML 的工作量。
+- 服务、书签、Widget 较多，需要更直观的增删改、排序和连接测试。
+- 有多个 Docker 主机或多个 Proxmox 节点，希望集中发现并导入到 Homepage。
+- 希望修改配置前有 Diff、自动备份、完整快照和一键回滚。
+- 希望跟随 Homepage 官方 Service Widget 变化，而不是手工维护一套固定 Widget 列表。
+
+## 主要功能
+
+| 模块 | 能力 |
+| --- | --- |
+| 服务管理 | 可视化管理 `services.yaml`，分组、排序、多 Widget、字段选择、保存前 Diff |
+| Widget 中心 | 同步 Homepage 官方 Service Widget Schema，自动生成动态表单 |
+| 书签管理 | 可视化管理 `bookmarks.yaml`，支持分组与拖拽排序 |
+| 页面设置 | 可视化管理常用 `settings.yaml`，背景、主题、Quick Launch、布局等 |
+| 顶部组件 | 管理 `widgets.yaml`，支持 Homepage Information Widgets 专属表单 |
+| Docker 发现 | 多 Docker 主机、容器发现、导入向导、`server + container` 绑定 |
+| Proxmox 发现 | 多节点聚合、QEMU/LXC 发现、已有服务关联、节点管理 |
+| 高级编辑 | 直接编辑 YAML / CSS / JS，并在保存前校验与预览 Diff |
+| 备份中心 | 自动备份、完整快照、备注、保护、ZIP 导出、单文件/整组恢复 |
+| 安全 | Session、CSRF、登录限流、Secret 掩码、原子写入、文件锁、审计日志 |
+
+## 工作方式
 
 ```text
-Docker VM socket                    Game-Server VM socket
-      │                                      │
-      ▼                                      ▼
-homepage-docker-proxy                  game-docker-proxy
-POST=0 / read-only                      POST=0 / read-only
-      │                                      │
-      ├──────── Homepage Admin ──────────────┤
-      │              │                       │
-      │              └─ 多主机发现 / 导入 ──┘
+Homepage Admin
       │
-      └──────── Homepage
-               docker.yaml:
-                 local-docker: ...
-                 game-server: ...
+      ├── 读取 / 写入 ──> Homepage 配置目录
+      │                   ├── services.yaml
+      │                   ├── bookmarks.yaml
+      │                   ├── settings.yaml
+      │                   ├── widgets.yaml
+      │                   ├── docker.yaml
+      │                   ├── proxmox.yaml
+      │                   └── ...
+      │
+      ├── /data ────────> Admin 自己的状态
+      │                   ├── 备份
+      │                   ├── 审计日志
+      │                   └── 管理偏好
+      │
+      └── 可选只读 API ─> Docker / Proxmox 发现
 ```
 
-主 Docker VM 的 `homepage-docker-proxy` 仍可只加入共享 `homepage-tools` 网络而不暴露宿主机端口。跨 VM 的代理如果必须通过局域网端口访问，应使用 VM 防火墙限制来源，只允许 Homepage / Admin 所在主机访问，并保持 `POST=0`。
+Homepage Admin 不会把 Homepage 配置迁移到 MySQL，也不会维护第二份服务配置。
 
-## 其他现有功能
+---
 
-- 服务 / 书签 / 分组拖拽排序
-- 顶部组件拖拽排序
-- Docker 容器发现与导入向导
-- Docker 已添加识别、系统组件隐藏、端口去重
-- 智能服务类型识别与分组推荐
-- 页面设置、背景、Layout、Quick Launch 可视化编辑
-- 深色 / 浅色 / 跟随系统主题
-- API Key / Token / Password 默认遮挡并安全保留
-- 高级 YAML / CSS / JS 编辑
-- 自动备份、可配置保留数量、单个删除、全部清理、回滚
-- YAML 校验、原子写入、文件锁、审计日志
-- GitHub Actions 测试并发布 amd64 / arm64 GHCR 镜像
+# Docker 部署
 
-## 当前部署参数
+## 推荐方案：GHCR + Docker Compose + 只读 Docker Proxy
 
-```text
-镜像: ghcr.io/aspeternity/homepage-admin:latest
-Homepage 配置: /opt/docker/HomePage/data/config
-Admin 数据: /opt/docker/homepage-admin/data
-Admin 端口: 3001
-共享 Docker 网络: homepage-tools
-```
+这是推荐部署方式，既能管理 Homepage 配置，也能使用 Docker 发现功能。
 
-从 v0.2.4 升级请阅读：
+### 1. 准备目录与共享网络
 
-```text
-UPGRADE_V0.3.2_ZH.md
-```
-
-## Homepage 配置文件
-
-Homepage Admin 继续直接管理：
-
-- `services.yaml`
-- `bookmarks.yaml`
-- `settings.yaml`
-- `widgets.yaml`
-- `docker.yaml`
-- `proxmox.yaml`
-- `kubernetes.yaml`
-- `custom.css`
-- `custom.js`
-
-## 本地开发
+下面路径只是示例，请替换为你自己的 Homepage 配置目录：
 
 ```bash
+mkdir -p /opt/docker/homepage-admin/data
+
+docker network inspect homepage-tools >/dev/null 2>&1 \
+  || docker network create homepage-tools
+```
+
+Homepage、Homepage Admin 和 `docker-socket-proxy` 如果需要通过容器名称互相访问，应加入同一个 Docker 网络。
+
+如果 Homepage 已经运行，但还没有加入 `homepage-tools`：
+
+```bash
+docker network connect homepage-tools <你的 Homepage 容器名>
+```
+
+> 如果提示已经连接，可以忽略。
+
+### 2. 创建 `.env`
+
+先生成一个随机 Session Secret：
+
+```bash
+openssl rand -hex 32
+```
+
+创建 `.env`：
+
+```env
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=请替换为强密码
+SESSION_SECRET=请粘贴上一步生成的随机字符串
+
+PUID=1000
+PGID=1000
+TZ=Asia/Shanghai
+
+# Homepage 容器在共享网络中的地址。
+# 如果容器名不是 HomePage，请改成实际容器名或 Admin 可访问的 URL。
+HOMEPAGE_URL=http://HomePage:3000
+
+# 宿主机上的 Homepage 配置目录。
+HOMEPAGE_HOST_CONFIG_DIR=/opt/docker/HomePage/data/config
+
+# Homepage Admin 自己的数据目录。
+HOMEPAGE_ADMIN_DATA_DIR=/opt/docker/homepage-admin/data
+
+# HTTP 部署保持 false；如果通过 HTTPS 反向代理访问，建议改成 true。
+ADMIN_COOKIE_SECURE=false
+
+# 可选：限制 Host。测试阶段可使用 *，公网部署建议填写实际域名。
+ADMIN_ALLOWED_HOSTS=*
+```
+
+> `PUID/PGID` 对应的用户必须对 Homepage 配置目录和 Admin 数据目录具有读写权限。
+
+### 3. 创建 `compose.yml`
+
+```yaml
+services:
+  homepage-admin:
+    image: ghcr.io/aspeternity/homepage-admin:latest
+    pull_policy: always
+    container_name: homepage-admin
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+
+    ports:
+      - "3001:3001"
+
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET}
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
+      ADMIN_ALLOWED_HOSTS: ${ADMIN_ALLOWED_HOSTS:-*}
+
+      HOMEPAGE_URL: ${HOMEPAGE_URL:-http://HomePage:3000}
+      HOMEPAGE_CONFIG_DIR: /config
+      ADMIN_DATA_DIR: /data
+      BACKUP_LIMIT: ${BACKUP_LIMIT:-50}
+      TZ: ${TZ:-UTC}
+
+      # Docker 发现使用共享只读代理。
+      DOCKER_DISCOVERY_URL: http://homepage-docker-proxy:2375
+      HOMEPAGE_DOCKER_PROXY_HOST: homepage-docker-proxy
+      HOMEPAGE_DOCKER_PROXY_PORT: "2375"
+      DOCKER_HIDE_INTERNAL: "true"
+
+    volumes:
+      - ${HOMEPAGE_HOST_CONFIG_DIR}:/config
+      - ${HOMEPAGE_ADMIN_DATA_DIR}:/data
+
+    depends_on:
+      - docker-proxy
+
+    networks:
+      - homepage-tools
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+  docker-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:latest
+    pull_policy: always
+    container_name: homepage-docker-proxy
+    restart: unless-stopped
+
+    environment:
+      CONTAINERS: "1"
+      PING: "1"
+      SERVICES: "1"
+      TASKS: "1"
+      POST: "0"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    networks:
+      homepage-tools:
+        aliases:
+          - homepage-docker-proxy
+
+networks:
+  homepage-tools:
+    external: true
+```
+
+这个例子中 `docker-proxy` **没有映射宿主机端口**，只允许共享 Docker 网络内的容器访问；同时 `POST=0`，用于只读发现。
+
+### 4. 启动
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+检查状态：
+
+```bash
+docker ps --filter name=homepage-admin
+curl -s http://127.0.0.1:3001/healthz ; echo
+```
+
+正常情况下健康检查会返回类似：
+
+```json
+{"status":"ok","version":"0.5.1"}
+```
+
+然后访问：
+
+```text
+http://<Docker 主机地址>:3001
+```
+
+使用 `.env` 中的 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 登录。
+
+### 5. 让 Homepage 使用只读 Docker Proxy
+
+如果希望 Homepage 自己也显示 Docker 容器状态，可以在 Homepage 的 `docker.yaml` 中配置：
+
+```yaml
+local-docker:
+  host: homepage-docker-proxy
+  port: 2375
+```
+
+然后在服务中使用：
+
+```yaml
+- Example Service:
+    href: https://service.example.com
+    server: local-docker
+    container: example-service
+```
+
+也可以直接在 **Homepage Admin → Docker 发现 → Docker 主机管理** 中完成主机配置和服务导入。
+
+---
+
+## 最小部署：不使用 Docker 发现
+
+如果你只需要可视化编辑 Homepage 配置，可以完全不挂 Docker Socket，也不启动 `docker-socket-proxy`：
+
+```yaml
+services:
+  homepage-admin:
+    image: ghcr.io/aspeternity/homepage-admin:latest
+    container_name: homepage-admin
+    restart: unless-stopped
+    user: "1000:1000"
+
+    ports:
+      - "3001:3001"
+
+    environment:
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: change-me-now
+      SESSION_SECRET: replace-with-a-long-random-string
+      HOMEPAGE_CONFIG_DIR: /config
+      ADMIN_DATA_DIR: /data
+      HOMEPAGE_URL: http://HomePage:3000
+      TZ: UTC
+
+    volumes:
+      - /path/to/homepage/config:/config
+      - /path/to/homepage-admin/data:/data
+```
+
+这种模式下服务、书签、页面设置、Widget、备份和高级编辑都可以正常使用；Docker 发现功能会提示尚未配置 Docker 主机。
+
+---
+
+## 多 Docker 主机
+
+Homepage Admin 支持从多台 Docker 主机发现容器。
+
+推荐在每台远程 Docker 主机上部署一个只读 `docker-socket-proxy`。例如远程主机：
+
+```yaml
+services:
+  docker-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:latest
+    container_name: homepage-docker-proxy
+    restart: unless-stopped
+
+    environment:
+      CONTAINERS: "1"
+      PING: "1"
+      SERVICES: "1"
+      TASKS: "1"
+      POST: "0"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    ports:
+      - "192.0.2.20:2375:2375"
+```
+
+`192.0.2.20` 是文档示例地址。实际部署时请换成远程 Docker 主机的内网 IP，并使用防火墙**只允许 Homepage / Homepage Admin 所在主机访问 2375**，不要把未加密的 Docker API 暴露到公网。
+
+之后进入：
+
+```text
+Homepage Admin
+→ Docker 发现
+→ Docker 主机管理
+→ 添加 Docker 主机
+```
+
+例如：
+
+```text
+Homepage Docker Server: game-server
+Docker API URL:          http://192.0.2.20:2375
+Public Host:             192.0.2.20
+```
+
+保存后，容器导入会自动使用对应的：
+
+```yaml
+server: game-server
+container: <容器名>
+```
+
+---
+
+# Proxmox 多节点发现
+
+`proxmox.yaml` 是 Proxmox 节点连接的唯一配置源。Homepage Admin 支持聚合多个 PVE 节点 / Cluster，发现 QEMU VM 与 LXC，并绑定到已有 Homepage 服务。
+
+示例：
+
+```yaml
+pve-node1:
+  url: https://pve.example.com:8006
+  token: homepage@pve!homepage
+  secret: your-token-secret
+
+pve-node2:
+  url: https://pve.example.com:8006
+  token: homepage@pve!homepage
+  secret: your-token-secret
+```
+
+也可以直接通过：
+
+```text
+Homepage Admin
+→ Proxmox 发现
+→ Proxmox 节点管理
+```
+
+添加、测试、编辑、删除节点连接。
+
+> 建议创建只读 API Token，只授予发现 VM/LXC 和读取资源状态所需权限。
+
+---
+
+# 管理的 Homepage 文件
+
+Homepage Admin 当前直接管理：
+
+```text
+services.yaml
+bookmarks.yaml
+settings.yaml
+widgets.yaml
+docker.yaml
+proxmox.yaml
+kubernetes.yaml
+custom.css
+custom.js
+```
+
+所有保存操作都会先校验，再使用原子写入；支持的操作还会生成备份和审计记录。
+
+## Widget Schema
+
+Service Widget 表单不是固定维护一份旧列表。Homepage Admin 可以同步 Homepage 官方 Service Widget 文档和注册表，生成动态 Schema，并将缓存保存到 `/data`。
+
+如果外网不可用，也可以继续使用镜像内置 Schema 或导入离线 Schema JSON。
+
+---
+
+# 备份与恢复
+
+备份中心支持：
+
+- 配置保存前自动文件级备份。
+- 手动创建完整 Homepage 配置快照。
+- 备份备注、筛选、保护和 ZIP 导出。
+- 恢复前 Diff，敏感字段掩码。
+- 单文件恢复与完整快照恢复。
+- 完整恢复前自动创建受保护的恢复点。
+
+Admin 自己的数据默认保存在：
+
+```text
+/data
+```
+
+请为该目录配置持久化卷。
+
+---
+
+# 安全建议
+
+- 不要直接把 `/var/run/docker.sock` 挂进 Homepage Admin；推荐使用只读 Docker Socket Proxy。
+- Docker Proxy 保持 `POST=0`。
+- 跨主机的 `2375` 只允许可信内网访问，并使用防火墙限制来源。
+- 公网访问 Homepage Admin 时建议放在 HTTPS 反向代理后，并设置 `ADMIN_COOKIE_SECURE=true`。
+- 使用长随机 `SESSION_SECRET`。
+- 使用强管理员密码；也可以配置 `ADMIN_PASSWORD_HASH` 代替明文密码。
+- 不要把 `.env`、API Token、Password 或真实 `proxmox.yaml` 上传到公开仓库。
+
+生成 bcrypt 密码哈希：
+
+```bash
+docker run --rm -it ghcr.io/aspeternity/homepage-admin:latest \
+  python -m app.hash_password
+```
+
+然后把结果写入：
+
+```env
+ADMIN_PASSWORD_HASH=$2b$...
+```
+
+此时可以不设置 `ADMIN_PASSWORD`。
+
+---
+
+# 升级
+
+如果使用 `latest`：
+
+```bash
+docker compose pull homepage-admin
+docker compose up -d homepage-admin
+```
+
+建议升级前先在 **备份中心 → 立即创建完整快照**。
+
+使用固定版本标签可以降低意外升级风险，例如：
+
+```yaml
+image: ghcr.io/aspeternity/homepage-admin:0.5.1
+```
+
+版本变更请查看：
+
+- [`CHANGELOG.md`](CHANGELOG.md)
+- 仓库内各版本 `UPGRADE_V*.md`
+
+---
+
+# 从源码运行
+
+```bash
+git clone https://github.com/Aspeternity/homepage-admin.git
+cd homepage-admin
 cp .env.example .env
+
 docker compose up -d --build
 ```
 
-测试：
+运行测试：
 
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
+GitHub Actions 会在发布 GHCR 镜像前执行测试，并构建 `linux/amd64` 与 `linux/arm64` 镜像。
 
-## v0.4.8 顶部组件工作区
+---
 
-- “顶部组件”从通用 YAML 列表升级为 Homepage Information Widget 工作区。
-- 按当前官方文档内置 12 类 Info Widget：Greeting、Date & Time、Logo、Search、Resources、Glances、Open-Meteo、OpenWeatherMap、Stocks、UniFi Controller、Kubernetes、Longhorn。
-- 新增官方组件目录、搜索/分类、已添加数量、官方文档入口和 Homepage 靠右布局提示。
-- 官方类型使用专属可视化表单；未知/未来类型继续通过完整 YAML 兼容。
-- Search 支持单 Provider、多 Provider 和 Custom；Resources/Glances 支持多磁盘；DateTime 暴露常用 Intl.DateTimeFormat；天气、Stocks、UniFi、Kubernetes、Longhorn 均提供对应字段与依赖提示。
-- API Key、Password、Key 等敏感字段继续遮挡并在编辑保存时恢复原值。
-- 未覆盖字段保存在“其他配置 YAML”，避免未来 Homepage 新增字段被可视化编辑器丢弃。
+# 项目原则
 
-## v0.4.6 页面设置工作区
+- **Homepage YAML 是唯一事实来源**：不把服务配置迁移到额外数据库。
+- **不修改 Homepage 本体**：通过共享配置目录工作。
+- **优先可逆操作**：保存前 Diff、自动备份、完整快照、恢复保护点。
+- **Secret 不回显**：Token、API Key、Password 在浏览器中默认掩码。
+- **兼容未来字段**：可视化表单无法识别的 YAML 字段尽量原样保留。
+- **发现默认只读**：Docker / Proxmox 发现不提供停止、删除、重启容器或 VM 的接口。
 
-- 页面设置按“基础 / 外观 / 行为 / Quick Launch / 分组布局 / 高级”重新组织，并提供页内导航。
-- 补齐 Homepage 官方常用 `settings.yaml` 表单：`startUrl`、`base`、`boxedWidgets`、完整色板、`bookmarksStyle`、全局等高、折叠、统计、错误隐藏、更新检查、禁止索引、最大分组列数等。
-- Quick Launch 从单一 provider 输入框升级为完整表单，支持搜索描述、联网搜索、搜索建议、URL 访问、移动按钮位置和 Custom Provider。
-- 背景 blur 使用明确的“未配置 / `blur: ""` / xs...3xl”选择，不再让空字符串语义依赖文本框；同时提示 `cardBlur` 与背景滤镜冲突。
-- 分组布局自动汇总服务与书签分组，未配置组不会在无操作保存时被强制写入；支持拖动手柄调整 `layout:` 顺序。
-- 页面设置新增保存前 Diff 预览，敏感字段继续掩码，确认后才写入并创建备份。
-- 高级字段继续保留 YAML 入口，Providers、PWA、blockHighlights 及未来 Homepage 新字段不会被表单覆盖。
+## License
 
-## v0.4.5 优化
-
-- 服务新增/编辑页的 Docker 集成改为基于 Docker 发现的“主机 + 容器”选择器。
-- Proxmox VM/LXC 集成改为基于 Proxmox 发现的“连接 + VM/LXC”选择器。
-- 未配置对应发现连接时，集成区域会禁用并给出配置入口；编辑已有服务时会保留原配置。
-- 新增只读 API 为表单动态加载 Docker 容器与 Proxmox 资源，不向浏览器暴露 Header、Token 或 Secret。
-- 对用户可见的占位符、示例 IP、节点名和分组提示做开源友好化，改用通用名称与 TEST-NET 示例地址。
-- Docker/Proxmox 下拉控件使用统一行高与帮助文字区域。
-
-## v0.4.4 优化
-
-- Docker 主机表单按钮文案统一为“测试连接”，右上角“取消编辑”改为轻量胶囊按钮。
-- Docker Server 当前没有任何服务引用时允许安全重命名；有引用时继续锁定并说明引用数量。
-- 重命名会同步迁移 `docker.yaml` 键名与 Admin-only 元数据，连接配置仍只有 `docker.yaml` 一份。
-- Docker 发现页对已加入 Homepage 的容器提供“编辑服务 / 移除配置”；移除仅删除服务的 `server` / `container`，不会删除服务、Widget 或链接。
-
-## v0.4.9 Proxmox 筛选栏布局
-
-- 桌面端“搜索 VM/LXC / 类型 / 状态”保持同一行；搜索框占更宽比例。
-- 小于 980px 时继续自动切换为单列，避免窄屏拥挤。
-
-## v0.4.8：多节点 Proxmox 发现
-
-- `proxmox.yaml` 是 Proxmox 节点连接的唯一配置源。
-- Proxmox 发现支持“全部节点”聚合和单节点筛选，并可搜索 VM/LXC。
-- 新增节点管理页，可视化添加、编辑、测试、删除 PVE 节点连接。
-- Homepage 要求 `proxmoxNode` 同时匹配 `proxmox.yaml` 键名与 PVE 实际物理节点名；集群场景可用“补齐集群节点”自动创建缺失节点键。
-- 删除节点会先检查 `services.yaml` 引用，可选只删连接或同时清除服务的 Proxmox 关联。
-
+[MIT](LICENSE)
