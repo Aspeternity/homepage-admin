@@ -30,12 +30,13 @@ Homepage Admin 与 Homepage **共享同一个配置目录**，直接读取和写
 | 模块 | 能力 |
 | --- | --- |
 | 服务管理 | 可视化管理 `services.yaml`，分组、排序、多 Widget、连接测试、保存前 Diff |
-| Widget 中心 | 同步 Homepage 官方 Service Widget Schema，动态生成表单 |
+| Widget 中心 | 同步 Homepage 官方 Service Widget Schema，动态生成表单并显示 Schema Diff |
 | 书签管理 | 可视化管理 `bookmarks.yaml`，支持分组与拖拽排序 |
 | 页面设置 | 管理 `settings.yaml` 的主题、背景、Quick Launch、布局等 |
 | 顶部组件 | 管理 `widgets.yaml`，提供 Information Widget 专属表单 |
 | Docker 发现 | 多 Docker 主机、容器发现、导入向导、`server + container` 绑定 |
 | Proxmox 发现 | 多节点聚合、QEMU/LXC 发现、已有服务关联、节点管理 |
+| Homepage 兼容性 | Homepage 2.x 版本检测、v2.1.1 警告、Auth / OIDC / MCP Compose 生成器 |
 | 高级编辑 | 直接编辑 YAML / CSS / JS，并在保存前校验与预览 Diff |
 | 备份中心 | 自动备份、完整快照、保护、ZIP 导出、单文件/整组恢复 |
 | 安全 | Session、CSRF、登录限流、Secret 掩码、原子写入、文件锁、审计日志 |
@@ -74,7 +75,7 @@ Homepage Admin
 Homepage Admin 的标准部署只需要 **一个容器、一个 Homepage 配置目录和一个宿主机数据目录**。
 
 > [!IMPORTANT]
-> v0.5.3 起，首次部署**不需要**在 Compose 中填写用户名、密码或 `SESSION_SECRET`。第一次打开网页时会进入初始化页面，由你创建管理员账号。v0.5.4 进一步优化了首次引导页面，并默认使用宿主机目录持久化 `/data`。
+> v0.5.3 起，首次部署**不需要**在 Compose 中填写用户名、密码或 `SESSION_SECRET`。第一次打开网页时会进入初始化页面，由你创建管理员账号。v0.5.4 进一步优化了首次引导页面并默认使用宿主机目录持久化 `/data`；v0.5.5 新增 Homepage 2.x 兼容中心。
 
 ### 1. 创建 `compose.yml`
 
@@ -129,7 +130,7 @@ curl -s http://127.0.0.1:3001/healthz ; echo
 正常返回类似：
 
 ```json
-{"status":"ok","version":"0.5.4"}
+{"status":"ok","version":"0.5.5"}
 ```
 
 ### 3. 第一次打开网页创建账号
@@ -184,7 +185,7 @@ ADMIN_PASSWORD / ADMIN_PASSWORD_HASH
 SESSION_SECRET
 ```
 
-v0.5.4 会继续兼容 v0.5.3 的首次账号机制；从 v0.5.2 或更早版本升级时，第一次启动会把旧账号安全迁移到 `/data/auth.json`：明文密码会转换为 bcrypt 哈希，已有密码哈希直接保留。确认新版本可以正常登录后，即可从 Compose 中删除这些旧认证环境变量。
+v0.5.5 会继续兼容 v0.5.3 的首次账号机制；从 v0.5.2 或更早版本升级时，第一次启动会把旧账号安全迁移到 `/data/auth.json`：明文密码会转换为 bcrypt 哈希，已有密码哈希直接保留。确认新版本可以正常登录后，即可从 Compose 中删除这些旧认证环境变量。
 
 原来的 `/data` **必须继续挂载**，否则账号、Session Secret、备份与 Admin 设置不会持久化。
 
@@ -341,9 +342,28 @@ custom.js
 
 Service Widget 表单不是固定维护一份旧列表。Homepage Admin 可以同步 Homepage 官方 Service Widget 文档与注册表，动态生成 Schema，并把缓存保存到 `/data`。
 
+v0.5.5 起，同步完成后还会显示 **Schema Diff**：新增/移除 Widget、配置字段变化、Allowed fields 变化和分类变化都会直接列出，方便判断 Homepage 官方这次更新对现有配置是否有影响。
+
 外网不可用时可以继续使用镜像内置 Schema，或导入离线 Schema JSON。
 
 ---
+
+# Homepage 2.x 兼容中心
+
+Homepage Admin v0.5.5 增加 **Homepage 兼容性** 页面，当前按 Homepage v2.2.0 官方行为适配。
+
+它不会修改 Homepage 容器，而是提供只读检测与配置辅助：
+
+- 尝试从已配置的只读 Docker 主机识别 Homepage 容器版本；使用 `:latest` 无法解析实际版本时可手动指定。
+- 在线检查 Homepage 官方最新 Release，并在检测到 v2.1.1 时提示官方已知 YAML 解析问题。
+- 生成 Homepage 2.x Password Auth / OIDC Compose `environment` 示例。
+- 生成 Homepage MCP 只读 / 可写 Compose 示例；MCP 默认只读。
+- 高级编辑 `custom.css` 时提示：Homepage 2.x 开启认证后该文件仍会公开加载，不应包含 Secret。
+- Widget Schema 每次同步后显示新增 Widget、移除 Widget、配置字段和显示字段变化。
+- 对 Homepage 2.x 新 Widget / 字段做友好适配，包括 Maintainerr、Sportarr、Syncthing、Duplicati、Pulse、Jellyfin `albums` 与 qBittorrent API Key。
+
+> [!IMPORTANT]
+> Homepage 的认证和 MCP 都由 Homepage 官方环境变量控制。Homepage Admin **不会**为了修改这些变量而申请 Docker 写权限；生成器只提供可以复制到 Homepage Compose / Stack 的配置片段。
 
 # 备份与恢复
 
@@ -382,7 +402,7 @@ docker compose up -d
 也可以固定版本：
 
 ```yaml
-image: ghcr.io/aspeternity/homepage-admin:0.5.4
+image: ghcr.io/aspeternity/homepage-admin:0.5.5
 ```
 
 版本变化请查看 [`CHANGELOG.md`](CHANGELOG.md)。

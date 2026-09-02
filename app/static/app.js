@@ -809,6 +809,18 @@
       container.innerHTML = `<div class="widget-schema-head"><div><strong>${escapeHtml(schema.label)}</strong><span class="role-pill">${escapeHtml(schema.category || 'Widget')}</span></div><a href="${escapeHtml(schema.docs || '#')}" target="_blank" rel="noopener">官方文档 ↗</a></div><div class="form-grid two">${rows}${fieldPicker}${notice}</div>`;
     };
 
+    const syncWidgetCompatWarning = (block) => {
+      const type = ($('[data-widget-type]', block)?.value || '').trim().toLowerCase();
+      const extra = $('[data-widget-extra]', block);
+      const warning = $('[data-widget-compat-warning]', block);
+      if (!warning) return;
+      const hasHighlight = type === 'customapi' && /(^|\n)\s*highlight\s*:/i.test(extra?.value || '');
+      warning.hidden = !hasHighlight;
+      warning.textContent = hasHighlight
+        ? 'Homepage 2.x 当前不支持 Custom API Widget 的 block highlighting。建议移除 Widget 其他配置中的 highlight，以免产生无效配置。'
+        : '';
+    };
+
     const collectWidgetConfig = (block) => {
       const config = {};
       $$('[data-widget-field-name]', block).forEach((input) => { config[input.dataset.widgetFieldName] = input.value; });
@@ -820,11 +832,14 @@
       const testButton = $('[data-widget-test]', block);
       const result = $('[data-widget-test-result]', block);
       renderWidgetFields(block, initial || initialData(block));
-      typeInput?.addEventListener('change', () => renderWidgetFields(block, { fields: {}, secret_saved: {}, selected_fields: [] }));
+      syncWidgetCompatWarning(block);
+      typeInput?.addEventListener('change', () => { renderWidgetFields(block, { fields: {}, secret_saved: {}, selected_fields: [] }); syncWidgetCompatWarning(block); });
       typeInput?.addEventListener('input', () => {
         const type = typeInput.value.trim().toLowerCase();
         if (catalog[type]) renderWidgetFields(block, { fields: {}, secret_saved: {}, selected_fields: [] });
+        syncWidgetCompatWarning(block);
       });
+      $('[data-widget-extra]', block)?.addEventListener('input', () => syncWidgetCompatWarning(block));
       $('[data-widget-remove]', block)?.addEventListener('click', () => { block.remove(); syncWidgetSlots(); });
       $('[data-widget-up]', block)?.addEventListener('click', () => {
         const previous = block.previousElementSibling;
@@ -1561,4 +1576,79 @@
 
   syncStrength();
   syncMatch();
+})();
+
+// v0.5.5 Homepage 2.x compatibility helpers and Compose generators.
+(() => {
+  const root = document.querySelector('[data-compat-generators]');
+  if (!root) return;
+
+  const authSecret = root.dataset.authSecret || '';
+  const mcpToken = root.dataset.mcpToken || '';
+  const externalUrl = root.querySelector('[data-compat-external-url]');
+  const authMode = root.querySelector('[data-compat-auth-mode]');
+  const password = root.querySelector('[data-compat-password]');
+  const oidcIssuer = root.querySelector('[data-compat-oidc-issuer]');
+  const oidcClientId = root.querySelector('[data-compat-oidc-client-id]');
+  const oidcClientSecret = root.querySelector('[data-compat-oidc-client-secret]');
+  const oidcName = root.querySelector('[data-compat-oidc-name]');
+  const authOutput = root.querySelector('[data-compat-auth-output]');
+  const mcpWrite = root.querySelector('[data-compat-mcp-write]');
+  const mcpOutput = root.querySelector('[data-compat-mcp-output]');
+  const yamlQuote = (value) => JSON.stringify(String(value || ''));
+
+  const updateAuth = () => {
+    const mode = authMode?.value || 'password';
+    root.querySelectorAll('[data-compat-auth-password]').forEach((node) => { node.hidden = mode !== 'password'; });
+    root.querySelectorAll('[data-compat-oidc]').forEach((node) => { node.hidden = mode !== 'oidc'; });
+    const lines = [
+      'environment:',
+      '  HOMEPAGE_AUTH_ENABLED: "true"',
+      `  HOMEPAGE_AUTH_SECRET: ${yamlQuote(authSecret)}`,
+      `  HOMEPAGE_EXTERNAL_URL: ${yamlQuote(externalUrl?.value || 'https://homepage.example.com')}`,
+    ];
+    if (mode === 'oidc') {
+      lines.push(`  HOMEPAGE_OIDC_ISSUER: ${yamlQuote(oidcIssuer?.value)}`);
+      lines.push(`  HOMEPAGE_OIDC_CLIENT_ID: ${yamlQuote(oidcClientId?.value)}`);
+      lines.push(`  HOMEPAGE_OIDC_CLIENT_SECRET: ${yamlQuote(oidcClientSecret?.value)}`);
+      if ((oidcName?.value || '').trim()) lines.push(`  HOMEPAGE_OIDC_NAME: ${yamlQuote(oidcName.value)}`);
+    } else {
+      lines.push(`  HOMEPAGE_AUTH_PASSWORD: ${yamlQuote(password?.value || 'CHANGE_ME_STRONG_PASSWORD')}`);
+    }
+    if (authOutput) authOutput.textContent = lines.join('\n');
+  };
+
+  const updateMcp = () => {
+    const lines = [
+      'environment:',
+      '  HOMEPAGE_MCP_ENABLED: "true"',
+      `  HOMEPAGE_MCP_TOKEN: ${yamlQuote(mcpToken)}`,
+    ];
+    if (mcpWrite?.checked) lines.push('  HOMEPAGE_MCP_ALLOW_WRITE: "true"');
+    if (mcpOutput) mcpOutput.textContent = lines.join('\n');
+  };
+
+  [externalUrl, authMode, password, oidcIssuer, oidcClientId, oidcClientSecret, oidcName].forEach((input) => {
+    input?.addEventListener('input', updateAuth);
+    input?.addEventListener('change', updateAuth);
+  });
+  mcpWrite?.addEventListener('change', updateMcp);
+
+  root.querySelectorAll('[data-copy-target]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const target = document.getElementById(button.dataset.copyTarget || '');
+      if (!target) return;
+      try {
+        await navigator.clipboard.writeText(target.textContent || '');
+        const original = button.textContent;
+        button.textContent = '已复制';
+        setTimeout(() => { button.textContent = original; }, 1200);
+      } catch (_) {
+        window.alert('浏览器无法写入剪贴板，请手动复制。');
+      }
+    });
+  });
+
+  updateAuth();
+  updateMcp();
 })();

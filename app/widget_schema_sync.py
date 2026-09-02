@@ -14,7 +14,7 @@ from ruamel.yaml import YAML
 GITHUB_REPO = "gethomepage/homepage"
 DOCS_API = "https://api.github.com/repos/gethomepage/homepage/contents/docs/widgets/services"
 REGISTRY_RAW = "https://raw.githubusercontent.com/gethomepage/homepage/{ref}/src/widgets/widgets.js"
-USER_AGENT = "Homepage-Admin-Widget-Schema-Sync/0.5.4"
+USER_AGENT = "Homepage-Admin-Widget-Schema-Sync/0.5.5"
 
 _SECRET_HINTS = (
     "password",
@@ -65,11 +65,11 @@ _NETWORK_TYPES = {
 }
 _STORAGE_TYPES = {
     "backrest", "diskstation", "downloadstation", "filebrowser", "kopia", "openmediavault", "proxmoxbackupserver",
-    "qnap", "scrutiny", "truenas", "unifi_drive", "unraid", "urbackup",
+    "qnap", "scrutiny", "truenas", "unifi_drive", "unraid", "urbackup", "syncthing", "duplicati",
 }
 _MONITOR_TYPES = {
     "apcups", "beszel", "changedetectionio", "checkmk", "gatus", "glances", "grafana", "healthchecks",
-    "myspeed", "netdata", "peanut", "prometheus", "prometheusmetric", "speedtest", "uptimekuma", "uptimerobot", "zabbix",
+    "myspeed", "netdata", "peanut", "prometheus", "prometheusmetric", "speedtest", "uptimekuma", "uptimerobot", "zabbix", "pulse",
 }
 _DOWNLOAD_TYPES = {
     "autobrr", "deluge", "flood", "jackett", "jdownloader", "nzbget", "prowlarr", "pyload", "qbittorrent",
@@ -79,7 +79,7 @@ _MEDIA_TYPES = {
     "atsumeru", "audiobookshelf", "bazarr", "booklore", "calibreweb", "channelsdvrserver", "dispatcharr", "emby",
     "fileflows", "frigate", "hdhomerun", "immich", "jellyfin", "jellystat", "kavita", "komga", "lidarr", "medusa",
     "mylar", "navidrome", "ombi", "photoprism", "plex", "radarr", "readarr", "seerr", "sonarr", "stash", "suwayomi",
-    "tautulli", "tdarr", "tracearr", "tubearchivist", "unmanic", "xteve", "yourspotify",
+    "tautulli", "tdarr", "tracearr", "tubearchivist", "unmanic", "xteve", "yourspotify", "maintainerr", "sportarr",
 }
 _SMARTHOME_TYPES = {
     "esphome", "evcc", "homeassistant", "homebridge", "moonraker", "octoprint", "opendtu", "spoolman",

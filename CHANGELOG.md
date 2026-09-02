@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.5 - 2026-09-02
+
+- 新增 Homepage 2.x 兼容中心：自动/手动版本识别、官方最新 Release 检查与 v2.1.1 YAML 解析问题警告。
+- 新增 Homepage Password Auth / OIDC Compose 生成器；只生成配置示例，不扩大 Docker API 权限。
+- 新增 Homepage MCP Compose 生成器，默认只读，可显式选择 `HOMEPAGE_MCP_ALLOW_WRITE=true`，并强调 Token 高敏感权限。
+- Widget Schema 同步新增结构 Diff，记录新增/移除 Widget、配置字段与 Allowed fields 变化。
+- 适配 Homepage 2.x Widget 变化：Maintainerr / Sportarr / Syncthing / Duplicati / Pulse 分类，Jellyfin `albums`，qBittorrent API Key，以及 Pulse / Dockhand / Authentik / Arcane 提示。
+- 高级编辑 `custom.css` 增加 Homepage 2.x 公开访问安全提示；Custom API Widget 增加不支持 block highlighting 的实时提示。
+- Docker discovery 允许读取安全的 OCI image metadata label，用于只读识别 Homepage 镜像版本。
+
 ## v0.5.4 - 2026-08-12
 
 - 默认 Compose 将 `/data` 从 Docker Named Volume 改为宿主机 `./data:/data`，数据位置更直观，便于备份与迁移。

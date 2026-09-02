@@ -14,6 +14,9 @@
   </div>
   {% endif %}
 </section>
+{% if filename == 'custom.css' %}
+<div class="alert warning"><strong>Homepage 2.x 安全提示：</strong>启用 Homepage 内置认证后，<code>custom.css</code> 仍会在未登录状态公开加载，用于登录页样式。请勿在 CSS 中写入 Token、密码、API Key 或敏感内部 URL；<code>custom.js</code> 则保持认证后加载。</div>
+{% endif %}
 {% if masked %}
 <div class="alert info">敏感字段默认已遮挡。敏感值会显示为 <code>__HOMEPAGE_ADMIN_SECRET_xxxx__</code> 形式，保存时会自动恢复原值；不要手动修改占位符。</div>
 {% elif reveal %}

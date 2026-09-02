@@ -33,6 +33,41 @@
   </article>
 </section>
 
+{% set schema_diff = schema_status.diff or {} %}
+<section class="form-card schema-diff-card">
+  <div class="section-title-row">
+    <div><h2>最近一次官方 Schema 变化</h2><p class="section-help">每次成功同步都会与上一个 Schema 快照比较，只记录 Widget / 字段结构，不包含任何用户凭据。</p></div>
+    {% if schema_diff.has_changes %}<span class="role-pill warning">检测到变化</span>{% else %}<span class="role-pill success-pill">无结构变化</span>{% endif %}
+  </div>
+  {% if schema_diff %}
+    <div class="schema-diff-summary">
+      <span><strong>{{ schema_diff.added_count or 0 }}</strong> 新增 Widget</span>
+      <span><strong>{{ schema_diff.removed_count or 0 }}</strong> 移除 Widget</span>
+      <span><strong>{{ schema_diff.changed_count or 0 }}</strong> 字段变化</span>
+    </div>
+    {% if schema_diff.added_widgets %}<div class="schema-diff-row"><b>新增</b><div>{% for item in schema_diff.added_widgets %}<code>+ {{ item }}</code>{% endfor %}</div></div>{% endif %}
+    {% if schema_diff.removed_widgets %}<div class="schema-diff-row"><b>移除</b><div>{% for item in schema_diff.removed_widgets %}<code>- {{ item }}</code>{% endfor %}</div></div>{% endif %}
+    {% if schema_diff.changed_widgets %}
+      <details class="schema-diff-details" open><summary>查看字段变化（{{ schema_diff.changed_count }}）</summary>
+        <div class="schema-diff-changes">
+          {% for item in schema_diff.changed_widgets %}
+          <article>
+            <strong>{{ item.label }} <code>{{ item.id }}</code></strong>
+            {% if item.added_fields %}<p><span class="diff-added">新增配置字段</span> {{ item.added_fields|join(', ') }}</p>{% endif %}
+            {% if item.removed_fields %}<p><span class="diff-removed">移除配置字段</span> {{ item.removed_fields|join(', ') }}</p>{% endif %}
+            {% if item.allowed_added %}<p><span class="diff-added">新增显示字段</span> {{ item.allowed_added|join(', ') }}</p>{% endif %}
+            {% if item.allowed_removed %}<p><span class="diff-removed">移除显示字段</span> {{ item.allowed_removed|join(', ') }}</p>{% endif %}
+            {% if item.category_before != item.category_after %}<p><span>分类</span> {{ item.category_before or '未分类' }} → {{ item.category_after or '未分类' }}</p>{% endif %}
+          </article>
+          {% endfor %}
+        </div>
+      </details>
+    {% endif %}
+  {% else %}
+    <div class="empty-state compact">完成一次官方 Schema 同步后，这里会显示新增 Widget、移除 Widget和字段变化。</div>
+  {% endif %}
+</section>
+
 <section class="form-card schema-schedule-card" data-schema-schedule>
   <div class="section-title-row">
     <div>

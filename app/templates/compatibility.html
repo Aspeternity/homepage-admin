@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Homepage 兼容性 · Homepage Admin{% endblock %}
+{% block content %}
+<section class="page-heading compatibility-heading">
+  <div>
+    <h1>Homepage 兼容性</h1>
+    <p>跟踪 Homepage 2.x 的版本、认证、MCP 与 Widget Schema 变化；这里不会修改 Homepage 容器或开放 Docker 写权限。</p>
+  </div>
+  <div class="heading-actions">
+    <a class="button secondary" href="https://github.com/gethomepage/homepage/releases" target="_blank" rel="noopener">Homepage Releases ↗</a>
+    <a class="button secondary" href="/widget-schema">Widget Schema</a>
+  </div>
+</section>
+
+<section class="compatibility-overview-grid">
+  <article class="form-card compatibility-version-card">
+    <div class="section-title-row">
+      <div><h2>版本状态</h2><p class="section-help">优先使用手动版本；未指定时尝试通过已配置的只读 Docker 主机识别 Homepage 容器。</p></div>
+      {% if compatibility.known %}
+        <span class="role-pill success-pill">v{{ compatibility.version }}</span>
+      {% else %}
+        <span class="role-pill warning">版本未知</span>
+      {% endif %}
+    </div>
+    <dl class="schema-status-list compatibility-status-list">
+      <div><dt>当前 Homepage</dt><dd>{% if compatibility.known %}<strong>v{{ compatibility.version }}</strong>{% else %}未识别{% endif %}</dd></div>
+      <div><dt>版本来源</dt><dd>{% if prefs.version_override %}手动指定{% elif auto_detection.version %}Docker 发现{% elif auto_detection.found %}已发现容器，但镜像使用 {{ auto_detection.image }}{% else %}暂无可用来源{% endif %}</dd></div>
+      <div><dt>官方最新</dt><dd>{% if latest.ok %}<strong>v{{ latest.version }}</strong>{% if latest.published_at %} · <time datetime="{{ latest.published_at }}" data-local-datetime>{{ latest.published_at }}</time>{% endif %}{% else %}在线检查失败{% endif %}</dd></div>
+      <div><dt>Admin 兼容基线</dt><dd>已按 Homepage <strong>v{{ supported_through }}</strong> 官方行为适配</dd></div>
+      {% if auto_detection.found %}<div><dt>识别容器</dt><dd>{{ auto_detection.host }} / {{ auto_detection.container }} · <code>{{ auto_detection.image }}</code></dd></div>{% endif %}
+    </dl>
+    {% if latest.error and not latest.ok %}<div class="alert info">当前无法在线读取 GitHub 最新 Release：{{ latest.error }}。不影响其他管理功能。</div>{% endif %}
+    {% for warning in compatibility.warnings %}<div class="alert {{ warning.level }}"><strong>{{ warning.title }}</strong><br>{{ warning.message }}</div>{% endfor %}
+    {% if compatibility.supported_status == 'newer' %}<div class="alert warning"><strong>检测到比当前 Admin 兼容基线更新的 Homepage。</strong> 建议先同步官方 Widget Schema，并检查 Release Notes 后再修改高级配置。</div>{% endif %}
+  </article>
+
+  <article class="form-card">
+    <h2>版本检测设置</h2>
+    <p class="section-help">使用 <code>:latest</code> 的镜像标签通常无法仅通过 Docker 列表判断实际版本；这时可手动指定。留空即可恢复自动检测。</p>
+    <form method="post" action="/homepage-compatibility/version" class="compat-version-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Homepage 版本
+        <input name="version" value="{{ prefs.version_override or '' }}" placeholder="2.2.0" inputmode="decimal">
+        <small>仅作为兼容性判断依据，不会写入 Homepage 配置。</small>
+      </label>
+      <div class="inline-actions"><button class="button primary" type="submit">保存版本</button>{% if prefs.version_override %}<button class="button secondary" type="submit" name="version" value="">恢复自动检测</button>{% endif %}</div>
+    </form>
+    {% if auto_detection.errors %}<details class="schema-errors"><summary>Docker 自动检测警告</summary><pre>{{ auto_detection.errors|join('\n') }}</pre></details>{% endif %}
+  </article>
+</section>
+
+<section class="form-card">
+  <div class="section-title-row">
+    <div><h2>Homepage 2.x 能力</h2><p class="section-help">这些能力属于 Homepage 官方本体，不由 Homepage Admin 接管。</p></div>
+    <span class="role-pill">只读兼容检查</span>
+  </div>
+  <div class="compat-capability-grid">
+    <article class="compat-capability-card"><span class="compat-capability-icon">🔐</span><div><strong>内置密码认证</strong><p>{{ '当前版本支持' if compatibility.capabilities.auth else ('需要 Homepage 2.0+' if compatibility.known else '需要 Homepage 2.0+') }}</p></div><b class="{{ 'ok' if compatibility.capabilities.auth else '' }}">{{ '✓' if compatibility.capabilities.auth else '—' }}</b></article>
+    <article class="compat-capability-card"><span class="compat-capability-icon">◎</span><div><strong>OIDC</strong><p>{{ '当前版本支持' if compatibility.capabilities.oidc else '需要 Homepage 2.0+' }}</p></div><b class="{{ 'ok' if compatibility.capabilities.oidc else '' }}">{{ '✓' if compatibility.capabilities.oidc else '—' }}</b></article>
+    <article class="compat-capability-card"><span class="compat-capability-icon">⌘</span><div><strong>Homepage MCP</strong><p>{{ '当前版本支持' if compatibility.capabilities.mcp else '需要 Homepage 2.0+' }}</p></div><b class="{{ 'ok' if compatibility.capabilities.mcp else '' }}">{{ '✓' if compatibility.capabilities.mcp else '—' }}</b></article>
+    <article class="compat-capability-card"><span class="compat-capability-icon">CSS</span><div><strong>认证后的 custom.css</strong><p>Homepage 2.x 为登录页样式保留公开访问</p></div><b class="{{ 'ok' if compatibility.capabilities.custom_css_public_with_auth else '' }}">{{ '!' if compatibility.capabilities.custom_css_public_with_auth else '—' }}</b></article>
+  </div>
+</section>
+
+<section class="compatibility-generator-grid" data-compat-generators data-auth-secret="{{ auth_secret }}" data-mcp-token="{{ mcp_token }}">
+  <article class="form-card">
+    <div class="section-title-row"><div><h2>Homepage Auth Compose 生成器</h2><p class="section-help">生成官方 Homepage 2.x 环境变量示例；只在浏览器中预览，不写入任何文件。</p></div><a href="https://gethomepage.dev/installation/#security-authentication" target="_blank" rel="noopener">官方说明 ↗</a></div>
+    <div class="form-grid two aligned-fields">
+      <label class="span-2">Homepage 外部访问地址<input data-compat-external-url value="{{ homepage_url or 'https://homepage.example.com' }}" placeholder="https://homepage.example.com"><small>必须包含协议；公网部署建议 HTTPS。</small></label>
+      <label>认证模式<select data-compat-auth-mode><option value="password">密码登录</option><option value="oidc">OIDC</option></select><small>OIDC 会替代密码登录。</small></label>
+      <label data-compat-auth-password>登录密码占位<input data-compat-password value="CHANGE_ME_STRONG_PASSWORD" autocomplete="off"><small>请自行替换为强密码。</small></label>
+      <label data-compat-oidc hidden>OIDC Issuer<input data-compat-oidc-issuer value="https://auth.example.com/realms/homepage"></label>
+      <label data-compat-oidc hidden>OIDC Client ID<input data-compat-oidc-client-id value="homepage"></label>
+      <label data-compat-oidc hidden>OIDC Client Secret<input data-compat-oidc-client-secret value="CHANGE_ME_OIDC_SECRET"></label>
+      <label data-compat-oidc hidden>OIDC 显示名称<input data-compat-oidc-name value="SSO"></label>
+    </div>
+    <div class="code-card"><div class="code-card-head"><strong>Compose environment</strong><button class="button small secondary" type="button" data-copy-target="compat-auth-output">复制</button></div><pre id="compat-auth-output" data-compat-auth-output></pre></div>
+    <div class="alert info">Homepage 官方当前通过环境变量配置认证。Homepage Admin 只生成示例，不会为此请求 Docker 写权限。</div>
+  </article>
+
+  <article class="form-card">
+    <div class="section-title-row"><div><h2>Homepage MCP Compose 生成器</h2><p class="section-help">MCP 默认关闭、默认只读；Token 能读取 Homepage 配置中的服务凭据，请视为高敏感 Secret。</p></div><a href="https://gethomepage.dev/configs/mcp/" target="_blank" rel="noopener">官方说明 ↗</a></div>
+    <label class="toggle-row"><input type="checkbox" data-compat-mcp-write><span><strong>允许 MCP 写入配置</strong><small>默认关闭。开启后 MCP 可替换配置、添加服务 / Info Widget，并可修改 custom.js。</small></span></label>
+    <div class="code-card"><div class="code-card-head"><strong>Compose environment</strong><button class="button small secondary" type="button" data-copy-target="compat-mcp-output">复制</button></div><pre id="compat-mcp-output" data-compat-mcp-output></pre></div>
+    <div class="alert warning"><strong>不要把 MCP Endpoint 或 Token 暴露到不可信网络。</strong> 非浏览器 MCP 客户端通常需要 <code>HOMEPAGE_MCP_TOKEN</code>，Token 至少 32 个字符。</div>
+  </article>
+</section>
+
+<section class="form-card">
+  <div class="section-title-row"><div><h2>Homepage 2.x 兼容提醒</h2><p class="section-help">v0.5.5 内置的安全与配置提示。</p></div></div>
+  <div class="compat-note-list">
+    <div><strong>v2.1.1</strong><span>官方已知 YAML 解析问题；检测到该版本时 Admin 会给出升级警告。</span></div>
+    <div><strong>custom.css</strong><span>Homepage 2.x 开启认证后仍允许未登录访问 custom.css；不要把 Token、密码或敏感内部 URL 写进 CSS。</span></div>
+    <div><strong>Custom API</strong><span>当前官方 Custom API Widget 不支持 block highlighting；Widget 编辑器会提示不要添加 <code>highlight</code>。</span></div>
+    <div><strong>Widget 字段</strong><span>Jellyfin 已加入 albums；qBittorrent 支持 API Key；Pulse v6 使用 version: 2。更多变化由官方 Schema 同步自动接收。</span></div>
+  </div>
+</section>
+{% endblock %}

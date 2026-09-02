@@ -9,7 +9,7 @@ import httpx
 
 
 SECRET_LABEL_MARKERS = ("password", "passwd", "secret", "token", "authorization", ".key")
-ALLOWED_LABEL_PREFIXES = ("homepage.", "com.docker.compose.")
+ALLOWED_LABEL_PREFIXES = ("homepage.", "com.docker.compose.", "org.opencontainers.image.")
 
 
 def safe_labels(labels: dict[str, Any] | None) -> dict[str, str]:

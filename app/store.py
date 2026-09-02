@@ -462,6 +462,35 @@ class HomepageStore:
             return {}
         return payload if isinstance(payload, dict) else {}
 
+    def homepage_compatibility_preferences(self) -> dict[str, Any]:
+        prefs = self._read_preferences()
+        raw = prefs.get("homepage_compatibility")
+        if not isinstance(raw, dict):
+            return {"version_override": "", "custom": False}
+        return {
+            "version_override": str(raw.get("version_override") or "").strip(),
+            "custom": bool(str(raw.get("version_override") or "").strip()),
+        }
+
+    def set_homepage_version_override(self, version: str, actor: str) -> dict[str, Any]:
+        from .homepage_compat import normalize_version
+
+        normalized = normalize_version(version)
+        if version.strip() and not normalized:
+            raise ConfigError("Homepage 版本格式无效，请填写例如 2.2.0。")
+        with self.locked():
+            prefs = self._read_preferences()
+            if normalized:
+                prefs["homepage_compatibility"] = {"version_override": normalized}
+            else:
+                prefs.pop("homepage_compatibility", None)
+            if prefs:
+                self._atomic_write(self.preferences_path, json.dumps(prefs, ensure_ascii=False, indent=2) + "\n")
+            elif self.preferences_path.exists():
+                self.preferences_path.unlink()
+            self._audit(actor, f"set homepage version override:{normalized or 'auto'}", "admin-settings.json", None)
+        return self.homepage_compatibility_preferences()
+
     def _widget_schema_sync_defaults(self) -> dict[str, Any]:
         mode = str(getattr(settings, "widget_schema_sync_mode", "interval") or "interval").strip().lower()
         if mode not in {"interval", "daily"}:

@@ -124,6 +124,7 @@
         <div class="widget-dynamic-fields" data-widget-dynamic-fields></div>
         <div class="widget-test-result" data-widget-test-result hidden></div>
         <label>Widget 其他配置（YAML 映射）<textarea name="widgets_{{ loop.index0 }}_extra" rows="6" spellcheck="false" data-widget-extra>{{ widget.extra }}</textarea></label>
+        <div class="alert warning widget-compat-warning" data-widget-compat-warning hidden></div>
         <script type="application/json" data-widget-initial>{{ widget|tojson }}</script>
       </article>
       {% endfor %}
@@ -143,6 +144,7 @@
         <div class="widget-dynamic-fields" data-widget-dynamic-fields></div>
         <div class="widget-test-result" data-widget-test-result hidden></div>
         <label>Widget 其他配置（YAML 映射）<textarea name="widgets___INDEX___extra" rows="6" spellcheck="false" data-widget-extra></textarea></label>
+        <div class="alert warning widget-compat-warning" data-widget-compat-warning hidden></div>
         <script type="application/json" data-widget-initial>{"type":"","fields":{},"secret_saved":{},"selected_fields":[],"extra":"","original_index":-1}</script>
       </article>
     </template>

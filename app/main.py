@@ -8,6 +8,7 @@ import difflib
 import hashlib
 import json
 import re
+import secrets as stdlib_secrets
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -58,6 +59,12 @@ from .widget_catalog import (
     widget_schema_sync_job_status,
 )
 from .widget_tester import WidgetTestError, test_widget
+from .homepage_compat import (
+    SUPPORTED_THROUGH as HOMEPAGE_SUPPORTED_THROUGH,
+    compatibility_summary,
+    detect_homepage_version_from_hosts,
+    latest_homepage_release,
+)
 from .info_widget_catalog import (
     INFO_WIDGET_BY_ID,
     INFO_WIDGET_TYPES,
@@ -1825,6 +1832,47 @@ def _service_choices() -> list[dict[str, Any]]:
                 continue
             choices.append({"group_index": gi, "item_index": ii, "group": group_name, "name": name, "details": details})
     return choices
+
+
+@app.get("/homepage-compatibility", response_class=HTMLResponse)
+def homepage_compatibility_page(request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
+    prefs = store.homepage_compatibility_preferences()
+    auto_detection = detect_homepage_version_from_hosts(docker_discovery_hosts())
+    latest = latest_homepage_release(timeout=2.5)
+    current_version = str(prefs.get("version_override") or auto_detection.get("version") or "")
+    summary = compatibility_summary(current_version, latest.get("version"))
+    auth_secret = stdlib_secrets.token_urlsafe(36)
+    mcp_token = stdlib_secrets.token_urlsafe(36)
+    return templates.TemplateResponse(
+        request,
+        "compatibility.html",
+        context(
+            request,
+            "compatibility",
+            prefs=prefs,
+            auto_detection=auto_detection,
+            latest=latest,
+            compatibility=summary,
+            supported_through=HOMEPAGE_SUPPORTED_THROUGH,
+            auth_secret=auth_secret,
+            mcp_token=mcp_token,
+            ok=request.query_params.get("ok"),
+            error=request.query_params.get("error"),
+        ),
+    )
+
+
+@app.post("/homepage-compatibility/version")
+async def homepage_compatibility_version_save(request: Request, _: None = Depends(auth_guard)) -> RedirectResponse:
+    form = await request.form()
+    verify_csrf(request, str(form.get("csrf", "")))
+    try:
+        saved = store.set_homepage_version_override(str(form.get("version", "")), actor(request))
+        if saved.get("version_override"):
+            return redirect("/homepage-compatibility", ok=f"已手动指定 Homepage v{saved['version_override']}。")
+        return redirect("/homepage-compatibility", ok="已恢复自动检测 Homepage 版本。")
+    except ConfigError as exc:
+        return redirect("/homepage-compatibility", error=str(exc))
 
 
 @app.get("/widget-center", response_class=HTMLResponse)

@@ -2800,7 +2800,7 @@ def test_v046_healthz_reports_release_version() -> None:
     client = TestClient(app)
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.5.4"
+    assert response.json()["version"] == "0.5.5"
 
 
 def test_v046_settings_page_exposes_official_common_controls() -> None:
@@ -3556,3 +3556,139 @@ def test_v053_unconfigured_instance_redirects_to_setup_and_creates_account(tmp_p
     assert created.headers["location"].startswith("/services")
     assert fresh.is_configured() is True
     assert client.get("/services").status_code == 200
+
+
+def test_v055_homepage_compatibility_helpers_and_known_bad_version() -> None:
+    from app.homepage_compat import compatibility_summary, extract_homepage_version_from_container
+
+    assert extract_homepage_version_from_container({
+        "image": "ghcr.io/gethomepage/homepage:latest",
+        "labels": {"org.opencontainers.image.version": "v2.2.0"},
+    }) == "2.2.0"
+    warning = compatibility_summary("2.1.1", "2.2.0")
+    assert warning["capabilities"]["auth"] is True
+    assert warning["capabilities"]["mcp"] is True
+    assert any("YAML" in item["title"] for item in warning["warnings"])
+    assert any("v2.2.0" in item["title"] for item in warning["warnings"])
+
+
+def test_v055_widget_categories_and_homepage_2x_field_overrides() -> None:
+    from app.widget_schema_sync import parse_widget_document
+    from app.widget_catalog import WIDGET_CATALOG
+
+    samples = {
+        "maintainerr": "媒体",
+        "sportarr": "媒体",
+        "syncthing": "存储",
+        "duplicati": "存储",
+        "pulse": "监控",
+    }
+    for widget_type, category in samples.items():
+        parsed = parse_widget_document(
+            f"---\ntitle: {widget_type}\n---\n```yaml\nwidget:\n  type: {widget_type}\n  url: http://service\n```\n",
+            widget_type,
+        )
+        assert parsed is not None
+        assert parsed[1]["category"] == category
+
+    assert "albums" in WIDGET_CATALOG["jellyfin"]["allowed_fields"]
+    assert any(field["name"] == "key" for field in WIDGET_CATALOG["qbittorrent"]["fields"])
+    assert "block highlighting" in WIDGET_CATALOG["customapi"]["notice"]
+
+
+def test_v055_schema_diff_reports_widget_and_field_changes() -> None:
+    from app.widget_catalog import _schema_diff
+
+    old = {
+        "jellyfin": {"fields": [{"name": "url"}], "allowed_fields": ["movies"], "category": "媒体"},
+        "legacy": {"fields": [], "allowed_fields": [], "category": "应用"},
+    }
+    new = {
+        "jellyfin": {"fields": [{"name": "url"}, {"name": "version"}], "allowed_fields": ["movies", "albums"], "category": "媒体"},
+        "pulse": {"fields": [{"name": "url"}], "allowed_fields": ["nodes"], "category": "监控"},
+    }
+    diff = _schema_diff(old, new)
+    assert diff["added_widgets"] == ["pulse"]
+    assert diff["removed_widgets"] == ["legacy"]
+    jellyfin = next(item for item in diff["changed_widgets"] if item["id"] == "jellyfin")
+    assert jellyfin["added_fields"] == ["version"]
+    assert jellyfin["allowed_added"] == ["albums"]
+
+
+def test_v055_compatibility_page_and_version_override(monkeypatch) -> None:
+    from app import main as main_module
+
+    monkeypatch.setattr(main_module, "detect_homepage_version_from_hosts", lambda _hosts: {
+        "found": True,
+        "version": "2.1.1",
+        "source": "docker",
+        "host": "docker-node",
+        "container": "homepage",
+        "image": "ghcr.io/gethomepage/homepage:2.1.1",
+        "errors": [],
+        "candidates": [],
+    })
+    monkeypatch.setattr(main_module, "latest_homepage_release", lambda **_kwargs: {
+        "ok": True,
+        "version": "2.2.0",
+        "tag": "v2.2.0",
+        "published_at": "2026-09-02T03:40:51Z",
+        "url": "https://github.com/gethomepage/homepage/releases/tag/v2.2.0",
+        "error": "",
+    })
+
+    prefs = settings.data_dir / "admin-settings.json"
+    original = prefs.read_text(encoding="utf-8") if prefs.exists() else None
+    try:
+        client = TestClient(app)
+        csrf = login(client)
+        page = client.get("/homepage-compatibility")
+        assert page.status_code == 200
+        assert "Homepage 兼容性" in page.text
+        assert "v2.1.1 已知 YAML 解析问题" in page.text
+        assert "Homepage Auth Compose 生成器" in page.text
+        assert "Homepage MCP Compose 生成器" in page.text
+        assert "data-compat-mcp-write" in page.text
+
+        saved = client.post(
+            "/homepage-compatibility/version",
+            data={"csrf": csrf, "version": "2.2.0"},
+            follow_redirects=False,
+        )
+        assert saved.status_code == 303
+        assert store.homepage_compatibility_preferences()["version_override"] == "2.2.0"
+    finally:
+        if original is None:
+            prefs.unlink(missing_ok=True)
+        else:
+            prefs.write_text(original, encoding="utf-8")
+
+
+def test_v055_custom_css_page_shows_homepage_2x_security_warning() -> None:
+    client = TestClient(app)
+    login(client)
+    page = client.get("/yaml/custom.css")
+    assert page.status_code == 200
+    assert "Homepage 2.x 安全提示" in page.text
+    assert "custom.css" in page.text
+    assert "Token" in page.text
+
+
+def test_v055_docker_safe_labels_keep_oci_version_metadata() -> None:
+    from app.docker_client import safe_labels
+
+    labels = safe_labels({
+        "org.opencontainers.image.version": "2.2.0",
+        "org.opencontainers.image.revision": "abc123",
+        "private.secret": "do-not-keep",
+    })
+    assert labels["org.opencontainers.image.version"] == "2.2.0"
+    assert labels["org.opencontainers.image.revision"] == "abc123"
+    assert "private.secret" not in labels
+
+def test_v055_qbittorrent_tester_supports_official_bearer_api_key() -> None:
+    source = (Path(__file__).parents[1] / "app" / "widget_tester.py").read_text(encoding="utf-8")
+    assert 'Authorization": f"Bearer {key}"' in source
+    assert 'if not key and (username or password)' in source
+    assert "qBittorrent API Key 无效或权限不足" in source
+

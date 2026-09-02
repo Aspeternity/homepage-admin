@@ -24,7 +24,7 @@ ENHANCED_WIDGET_CATALOG: dict[str, dict[str, Any]] = {
         "docs": "https://gethomepage.dev/widgets/services/jellyfin/",
         "icon": "jellyfin.png",
         "test": "jellyfin",
-        "allowed_fields": ["movies", "series", "episodes", "songs"],
+        "allowed_fields": ["movies", "series", "episodes", "songs", "albums"],
         "fields": [
             {"name": "url", "label": "服务器地址", "kind": "text", "placeholder": "https://jellyfin.example.com", "required": True},
             {"name": "key", "label": "API Key", "kind": "secret", "required": True},
@@ -93,6 +93,7 @@ ENHANCED_WIDGET_CATALOG: dict[str, dict[str, Any]] = {
             {"name": "url", "label": "WebUI 地址", "kind": "text", "placeholder": "http://qbittorrent:8080", "required": True},
             {"name": "username", "label": "用户名", "kind": "text"},
             {"name": "password", "label": "密码", "kind": "secret"},
+            {"name": "key", "label": "API Key（qBittorrent ≥ 5.2.0）", "kind": "secret", "help": "可用 API Key 代替 WebUI 用户名 / 密码。"},
             {"name": "enableLeechProgress", "label": "显示下载进度", "kind": "bool"},
             {"name": "enableLeechSize", "label": "显示下载大小", "kind": "bool"},
         ],
@@ -233,6 +234,7 @@ ENHANCED_WIDGET_CATALOG: dict[str, dict[str, Any]] = {
         "docs": "https://gethomepage.dev/widgets/services/customapi/",
         "icon": "mdi-api",
         "test": "customapi",
+        "notice": "Homepage 2.x 当前不支持 Custom API Widget 的 block highlighting；请不要在该 Widget 的其他配置中添加 highlight。",
         "fields": [
             {"name": "url", "label": "API 地址", "kind": "text", "placeholder": "https://service/api/status", "required": True},
             {"name": "method", "label": "HTTP 方法", "kind": "select", "options": ["GET", "POST"], "placeholder": "GET"},
@@ -276,6 +278,7 @@ OFFICIAL_WIDGET_INDEX: list[tuple[str, str, str]] = [
     ("crowdsec", "CrowdSec", "安全"),
     ("customapi", "Custom API", "通用"),
     ("deluge", "Deluge", "下载"),
+    ("duplicati", "Duplicati", "存储"),
     ("develancacheui", "DeveLanCacheUI", "网络"),
     ("diskstation", "Synology DiskStation", "存储"),
     ("dispatcharr", "Dispatcharr", "媒体"),
@@ -312,6 +315,7 @@ OFFICIAL_WIDGET_INDEX: list[tuple[str, str, str]] = [
     ("jackett", "Jackett", "下载"),
     ("jdownloader", "JDownloader", "下载"),
     ("jellyfin", "Jellyfin", "媒体"),
+    ("maintainerr", "Maintainerr", "媒体"),
     ("jellystat", "Jellystat", "媒体"),
     ("kavita", "Kavita", "媒体"),
     ("komga", "Komga", "媒体"),
@@ -375,12 +379,15 @@ OFFICIAL_WIDGET_INDEX: list[tuple[str, str, str]] = [
     ("slskd", "Slskd", "下载"),
     ("sonarr", "Sonarr", "媒体"),
     ("sparkyfitness", "SparkyFitness", "应用"),
+    ("sportarr", "Sportarr", "媒体"),
+    ("pulse", "Pulse", "监控"),
     ("speedtest", "Speedtest Tracker", "监控"),
     ("spoolman", "Spoolman", "智能家居"),
     ("stash", "Stash", "媒体"),
     ("stocks", "Stocks", "通用"),
     ("suwayomi", "Suwayomi", "媒体"),
     ("swagdashboard", "SWAG Dashboard", "网络"),
+    ("syncthing", "Syncthing", "存储"),
     ("strelaysrv", "Syncthing Relay Server", "网络"),
     ("tailscale", "Tailscale", "网络"),
     ("tandoor", "Tandoor", "应用"),
@@ -438,6 +445,28 @@ def _build_catalog() -> dict[str, dict[str, Any]]:
         result[type_id] = merged
     return result
 
+
+HOMEPAGE_2X_SCHEMA_OVERRIDES: dict[str, dict[str, Any]] = {
+    "maintainerr": {"category": "媒体"},
+    "sportarr": {"category": "媒体"},
+    "syncthing": {"category": "存储"},
+    "duplicati": {"category": "存储"},
+    "pulse": {
+        "category": "监控",
+        "notice": "Pulse v6 需要 Widget version: 2；API Token 需要 monitoring:read 权限。",
+        "field_help": {"version": "Pulse v6 请填写 2；旧版 Pulse 默认使用 1。", "key": "API Token 需要 monitoring:read 权限。"},
+    },
+    "dockhand": {
+        "notice": "Homepage 2.x 支持使用 API Key 代替 Dockhand 本地用户名 / 密码认证。",
+        "field_help": {"key": "可选；使用 API Key 时可代替 username / password。"},
+    },
+    "authentik": {
+        "notice": "Authentik Widget v2 支持 authorizationsLast24H；该显示字段仅适用于 Widget v2。",
+    },
+    "arcane": {
+        "notice": "使用 Arcane API Key 时，官方要求至少具备 containers:list、images:list 与 image-updates:read 权限。",
+    },
+}
 
 BUILTIN_WIDGET_CATALOG: dict[str, dict[str, Any]] = _build_catalog()
 WIDGET_CATALOG: dict[str, dict[str, Any]] = copy.deepcopy(BUILTIN_WIDGET_CATALOG)
@@ -521,6 +550,21 @@ def _merge_synced_catalog(synced: dict[str, dict[str, Any]]) -> dict[str, dict[s
         base["source_mode"] = "admin-enhanced"
         result[type_id] = base
 
+    for type_id, override in HOMEPAGE_2X_SCHEMA_OVERRIDES.items():
+        schema = result.get(type_id)
+        if not isinstance(schema, dict):
+            continue
+        if override.get("category"):
+            schema["category"] = override["category"]
+        if override.get("notice"):
+            schema["notice"] = override["notice"]
+        field_help = override.get("field_help") or {}
+        if field_help:
+            for field in schema.get("fields") or []:
+                name = str(field.get("name") or "")
+                if name in field_help:
+                    field["help"] = field_help[name]
+
     for type_id, schema in result.items():
         schema.setdefault("enhanced", bool(schema.get("fields")))
         schema.setdefault("auto_generated", type_id in synced)
@@ -557,6 +601,66 @@ def load_widget_schema_cache() -> bool:
         return False
 
 
+def _schema_diff(old_widgets: dict[str, dict[str, Any]], new_widgets: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Return a compact, secret-free diff between two official Widget schema snapshots."""
+    old_ids = set(old_widgets)
+    new_ids = set(new_widgets)
+    added_widgets = sorted(new_ids - old_ids)
+    removed_widgets = sorted(old_ids - new_ids)
+    changed: list[dict[str, Any]] = []
+
+    def field_names(schema: dict[str, Any]) -> set[str]:
+        return {str(field.get("name")) for field in (schema.get("fields") or []) if isinstance(field, dict) and field.get("name")}
+
+    for widget_id in sorted(old_ids & new_ids):
+        old_schema = old_widgets.get(widget_id) or {}
+        new_schema = new_widgets.get(widget_id) or {}
+        old_fields = field_names(old_schema)
+        new_fields = field_names(new_schema)
+        old_allowed = {str(value) for value in (old_schema.get("allowed_fields") or [])}
+        new_allowed = {str(value) for value in (new_schema.get("allowed_fields") or [])}
+        added_fields = sorted(new_fields - old_fields)
+        removed_fields = sorted(old_fields - new_fields)
+        allowed_added = sorted(new_allowed - old_allowed)
+        allowed_removed = sorted(old_allowed - new_allowed)
+        category_before = str(old_schema.get("category") or "")
+        category_after = str(new_schema.get("category") or "")
+        if added_fields or removed_fields or allowed_added or allowed_removed or category_before != category_after:
+            changed.append({
+                "id": widget_id,
+                "label": str(new_schema.get("label") or old_schema.get("label") or widget_id),
+                "added_fields": added_fields,
+                "removed_fields": removed_fields,
+                "allowed_added": allowed_added,
+                "allowed_removed": allowed_removed,
+                "category_before": category_before,
+                "category_after": category_after,
+            })
+    return {
+        "added_widgets": added_widgets,
+        "removed_widgets": removed_widgets,
+        "changed_widgets": changed,
+        "added_count": len(added_widgets),
+        "removed_count": len(removed_widgets),
+        "changed_count": len(changed),
+        "has_changes": bool(added_widgets or removed_widgets or changed),
+    }
+
+
+def _previous_schema_snapshot() -> dict[str, dict[str, Any]]:
+    path = _cache_path()
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            widgets = payload.get("widgets")
+            if isinstance(widgets, dict):
+                return widgets
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    # WIDGET_CATALOG is already secret-free schema metadata; it is a useful first-sync baseline.
+    return copy.deepcopy(WIDGET_CATALOG)
+
+
 def _write_cache(widgets: dict[str, dict[str, Any]], meta: dict[str, Any]) -> None:
     path = _cache_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -583,12 +687,14 @@ def sync_widget_schema(
                     "total": 0,
                     "percent": 1,
                 })
+            previous_widgets = _previous_schema_snapshot()
             widgets, meta = fetch_official_widget_schemas(
                 ref=getattr(settings, "widget_schema_ref", "dev"),
                 timeout=float(getattr(settings, "widget_schema_timeout", 8.0)),
                 workers=int(getattr(settings, "widget_schema_workers", 10)),
                 progress=progress_callback,
             )
+            meta["diff"] = _schema_diff(previous_widgets, widgets)
             if len(widgets) < 50:
                 raise RuntimeError(f"官方 Widget Schema 数量异常：只发现 {len(widgets)} 个，已拒绝覆盖现有缓存。")
             if progress_callback:
@@ -642,6 +748,7 @@ def _run_manual_widget_schema_sync() -> None:
                 "result": {
                     "widget_count": result.get("widget_count", 0),
                     "generated_field_count": result.get("generated_field_count", 0),
+                    "diff": copy.deepcopy(result.get("diff") or {}),
                 },
             })
     except Exception as exc:
@@ -797,6 +904,8 @@ def import_widget_schema_json(raw: str) -> dict[str, Any]:
         raise ValueError("Schema JSON 必须是 widgets 映射或包含 widgets 的缓存对象。")
     if len(widgets) < 20 or not all(isinstance(key, str) and isinstance(value, dict) for key, value in widgets.items()):
         raise ValueError("Schema 数量或格式异常，至少需要 20 个 Widget 映射。")
+    previous_widgets = _previous_schema_snapshot()
+    meta["diff"] = _schema_diff(previous_widgets, widgets)
     meta.update({
         "source": "manual-import",
         "ref": str(meta.get("ref") or getattr(settings, "widget_schema_ref", "dev")),

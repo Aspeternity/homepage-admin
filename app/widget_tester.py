@@ -142,13 +142,17 @@ async def _test_qbittorrent(config: dict[str, Any]) -> dict[str, Any]:
     url = _base(str(config.get("url") or ""))
     username = str(config.get("username") or "")
     password = str(config.get("password") or "")
+    key = str(config.get("key") or "")
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
     async with httpx.AsyncClient(timeout=6.0, verify=False) as client:
-        if username or password:
+        if not key and (username or password):
             login = await client.post(f"{url}/api/v2/auth/login", data={"username": username, "password": password})
             if login.status_code >= 400 or login.text.strip().lower().startswith("fail"):
                 raise WidgetTestError("qBittorrent WebUI 用户名或密码错误。")
-        response = await client.get(f"{url}/api/v2/torrents/info")
+        response = await client.get(f"{url}/api/v2/torrents/info", headers=headers)
     if response.status_code in {401, 403}:
+        if key:
+            raise WidgetTestError("qBittorrent API Key 无效或权限不足。")
         raise WidgetTestError("qBittorrent API 认证失败。")
     response.raise_for_status()
     items = response.json()
