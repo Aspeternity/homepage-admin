@@ -43,7 +43,8 @@ jobs:
 
   browser:
     name: Browser regression tests
-    runs-on: ubuntu-latest
+    # Match the browser version's supported OS instead of following runner upgrades.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
