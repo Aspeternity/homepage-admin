@@ -154,6 +154,15 @@
     </div>
   </section>
 
+  <section class="form-card settings-card" id="settings-appearance-new">
+    <div class="section-heading"><div><h2>卡片与字体</h2><p class="section-help">Homepage v2.5.0+ 的外观选项；留空跟随官方默认值。</p></div></div>
+    <div class="form-grid three aligned-fields">
+      {% for key, label, options in [('cardStyle','卡片样式',[('hairline','细线边框')]),('blockStyle','指标样式',[('refined','强调数值')]),('font','字体',[('plex','IBM Plex Mono'),('plexData','仅数据使用 Plex Mono')])] %}
+      <label>{{ label }}<select name="{{ key }}"><option value="">Homepage 默认</option>{% for value, title in options %}<option value="{{ value }}" {% if values[key] == value %}selected{% endif %}>{{ title }}</option>{% endfor %}{% if values[key] and values[key] not in options|map(attribute=0)|list %}<option value="{{ values[key] }}" selected>{{ values[key] }} · 现有值</option>{% endif %}</select><small class="field-help"><code>{{ key }}</code></small></label>
+      {% endfor %}
+    </div>
+  </section>
+
   <section class="form-card settings-card" id="settings-behavior">
     <div class="section-heading">
       <div><h2>页面行为</h2><p class="section-help">链接、状态、列数、折叠、统计与公开部署相关行为。</p></div>
@@ -199,6 +208,7 @@
   </section>
 
   <section class="form-card settings-card" id="settings-quicklaunch">
+    <label class="settings-toggle"><input type="checkbox" name="quicklaunch_disabled" {% if values.quicklaunch.disabled %}checked{% endif %}><span><strong>关闭 Quick Launch</strong><small>Homepage v2.8.0+；关闭后键入文字不会唤起快速启动。</small></span></label>
     <div class="section-heading">
       <div><h2>快速启动 Quick Launch</h2><p class="section-help">直接键入即可搜索服务、联网搜索或打开 URL。</p></div>
       <span class="role-pill">quicklaunch</span>

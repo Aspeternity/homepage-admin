@@ -77,6 +77,24 @@
     </div>
   </section>
 
+  {% elif name == 'customapi' %}
+  <section class="form-card">
+    <div class="section-heading"><div><h2>Custom API</h2><p class="section-help">在页头显示 API 指标；支持字段映射，不支持 Service Widget 的 display 和 additionalField。</p></div></div>
+    <div class="form-grid two aligned-fields">
+      <label class="span-2">API 地址<input name="url" value="{{ values.url or '' }}" required type="url" placeholder="https://api.example.com/status"></label>
+      <label>图标<input name="icon" value="{{ values.icon or '' }}" placeholder="mdi-api"></label>
+      <label>显示标签<input name="label" value="{{ values.label or '' }}"></label>
+      <label>点击链接<input name="href" value="{{ values.href or '' }}" type="url"></label>
+      <label>刷新间隔（毫秒）<input name="refreshInterval" type="number" min="1" value="{{ values.refreshInterval or '' }}" placeholder="10000"></label>
+      <label>请求方法<select name="method">{% for method in ['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS'] %}<option {% if (values.method or 'GET') == method %}selected{% endif %}>{{ method }}</option>{% endfor %}</select></label>
+      <label>用户名<input name="username" value="{{ values.username or '' }}" autocomplete="off"></label>
+      <label class="span-2">密码<input name="password" type="password" value="{{ values.password or '' }}" autocomplete="new-password"><small>已保存的敏感值以占位显示，保留占位即可保持原值。</small></label>
+      <label class="span-2">请求头（YAML 映射）<textarea name="headers_yaml" rows="4" spellcheck="false">{{ values.headers_yaml or '' }}</textarea></label>
+      <label class="span-2">请求体（YAML 映射或字符串）<textarea name="requestBody_yaml" rows="4" spellcheck="false">{{ values.requestBody_yaml or '' }}</textarea></label>
+      <label class="span-2">字段映射（YAML 列表）<textarea name="mappings_yaml" rows="9" spellcheck="false" required placeholder="- field: status&#10;  label: 状态">{{ values.mappings_yaml or '' }}</textarea><small>每项包含 field，可选 label、format、scale、prefix、suffix、remap。</small></label>
+    </div>
+  </section>
+
   {% elif name == 'logo' %}
   <section class="form-card">
     <div class="section-heading"><div><h2>Logo</h2><p class="section-help">使用 Homepage Logo 或指定自定义图标，并可附加链接。</p></div></div>

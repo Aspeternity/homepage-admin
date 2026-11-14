@@ -937,9 +937,9 @@ def test_v032_widget_center_offline_fallback_and_hidden_empty_state() -> None:
     page = client.get("/widget-center")
     assert page.status_code == 200
     assert "从 Homepage 官方 Service Widget 文档自动生成配置表单" in page.text
-    assert "AdGuard Home" in page.text
+    assert WIDGET_CATALOG["adguard"]["label"] in page.text
     assert "Sonarr" in page.text
-    assert "TrueNAS" in page.text
+    assert WIDGET_CATALOG["truenas"]["label"] in page.text
     assert "/services/item/new?widget=sonarr" in page.text
     assert "data-widget-center-empty hidden" in page.text
 
@@ -1150,15 +1150,15 @@ title: Nested Demo
     assert fields["refreshInterval"]["required"] is False
 
 
-def test_v033_widget_schema_default_ref_is_dev() -> None:
+def test_widget_schema_default_ref_matches_runtime_version() -> None:
     from app.settings import settings
-    assert settings.widget_schema_ref == "dev"
+    assert settings.widget_schema_ref == "auto"
 
 
-def test_v033_sync_cli_default_ref_is_dev() -> None:
+def test_sync_cli_default_ref_is_stable() -> None:
     from pathlib import Path
     source = (Path(__file__).resolve().parents[1] / "scripts" / "sync_widget_schema.py").read_text(encoding="utf-8")
-    assert 'parser.add_argument("--ref", default="dev")' in source
+    assert 'parser.add_argument("--ref", default="v2.8.0")' in source
     assert 'default="master"' not in source
 
 
@@ -2800,7 +2800,8 @@ def test_v046_healthz_reports_release_version() -> None:
     client = TestClient(app)
     response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.5.5"
+    from app import __version__
+    assert response.json()["version"] == __version__
 
 
 def test_v046_settings_page_exposes_official_common_controls() -> None:
@@ -3642,12 +3643,14 @@ def test_v055_compatibility_page_and_version_override(monkeypatch) -> None:
     try:
         client = TestClient(app)
         csrf = login(client)
+        checked = client.post("/api/homepage-compatibility/check", headers={"x-csrf-token": csrf})
+        assert checked.status_code == 200
         page = client.get("/homepage-compatibility")
         assert page.status_code == 200
         assert "Homepage 兼容性" in page.text
         assert "v2.1.1 已知 YAML 解析问题" in page.text
-        assert "Homepage Auth Compose 生成器" in page.text
-        assert "Homepage MCP Compose 生成器" in page.text
+        assert "配置助手" in page.text
+        assert "OIDC 单点登录" in page.text
         assert "data-compat-mcp-write" in page.text
 
         saved = client.post(

@@ -4,6 +4,11 @@ from typing import Any
 
 INFO_WIDGET_CATALOG: list[dict[str, Any]] = [
     {
+        "id": "customapi", "title": "Custom API", "title_zh": "自定义 API",
+        "category": "数据", "description": "从自定义 API 提取数据，在页头显示图标和映射指标。需要 Homepage v2.5.0+。",
+        "doc": "https://gethomepage.dev/widgets/info/customapi/", "right_aligned": False,
+    },
+    {
         "id": "greeting",
         "title": "Greeting",
         "title_zh": "问候文字",
@@ -120,6 +125,7 @@ SEARCH_PROVIDERS = ("google", "duckduckgo", "bing", "baidu", "brave")
 TARGETS = ("_blank", "_self", "_parent", "_top")
 
 KNOWN_FIELDS: dict[str, set[str]] = {
+    "customapi": {"url", "icon", "label", "href", "refreshInterval", "username", "password", "method", "headers", "requestBody", "mappings"},
     "greeting": {"text", "text_size", "href", "target"},
     "datetime": {"text_size", "locale", "format", "href", "target"},
     "logo": {"icon", "href", "target"},

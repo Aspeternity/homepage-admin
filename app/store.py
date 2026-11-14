@@ -466,22 +466,26 @@ class HomepageStore:
         prefs = self._read_preferences()
         raw = prefs.get("homepage_compatibility")
         if not isinstance(raw, dict):
-            return {"version_override": "", "custom": False}
+            return {"version_override": "", "target": "", "custom": False}
         return {
             "version_override": str(raw.get("version_override") or "").strip(),
+            "target": str(raw.get("target") or "").strip(),
             "custom": bool(str(raw.get("version_override") or "").strip()),
         }
 
-    def set_homepage_version_override(self, version: str, actor: str) -> dict[str, Any]:
+    def set_homepage_version_override(self, version: str, actor: str, target: str = "") -> dict[str, Any]:
         from .homepage_compat import normalize_version
 
         normalized = normalize_version(version)
         if version.strip() and not normalized:
             raise ConfigError("Homepage 版本格式无效，请填写例如 2.2.0。")
+        target = target.strip()
+        if len(target) > 256 or any(c in target for c in "\r\n"):
+            raise ConfigError("检测目标格式无效。")
         with self.locked():
             prefs = self._read_preferences()
-            if normalized:
-                prefs["homepage_compatibility"] = {"version_override": normalized}
+            if normalized or target:
+                prefs["homepage_compatibility"] = {"version_override": normalized, "target": target}
             else:
                 prefs.pop("homepage_compatibility", None)
             if prefs:
@@ -490,6 +494,17 @@ class HomepageStore:
                 self.preferences_path.unlink()
             self._audit(actor, f"set homepage version override:{normalized or 'auto'}", "admin-settings.json", None)
         return self.homepage_compatibility_preferences()
+
+    def homepage_compatibility_check(self) -> dict[str, Any]:
+        try:
+            result = json.loads((self.data_dir / "homepage-compatibility-check.json").read_text(encoding="utf-8"))
+            return result if isinstance(result, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def save_homepage_compatibility_check(self, result: dict[str, Any]) -> None:
+        with self.locked():
+            self._atomic_write(self.data_dir / "homepage-compatibility-check.json", json.dumps(result, ensure_ascii=False, indent=2) + "\n")
 
     def _widget_schema_sync_defaults(self) -> dict[str, Any]:
         mode = str(getattr(settings, "widget_schema_sync_mode", "interval") or "interval").strip().lower()

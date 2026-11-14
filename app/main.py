@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 import secrets as stdlib_secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -64,7 +65,10 @@ from .homepage_compat import (
     compatibility_summary,
     detect_homepage_version_from_hosts,
     latest_homepage_release,
+    schema_ref_for_version,
 )
+from .compatibility_checks import inspect_configuration
+from .widget_schema_sync import display_fields_for_config
 from .info_widget_catalog import (
     INFO_WIDGET_BY_ID,
     INFO_WIDGET_TYPES,
@@ -1398,15 +1402,6 @@ def _parse_widget_slot(form: Any, slot: str, old_widgets: list[dict[str, Any]], 
         if value is not None:
             widget[field_name] = value
 
-    if not legacy:
-        selected = [str(value) for value in form.getlist(prefix + "fields") if str(value).strip()]
-    else:
-        selected = [str(value) for value in form.getlist("widget_fields_selection") if str(value).strip()]
-    allowed = set(schema.get("allowed_fields") or [])
-    selected = [value for value in selected if not allowed or value in allowed]
-    if selected:
-        widget["fields"] = CommentedSeq(selected[:4])
-
     extra_key = "widget_extra" if legacy else prefix + "extra"
     widget_extra = store.parse_fragment(str(form.get(extra_key, "")), dict)
     if old_type == widget_type and old_widget:
@@ -1417,6 +1412,19 @@ def _parse_widget_slot(form: Any, slot: str, old_widgets: list[dict[str, Any]], 
     for key, value in widget_extra.items():
         if key not in widget and key != "type":
             widget[key] = value
+    selected_key = "widget_fields_selection" if legacy else prefix + "fields"
+    selected = [str(value) for value in form.getlist(selected_key) if str(value).strip()]
+    allowed = set(display_fields_for_config(schema, widget))
+    old_selected = old_widget.get("fields", []) if old_type == widget_type else []
+    invalid = [value for value in selected if allowed and value not in allowed and value not in old_selected]
+    if invalid:
+        raise ConfigError(f"{widget_type} 当前版本 / 模式不支持这些显示字段：{', '.join(invalid)}。请调整字段选择。")
+    if len(selected) > 4:
+        raise ConfigError("Homepage Widget 最多选择 4 个显示字段。")
+    if widget_type == "fileflows" and str(widget.get("version")) == "2" and not widget.get("key"):
+        raise ConfigError("FileFlows Widget version: 2 需要 Fenrus Dashboard Token（key）。")
+    if selected:
+        widget["fields"] = CommentedSeq(selected)
     return widget
 
 
@@ -1837,12 +1845,11 @@ def _service_choices() -> list[dict[str, Any]]:
 @app.get("/homepage-compatibility", response_class=HTMLResponse)
 def homepage_compatibility_page(request: Request, _: None = Depends(auth_guard)) -> HTMLResponse:
     prefs = store.homepage_compatibility_preferences()
-    auto_detection = detect_homepage_version_from_hosts(docker_discovery_hosts())
-    latest = latest_homepage_release(timeout=2.5)
+    report = store.homepage_compatibility_check()
+    auto_detection = report.get("detection") or {}
+    latest = report.get("latest") or {}
     current_version = str(prefs.get("version_override") or auto_detection.get("version") or "")
     summary = compatibility_summary(current_version, latest.get("version"))
-    auth_secret = stdlib_secrets.token_urlsafe(36)
-    mcp_token = stdlib_secrets.token_urlsafe(36)
     return templates.TemplateResponse(
         request,
         "compatibility.html",
@@ -1851,15 +1858,57 @@ def homepage_compatibility_page(request: Request, _: None = Depends(auth_guard))
             "compatibility",
             prefs=prefs,
             auto_detection=auto_detection,
+            detection_targets=[f"{item['host']}/{item['container']}" for item in auto_detection.get("candidates", [])],
             latest=latest,
             compatibility=summary,
             supported_through=HOMEPAGE_SUPPORTED_THROUGH,
-            auth_secret=auth_secret,
-            mcp_token=mcp_token,
+            report=report,
+            schema_status=widget_schema_status(),
+            schema_target_ref=schema_ref_for_version(settings.widget_schema_ref, current_version),
             ok=request.query_params.get("ok"),
             error=request.query_params.get("error"),
         ),
     )
+
+
+def collect_homepage_compatibility_check() -> dict[str, Any]:
+    prefs = store.homepage_compatibility_preferences()
+    previous = store.homepage_compatibility_check()
+    detection = detect_homepage_version_from_hosts(docker_discovery_hosts())
+    target = prefs.get("target")
+    if target:
+        selected = next((item for item in detection.get("candidates", []) if f"{item['host']}/{item['container']}" == target), None)
+        detection.update({key: str(selected.get(key) or "") if selected else "" for key in ("version", "host", "container", "image")})
+        if not selected:
+            detection.setdefault("errors", []).append("指定的 Homepage 容器未发现，请检查主机连接或重新选择。")
+        detection["found"] = bool(selected)
+    latest = latest_homepage_release(timeout=2.5, force=True)
+    if not latest.get("ok") and previous.get("latest", {}).get("ok"):
+        latest = {**previous["latest"], "stale": True, "error": latest.get("error", "在线检查失败")}
+    version = str(prefs.get("version_override") or detection.get("version") or "")
+    configs = {}
+    errors = []
+    for filename in ("services.yaml", "settings.yaml", "widgets.yaml"):
+        try:
+            configs[filename] = store.load(filename)
+        except ConfigError:
+            errors.append(dict(title=f"{filename} 无法解析", detail="请在高级编辑中检查 YAML 格式；本次未改动配置。", level="warning", href=f"/yaml/{filename}", label="检查 YAML"))
+    report = {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "current_version": version,
+        "detection": detection,
+        "latest": latest,
+        "findings": errors + inspect_configuration(configs, version, WIDGET_CATALOG, widget_schema_status()),
+    }
+    store.save_homepage_compatibility_check(report)
+    return report
+
+
+@app.post("/api/homepage-compatibility/check")
+async def homepage_compatibility_check_api(request: Request, _: None = Depends(auth_guard)) -> JSONResponse:
+    verify_csrf(request, request.headers.get("x-csrf-token", ""))
+    report = await asyncio.to_thread(collect_homepage_compatibility_check)
+    return JSONResponse({"ok": True, "checked_at": report["checked_at"]})
 
 
 @app.post("/homepage-compatibility/version")
@@ -1867,7 +1916,10 @@ async def homepage_compatibility_version_save(request: Request, _: None = Depend
     form = await request.form()
     verify_csrf(request, str(form.get("csrf", "")))
     try:
-        saved = store.set_homepage_version_override(str(form.get("version", "")), actor(request))
+        version = "" if form.get("reset") else str(form.get("version", ""))
+        saved = store.set_homepage_version_override(version, actor(request), str(form.get("target", "")))
+        previous = store.homepage_compatibility_check()
+        store.save_homepage_compatibility_check({"latest": previous.get("latest", {}), "detection": {"candidates": previous.get("detection", {}).get("candidates", [])}})
         if saved.get("version_override"):
             return redirect("/homepage-compatibility", ok=f"已手动指定 Homepage v{saved['version_override']}。")
         return redirect("/homepage-compatibility", ok="已恢复自动检测 Homepage 版本。")
@@ -3379,6 +3431,9 @@ def _settings_values(data: dict[str, Any]) -> dict[str, Any]:
         "iconStyle": data.get("iconStyle", ""),
         "cardBlur": data.get("cardBlur", ""),
         "bookmarksStyle": data.get("bookmarksStyle", ""),
+        "cardStyle": data.get("cardStyle", ""),
+        "blockStyle": data.get("blockStyle", ""),
+        "font": data.get("font", ""),
         "maxGroupColumns": data.get("maxGroupColumns", ""),
         "maxBookmarkGroupColumns": data.get("maxBookmarkGroupColumns", ""),
         "fullWidth": bool(data.get("fullWidth", False)),
@@ -3393,6 +3448,7 @@ def _settings_values(data: dict[str, Any]) -> dict[str, Any]:
         "background": background,
         "background_blur_mode": background_blur_mode,
         "quicklaunch": {
+            "disabled": bool(quicklaunch.get("disabled", False)),
             "provider": quicklaunch.get("provider", ""),
             "searchDescriptions": bool(quicklaunch.get("searchDescriptions", False)),
             "hideInternetSearch": bool(quicklaunch.get("hideInternetSearch", False)),
@@ -3428,10 +3484,13 @@ def _build_settings_change(form: Any) -> CommentedMap:
 
     string_fields = [
         "language", "title", "description", "startUrl", "base", "favicon", "theme", "color", "headerStyle",
-        "target", "statusStyle", "iconStyle", "cardBlur", "bookmarksStyle",
+        "target", "statusStyle", "iconStyle", "cardBlur", "bookmarksStyle", "cardStyle", "blockStyle", "font",
     ]
     for key in string_fields:
-        _set_optional_string(data, old, form, key)
+        if key in {"cardStyle", "blockStyle", "font"} and key not in form and key in old:
+            data[key] = copy.deepcopy(old[key])
+        else:
+            _set_optional_string(data, old, form, key)
 
     for key in [
         "fullWidth", "hideVersion", "disableUpdateCheck", "showStats", "hideErrors", "disableIndexing",
@@ -3510,7 +3569,7 @@ def _build_settings_change(form: Any) -> CommentedMap:
 
     full_form = str(form.get("settings_form_version", "")) == "3"
     if full_form:
-        for key in ["searchDescriptions", "hideInternetSearch", "showSearchSuggestions", "hideVisitURL"]:
+        for key in ["disabled", "searchDescriptions", "hideInternetSearch", "showSearchSuggestions", "hideVisitURL"]:
             if form.get(f"quicklaunch_{key}"):
                 ql[key] = True
             else:
@@ -3607,7 +3666,7 @@ def settings_page(request: Request, _: None = Depends(auth_guard)) -> HTMLRespon
             "target", "statusStyle", "iconStyle", "cardBlur", "bookmarksStyle", "maxGroupColumns",
             "maxBookmarkGroupColumns", "fullWidth", "hideVersion", "disableUpdateCheck", "showStats", "hideErrors",
             "disableIndexing", "useEqualHeights", "disableCollapse", "groupsInitiallyCollapsed", "background",
-            "quicklaunch", "layout",
+            "quicklaunch", "layout", "cardStyle", "blockStyle", "font",
         }
         extra = CommentedMap((k, copy.deepcopy(v)) for k, v in data.items() if k not in known)
         values["extra"] = store.dump_fragment(mask_secrets(extra)) if extra else ""
@@ -3704,6 +3763,9 @@ def info_widget_form_values(widget_type: str, cfg: Any) -> dict[str, Any]:
     values: dict[str, Any] = {"type": widget_type}
     values.update(masked if isinstance(masked, dict) else {})
     values["extra"] = _info_widget_extra(plain, widget_type)
+    if widget_type == "customapi":
+        for key in ("headers", "requestBody", "mappings"):
+            values[f"{key}_yaml"] = store.dump_fragment(masked[key]) if key in masked else ""
 
     for key in ("focus", "showSearchSuggestions", "cpu", "memory", "cputemp", "uptime", "expanded", "mem", "color", "total", "labels", "nodes"):
         if key in plain:
@@ -3798,7 +3860,36 @@ def build_info_widget_config(form: Any, widget_type: str) -> CommentedMap:
     cfg = CommentedMap()
     _merge_yaml_extra(cfg, str(form.get("extra", "")), INFO_WIDGET_KNOWN_FIELDS.get(widget_type, set()), "其他配置")
 
-    if widget_type == "greeting":
+    if widget_type == "customapi":
+        for key in ("url", "icon", "label", "href", "username", "password"):
+            _set_if(cfg, key, _form_text(form, key))
+        url = str(cfg.get("url") or "")
+        if urlparse(url).scheme not in {"http", "https"} or not urlparse(url).hostname:
+            raise ConfigError("Custom API 需要有效的 HTTP(S) 地址。")
+        method = str(form.get("method") or "GET").upper()
+        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+            raise ConfigError("Custom API 请求方法无效。")
+        cfg["method"] = method
+        interval = _form_number(form, "refreshInterval", integer=True)
+        if interval is not None:
+            if interval < 1:
+                raise ConfigError("刷新间隔必须大于 0 毫秒。")
+            cfg["refreshInterval"] = interval
+        for key, expected in (("headers", dict), ("mappings", list)):
+            value = store.parse_fragment(str(form.get(f"{key}_yaml", "")), expected)
+            if value:
+                cfg[key] = value
+        mappings = cfg.get("mappings", [])
+        if not mappings or any(not isinstance(item, dict) or "field" not in item for item in mappings):
+            raise ConfigError("字段映射需要至少一项，每项须包含 field。")
+        raw_body = str(form.get("requestBody_yaml", "")).strip()
+        if raw_body:
+            body = store.parse_any(raw_body)
+            if not isinstance(body, (str, dict)):
+                raise ConfigError("requestBody 必须是字符串或 YAML 映射。")
+            cfg["requestBody"] = body
+
+    elif widget_type == "greeting":
         _set_if(cfg, "text_size", _form_text(form, "text_size"))
         _set_if(cfg, "text", _form_text(form, "text"))
         _set_if(cfg, "href", _form_text(form, "href"))

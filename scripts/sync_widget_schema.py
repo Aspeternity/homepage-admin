@@ -18,11 +18,13 @@ from app.widget_schema_sync import fetch_official_widget_schemas
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate Homepage official Widget Schema snapshot")
     parser.add_argument("--output", default="app/bundled_widget_schema.json")
-    parser.add_argument("--ref", default="dev")
+    parser.add_argument("--ref", default="v2.8.0")
     args = parser.parse_args()
     widgets, meta = fetch_official_widget_schemas(ref=args.ref, timeout=12.0, workers=12)
     if len(widgets) < 50:
         raise SystemExit(f"refusing to write suspiciously small widget catalog: {len(widgets)}")
+    if meta.get("error_count"):
+        raise SystemExit(f"refusing to ship an incomplete snapshot: {meta['error_count']} upstream errors")
     path = Path(args.output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"schema_version": 1, "meta": meta, "widgets": widgets}, ensure_ascii=False, indent=2), encoding="utf-8")

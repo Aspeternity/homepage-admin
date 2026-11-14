@@ -1,7 +1,6 @@
 .PHONY: test run build package
 
-VERSION ?= 0.5.5
-PROJECT_DIR := homepage-admin-v0.5.5
+VERSION ?= 0.5.6
 
 test:
 	python -m pytest -q
@@ -13,5 +12,8 @@ build:
 	docker build -t homepage-admin:$(VERSION) .
 
 package:
-	cd .. && zip -r homepage-admin-v$(VERSION).zip $(PROJECT_DIR) -x '*/__pycache__/*' '*.pyc' '.git/*' '.pytest_cache/*'
-	cd .. && tar --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' -czf homepage-admin-v$(VERSION).tar.gz $(PROJECT_DIR)
+	mkdir -p dist
+	git archive --format=zip --prefix=homepage-admin-v$(VERSION)/ --output=dist/homepage-admin-v$(VERSION).zip HEAD
+	git archive --format=tar.gz --prefix=homepage-admin-v$(VERSION)/ --output=dist/homepage-admin-v$(VERSION).tar.gz HEAD
+	git archive --format=zip --output=dist/homepage-admin-v$(VERSION)-web-upload.zip HEAD
+	cd dist && sha256sum homepage-admin-v$(VERSION).zip homepage-admin-v$(VERSION).tar.gz homepage-admin-v$(VERSION)-web-upload.zip > SHA256SUMS

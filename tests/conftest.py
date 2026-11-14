@@ -4,7 +4,19 @@ import os
 import shutil
 import tempfile
 import sys
+import time
 from pathlib import Path
+
+import pytest
+from itsdangerous import TimestampSigner
+
+
+@pytest.fixture(autouse=True)
+def monotonic_session_clock(monkeypatch):
+    # VM wall-clock corrections must not invalidate a token between two test
+    # requests. Keep expiry checking active against an advancing test clock.
+    wall, monotonic = time.time(), time.monotonic()
+    monkeypatch.setattr(TimestampSigner, "get_timestamp", lambda _self: int(wall + time.monotonic() - monotonic))
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))

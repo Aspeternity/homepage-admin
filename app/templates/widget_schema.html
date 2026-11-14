@@ -58,6 +58,8 @@
             {% if item.allowed_added %}<p><span class="diff-added">新增显示字段</span> {{ item.allowed_added|join(', ') }}</p>{% endif %}
             {% if item.allowed_removed %}<p><span class="diff-removed">移除显示字段</span> {{ item.allowed_removed|join(', ') }}</p>{% endif %}
             {% if item.category_before != item.category_after %}<p><span>分类</span> {{ item.category_before or '未分类' }} → {{ item.category_after or '未分类' }}</p>{% endif %}
+            {% if item.changed_fields %}<p><span>类型 / 必填 / 选项变化</span> {{ item.changed_fields|join('、') }}</p>{% endif %}
+            {% if item.variants_changed %}<p>按版本或模式提供的显示字段发生变化，请检查已有字段选择。</p>{% endif %}
           </article>
           {% endfor %}
         </div>

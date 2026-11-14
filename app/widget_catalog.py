@@ -581,6 +581,14 @@ def _apply_catalog(catalog: dict[str, dict[str, Any]], state: dict[str, Any] | N
         _SCHEMA_STATE["widget_count"] = len(WIDGET_CATALOG)
 
 
+def effective_schema_ref() -> str:
+    from .homepage_compat import schema_ref_for_version
+    prefs = store.homepage_compatibility_preferences()
+    report = store.homepage_compatibility_check()
+    version = prefs.get("version_override") or report.get("current_version", "")
+    return schema_ref_for_version(settings.widget_schema_ref, version)
+
+
 def _cache_path():
     return settings.data_dir / "widget-schema-cache.json"
 
@@ -625,12 +633,18 @@ def _schema_diff(old_widgets: dict[str, dict[str, Any]], new_widgets: dict[str, 
         allowed_removed = sorted(old_allowed - new_allowed)
         category_before = str(old_schema.get("category") or "")
         category_after = str(new_schema.get("category") or "")
-        if added_fields or removed_fields or allowed_added or allowed_removed or category_before != category_after:
+        old_defs = {f["name"]: f for f in (old_schema.get("fields") or []) if isinstance(f, dict) and f.get("name")}
+        new_defs = {f["name"]: f for f in (new_schema.get("fields") or []) if isinstance(f, dict) and f.get("name")}
+        changed_fields = sorted(name for name in old_defs.keys() & new_defs.keys() if any(old_defs[name].get(key) != new_defs[name].get(key) for key in ("kind", "required", "options")))
+        variants_changed = old_schema.get("field_variants") != new_schema.get("field_variants") or old_schema.get("default_allowed_fields") != new_schema.get("default_allowed_fields")
+        if added_fields or removed_fields or allowed_added or allowed_removed or category_before != category_after or changed_fields or variants_changed:
             changed.append({
                 "id": widget_id,
                 "label": str(new_schema.get("label") or old_schema.get("label") or widget_id),
                 "added_fields": added_fields,
                 "removed_fields": removed_fields,
+                "changed_fields": changed_fields,
+                "variants_changed": variants_changed,
                 "allowed_added": allowed_added,
                 "allowed_removed": allowed_removed,
                 "category_before": category_before,
@@ -689,7 +703,7 @@ def sync_widget_schema(
                 })
             previous_widgets = _previous_schema_snapshot()
             widgets, meta = fetch_official_widget_schemas(
-                ref=getattr(settings, "widget_schema_ref", "dev"),
+                ref=effective_schema_ref(),
                 timeout=float(getattr(settings, "widget_schema_timeout", 8.0)),
                 workers=int(getattr(settings, "widget_schema_workers", 10)),
                 progress=progress_callback,

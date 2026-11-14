@@ -803,10 +803,23 @@
         const inputMode = field.kind === 'number' ? ' inputmode="decimal"' : '';
         return `<label class="widget-schema-field">${fieldLabel}<input name="${escapeHtml(baseName)}" data-widget-field-name="${escapeHtml(name)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(field.placeholder || '')}"${inputMode}>${help}</label>`;
       }).join('');
-      const allowed = schema.allowed_fields || [];
-      const fieldPicker = allowed.length ? `<div class="widget-field-picker span-2"><div class="field-picker-head"><strong>显示字段</strong><span>Homepage 最多显示 4 项；不选择则使用官方默认字段。</span></div><div class="checkbox-row">${allowed.map((name) => `<label class="checkbox compact-check"><input type="checkbox" name="widgets_${slot}_fields" value="${escapeHtml(name)}" ${selectedFields.has(name) ? 'checked' : ''}><span>${escapeHtml(name)}</span></label>`).join('')}</div></div>` : '';
+      const fieldPicker = '<div class="widget-field-picker span-2" data-widget-field-picker></div>';
       const notice = schema.notice ? `<div class="alert info span-2">${escapeHtml(schema.notice)}</div>` : '';
       container.innerHTML = `<div class="widget-schema-head"><div><strong>${escapeHtml(schema.label)}</strong><span class="role-pill">${escapeHtml(schema.category || 'Widget')}</span></div><a href="${escapeHtml(schema.docs || '#')}" target="_blank" rel="noopener">官方文档 ↗</a></div><div class="form-grid two">${rows}${fieldPicker}${notice}</div>`;
+      updateDisplayFields(block, selectedFields);
+    };
+
+    const updateDisplayFields = (block, selected = null) => {
+      const picker = block.querySelector('[data-widget-field-picker]');
+      if (!picker) return;
+      const schema = catalog[block.querySelector('[data-widget-type]').value.trim().toLowerCase()] || {};
+      const config = Object.fromEntries([...block.querySelectorAll('[data-widget-field-name]')].map(input => [input.dataset.widgetFieldName,input.value]));
+      const variant = (schema.field_variants || []).find(item => item.present ? !!String(config[item.key] || '').trim() : String(config[item.key] || item.default || '') === item.value);
+      const allowed = variant?.fields || schema.default_allowed_fields || schema.allowed_fields || [];
+      selected = selected || new Set([...picker.querySelectorAll('input:checked')].map(input => input.value));
+      const choices = [...new Set([...allowed,...selected])];
+      picker.hidden = !choices.length;
+      picker.innerHTML = `<div class="field-picker-head"><strong>显示字段</strong><span>按当前版本 / 模式显示；最多选择 4 项。不选择则使用官方默认值。</span></div><div class="checkbox-row">${choices.map(name => `<label class="checkbox compact-check"><input type="checkbox" name="widgets_${block.dataset.slot}_fields" value="${escapeHtml(name)}" ${selected.has(name) ? 'checked' : ''}><span>${escapeHtml(name)}${allowed.includes(name) ? '' : ' · 现有值，需核对'}</span></label>`).join('')}</div>`;
     };
 
     const syncWidgetCompatWarning = (block) => {
@@ -832,6 +845,8 @@
       const testButton = $('[data-widget-test]', block);
       const result = $('[data-widget-test-result]', block);
       renderWidgetFields(block, initial || initialData(block));
+      block.addEventListener('input', event => { if (['version','systemId'].includes(event.target.dataset.widgetFieldName)) updateDisplayFields(block); });
+      block.addEventListener('change', event => { if (['version','systemId'].includes(event.target.dataset.widgetFieldName)) updateDisplayFields(block); });
       syncWidgetCompatWarning(block);
       typeInput?.addEventListener('change', () => { renderWidgetFields(block, { fields: {}, secret_saved: {}, selected_fields: [] }); syncWidgetCompatWarning(block); });
       typeInput?.addEventListener('input', () => {
@@ -1576,79 +1591,4 @@
 
   syncStrength();
   syncMatch();
-})();
-
-// v0.5.5 Homepage 2.x compatibility helpers and Compose generators.
-(() => {
-  const root = document.querySelector('[data-compat-generators]');
-  if (!root) return;
-
-  const authSecret = root.dataset.authSecret || '';
-  const mcpToken = root.dataset.mcpToken || '';
-  const externalUrl = root.querySelector('[data-compat-external-url]');
-  const authMode = root.querySelector('[data-compat-auth-mode]');
-  const password = root.querySelector('[data-compat-password]');
-  const oidcIssuer = root.querySelector('[data-compat-oidc-issuer]');
-  const oidcClientId = root.querySelector('[data-compat-oidc-client-id]');
-  const oidcClientSecret = root.querySelector('[data-compat-oidc-client-secret]');
-  const oidcName = root.querySelector('[data-compat-oidc-name]');
-  const authOutput = root.querySelector('[data-compat-auth-output]');
-  const mcpWrite = root.querySelector('[data-compat-mcp-write]');
-  const mcpOutput = root.querySelector('[data-compat-mcp-output]');
-  const yamlQuote = (value) => JSON.stringify(String(value || ''));
-
-  const updateAuth = () => {
-    const mode = authMode?.value || 'password';
-    root.querySelectorAll('[data-compat-auth-password]').forEach((node) => { node.hidden = mode !== 'password'; });
-    root.querySelectorAll('[data-compat-oidc]').forEach((node) => { node.hidden = mode !== 'oidc'; });
-    const lines = [
-      'environment:',
-      '  HOMEPAGE_AUTH_ENABLED: "true"',
-      `  HOMEPAGE_AUTH_SECRET: ${yamlQuote(authSecret)}`,
-      `  HOMEPAGE_EXTERNAL_URL: ${yamlQuote(externalUrl?.value || 'https://homepage.example.com')}`,
-    ];
-    if (mode === 'oidc') {
-      lines.push(`  HOMEPAGE_OIDC_ISSUER: ${yamlQuote(oidcIssuer?.value)}`);
-      lines.push(`  HOMEPAGE_OIDC_CLIENT_ID: ${yamlQuote(oidcClientId?.value)}`);
-      lines.push(`  HOMEPAGE_OIDC_CLIENT_SECRET: ${yamlQuote(oidcClientSecret?.value)}`);
-      if ((oidcName?.value || '').trim()) lines.push(`  HOMEPAGE_OIDC_NAME: ${yamlQuote(oidcName.value)}`);
-    } else {
-      lines.push(`  HOMEPAGE_AUTH_PASSWORD: ${yamlQuote(password?.value || 'CHANGE_ME_STRONG_PASSWORD')}`);
-    }
-    if (authOutput) authOutput.textContent = lines.join('\n');
-  };
-
-  const updateMcp = () => {
-    const lines = [
-      'environment:',
-      '  HOMEPAGE_MCP_ENABLED: "true"',
-      `  HOMEPAGE_MCP_TOKEN: ${yamlQuote(mcpToken)}`,
-    ];
-    if (mcpWrite?.checked) lines.push('  HOMEPAGE_MCP_ALLOW_WRITE: "true"');
-    if (mcpOutput) mcpOutput.textContent = lines.join('\n');
-  };
-
-  [externalUrl, authMode, password, oidcIssuer, oidcClientId, oidcClientSecret, oidcName].forEach((input) => {
-    input?.addEventListener('input', updateAuth);
-    input?.addEventListener('change', updateAuth);
-  });
-  mcpWrite?.addEventListener('change', updateMcp);
-
-  root.querySelectorAll('[data-copy-target]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const target = document.getElementById(button.dataset.copyTarget || '');
-      if (!target) return;
-      try {
-        await navigator.clipboard.writeText(target.textContent || '');
-        const original = button.textContent;
-        button.textContent = '已复制';
-        setTimeout(() => { button.textContent = original; }, 1200);
-      } catch (_) {
-        window.alert('浏览器无法写入剪贴板，请手动复制。');
-      }
-    });
-  });
-
-  updateAuth();
-  updateMcp();
 })();

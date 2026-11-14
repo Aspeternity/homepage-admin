@@ -6,13 +6,15 @@ import os
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 LATEST_RELEASE_API = "https://api.github.com/repos/gethomepage/homepage/releases/latest"
-SUPPORTED_THROUGH = "2.2.0"
-USER_AGENT = "Homepage-Admin-Compatibility/0.5.5"
+SUPPORTED_THROUGH = "2.8.0"
+STABLE_SCHEMA_REF = "v2.8.0"
+USER_AGENT = "Homepage-Admin-Compatibility/0.5.6"
 
 _RELEASE_CACHE_LOCK = threading.RLock()
 _RELEASE_CACHE: dict[str, Any] = {"fetched_at": 0.0, "payload": None}
@@ -21,17 +23,17 @@ _RELEASE_CACHE_TTL = 30 * 60
 
 def normalize_version(value: str | None) -> str:
     text = str(value or "").strip()
-    match = re.search(r"(?<!\d)v?(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?", text)
+    match = re.search(r"(?<![\dA-Za-z])v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)", text)
     if not match:
         return ""
-    return ".".join(match.groups())
+    return match.group(1)
 
 
 def version_tuple(value: str | None) -> tuple[int, int, int] | None:
     normalized = normalize_version(value)
     if not normalized:
         return None
-    major, minor, patch = normalized.split(".")
+    major, minor, patch = normalized.split("-", 1)[0].split("+", 1)[0].split(".")
     return int(major), int(minor), int(patch)
 
 
@@ -40,7 +42,18 @@ def compare_versions(left: str | None, right: str | None) -> int | None:
     b = version_tuple(right)
     if not a or not b:
         return None
-    return (a > b) - (a < b)
+    def key(value: str) -> tuple:
+        prerelease = normalize_version(value).split("+", 1)[0].partition("-")[2]
+        parts = tuple((0, int(part)) if part.isdigit() else (1, part) for part in prerelease.split("."))
+        return version_tuple(value), not bool(prerelease), parts if prerelease else ()
+    return (key(left) > key(right)) - (key(left) < key(right))
+
+
+def schema_ref_for_version(configured: str, current_version: str = "") -> str:
+    if configured and configured != "auto":
+        return configured
+    version = normalize_version(current_version)
+    return f"v{version}" if version else STABLE_SCHEMA_REF
 
 
 def extract_homepage_version_from_container(container: dict[str, Any]) -> str:
@@ -76,7 +89,7 @@ def detect_homepage_version_from_hosts(hosts: Iterable[dict[str, Any]]) -> dict[
         try:
             containers = client.list_containers()
         except Exception as exc:
-            return [], f"{host_name}: {exc}"
+            return [], f"{host_name}: 无法读取容器列表"
         found: list[dict[str, str]] = []
         for container in containers:
             image = str(container.get("image") or "")
@@ -88,6 +101,7 @@ def detect_homepage_version_from_hosts(hosts: Iterable[dict[str, Any]]) -> dict[
                 "host": host_name,
                 "container": name or "Homepage",
                 "image": image,
+                "state": str(container.get("state") or ""),
             })
         return found, ""
 
@@ -102,7 +116,7 @@ def detect_homepage_version_from_hosts(hosts: Iterable[dict[str, Any]]) -> dict[
 
     # Prefer a candidate with an actual semantic version. If the container only uses :latest,
     # still report that Homepage was found and explain why the version is unknown.
-    candidates.sort(key=lambda item: (not bool(item.get("version")), item.get("host", ""), item.get("container", "")))
+    candidates.sort(key=lambda item: (item.get("state") != "running", not bool(item.get("version")), item.get("host", ""), item.get("container", "")))
     selected = candidates[0] if candidates else None
     return {
         "found": bool(selected),
@@ -140,6 +154,8 @@ def latest_homepage_release(timeout: float = 3.0, force: bool = False) -> dict[s
             "published_at": str(payload.get("published_at") or ""),
             "url": str(payload.get("html_url") or "https://github.com/gethomepage/homepage/releases"),
             "error": "" if version else "GitHub 最新 Release 未返回可识别版本。",
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "stale": False,
         }
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         result = {
@@ -149,7 +165,11 @@ def latest_homepage_release(timeout: float = 3.0, force: bool = False) -> dict[s
             "published_at": "",
             "url": "https://github.com/gethomepage/homepage/releases",
             "error": str(exc),
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "stale": True,
         }
+        if cached and cached.get("ok"):
+            result = {**cached, "stale": True, "error": str(exc)}
 
     with _RELEASE_CACHE_LOCK:
         _RELEASE_CACHE["fetched_at"] = now
@@ -172,7 +192,15 @@ def compatibility_summary(current_version: str | None, latest_version: str | Non
         capabilities["auth"] = vt >= (2, 0, 0)
         capabilities["oidc"] = vt >= (2, 0, 0)
         capabilities["mcp"] = vt >= (2, 0, 0)
-        capabilities["custom_css_public_with_auth"] = vt >= (2, 0, 0)
+        capabilities["custom_css_public_with_auth"] = vt >= (2, 1, 0)
+        capabilities["oidc_auto_login"] = vt >= (2, 3, 0)
+        if compare_versions(version, "2.0.0") >= 0 and compare_versions(version, "2.6.0") < 0:
+            warnings.append({
+                "level": "danger",
+                "title": "此版本存在已知的 Homepage 内置认证绕过问题",
+                "message": "开启内置认证的 Homepage v2.0.0–v2.5.0 受 GHSA-qxcr-4rv3-v23r 影响；请升级到 v2.6.0 或更新稳定版。",
+                "url": "https://github.com/gethomepage/homepage/security/advisories/GHSA-qxcr-4rv3-v23r",
+            })
         if vt == (2, 1, 1):
             warnings.append({
                 "level": "danger",
@@ -198,5 +226,6 @@ def compatibility_summary(current_version: str | None, latest_version: str | Non
         "capabilities": capabilities,
         "warnings": warnings,
         "supported_through": SUPPORTED_THROUGH,
-        "supported_status": "known" if vt and vt <= version_tuple(SUPPORTED_THROUGH) else ("newer" if vt else "unknown"),
+        "prerelease": "-" in version.split("+", 1)[0],
+        "supported_status": "known" if vt and vt[0] == 2 and vt <= version_tuple(SUPPORTED_THROUGH) and "-" not in version else ("newer" if vt else "unknown"),
     }

@@ -31,7 +31,7 @@ class AppSettings:
     widget_schema_sync_mode: str = os.getenv("WIDGET_SCHEMA_SYNC_MODE", "interval").strip().lower() or "interval"
     widget_schema_sync_time: str = os.getenv("WIDGET_SCHEMA_SYNC_TIME", "03:00").strip() or "03:00"
     widget_schema_timezone: str = os.getenv("WIDGET_SCHEMA_TIMEZONE", os.getenv("TZ", "UTC")).strip() or "UTC"
-    widget_schema_ref: str = os.getenv("WIDGET_SCHEMA_REF", "dev").strip() or "dev"
+    widget_schema_ref: str = os.getenv("WIDGET_SCHEMA_REF", "auto").strip() or "auto"
     widget_schema_timeout: float = float(os.getenv("WIDGET_SCHEMA_TIMEOUT", "8"))
     widget_schema_workers: int = int(os.getenv("WIDGET_SCHEMA_WORKERS", "10"))
     allowed_hosts: tuple[str, ...] = tuple(

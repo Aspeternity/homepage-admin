@@ -14,7 +14,7 @@ from ruamel.yaml import YAML
 GITHUB_REPO = "gethomepage/homepage"
 DOCS_API = "https://api.github.com/repos/gethomepage/homepage/contents/docs/widgets/services"
 REGISTRY_RAW = "https://raw.githubusercontent.com/gethomepage/homepage/{ref}/src/widgets/widgets.js"
-USER_AGENT = "Homepage-Admin-Widget-Schema-Sync/0.5.5"
+USER_AGENT = "Homepage-Admin-Widget-Schema-Sync/0.5.6"
 
 _SECRET_HINTS = (
     "password",
@@ -61,7 +61,7 @@ _LABELS = {
 _NETWORK_TYPES = {
     "adguard", "caddy", "cloudflared", "develancacheui", "fritzbox", "gluetun", "headscale", "mikrotik",
     "netalertx", "nextdns", "npm", "omada", "openwrt", "opnsense", "pangolin", "pfsense", "pihole",
-    "swagdashboard", "tailscale", "technitium", "traefik", "unifi", "wgeasy",
+    "swagdashboard", "tailscale", "technitium", "traefik", "unifi", "wgeasy", "netbird",
 }
 _STORAGE_TYPES = {
     "backrest", "diskstation", "downloadstation", "filebrowser", "kopia", "openmediavault", "proxmoxbackupserver",
@@ -73,13 +73,13 @@ _MONITOR_TYPES = {
 }
 _DOWNLOAD_TYPES = {
     "autobrr", "deluge", "flood", "jackett", "jdownloader", "nzbget", "prowlarr", "pyload", "qbittorrent",
-    "rutorrent", "sabnzbd", "slskd", "transmission",
+    "rutorrent", "sabnzbd", "slskd", "transmission", "qui",
 }
 _MEDIA_TYPES = {
     "atsumeru", "audiobookshelf", "bazarr", "booklore", "calibreweb", "channelsdvrserver", "dispatcharr", "emby",
     "fileflows", "frigate", "hdhomerun", "immich", "jellyfin", "jellystat", "kavita", "komga", "lidarr", "medusa",
     "mylar", "navidrome", "ombi", "photoprism", "plex", "radarr", "readarr", "seerr", "sonarr", "stash", "suwayomi",
-    "tautulli", "tdarr", "tracearr", "tubearchivist", "unmanic", "xteve", "yourspotify", "maintainerr", "sportarr",
+    "tautulli", "tdarr", "tracearr", "tubearchivist", "unmanic", "xteve", "yourspotify", "maintainerr", "sportarr", "bookorbit",
 }
 _SMARTHOME_TYPES = {
     "esphome", "evcc", "homeassistant", "homebridge", "moonraker", "octoprint", "opendtu", "spoolman",
@@ -160,18 +160,33 @@ def _extract_widget_maps(markdown: str) -> list[tuple[dict[str, Any], str]]:
     return results
 
 
+def _display_field_lists(markdown: str) -> list[list[str]]:
+    lists = []
+    for line in markdown.splitlines():
+        if not re.search(r"Allowed fields\b", line, re.IGNORECASE):
+            continue
+        for raw in re.findall(r"\[[^\n\]]*\]", line):
+            try:
+                values = json.loads(raw.replace("'", '"'))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(values, list):
+                lists.append([str(value) for value in values])
+    return lists
+
+
 def _allowed_fields(markdown: str) -> list[str]:
-    match = re.search(r"Allowed fields:\s*`?\s*(\[[^\n`]+\])", markdown, flags=re.IGNORECASE)
-    if not match:
-        return []
-    raw = match.group(1)
-    try:
-        parsed = json.loads(raw.replace("'", '"'))
-        if isinstance(parsed, list):
-            return [str(value) for value in parsed]
-    except json.JSONDecodeError:
-        pass
-    return re.findall(r"[\"']([^\"']+)[\"']", raw)
+    return list(dict.fromkeys(value for values in _display_field_lists(markdown) for value in values))
+
+
+def display_fields_for_config(schema: dict[str, Any], config: dict[str, Any]) -> list[str]:
+    """Select the documented display fields for a widget version or mode."""
+    for variant in schema.get("field_variants") or []:
+        value = config.get(variant["key"])
+        matches = bool(str(value or "").strip()) if variant.get("present") else str(value or variant.get("default", "")) == variant.get("value")
+        if matches:
+            return list(variant["fields"])
+    return list(schema.get("default_allowed_fields", schema.get("allowed_fields")) or [])
 
 
 def _commented_widget_values(block: str) -> list[tuple[str, Any, str]]:
@@ -339,7 +354,7 @@ def parse_widget_document(markdown: str, slug: str) -> tuple[str, dict[str, Any]
             # explicitly says so. Curated Admin enhancements provide stronger validation
             # for widgets with dedicated connection testers.
             explicit_required = any(token in lower_comment for token in ("required", "mandatory", "必填"))
-            explicitly_optional = any(token in lower_comment for token in ("optional", "not required", "default", "defaults to", "if "))
+            explicitly_optional = any(token in lower_comment for token in ("optional", "not required", "default", "defaults to", "if ", "for version"))
             required = explicit_required and not explicitly_optional
             candidate: dict[str, Any] = {
                 "name": name,
@@ -399,7 +414,7 @@ def parse_widget_document(markdown: str, slug: str) -> tuple[str, dict[str, Any]
 
     fields = [field_by_name[name] for name in field_order]
     docs_url = f"https://gethomepage.dev/widgets/services/{slug}/"
-    return widget_type, {
+    schema = {
         "label": label,
         "category": _category(widget_type, label),
         "description": f"Homepage 官方 {label} Service Widget。字段由官方配置示例自动生成。",
@@ -413,6 +428,17 @@ def parse_widget_document(markdown: str, slug: str) -> tuple[str, dict[str, Any]
         "source_mode": "official-auto",
         "source_slug": slug,
     }
+    lists = _display_field_lists(markdown)
+    if widget_type == "fileflows" and len(lists) >= 2:
+        schema["default_allowed_fields"] = schema["allowed_fields"]
+        schema["field_variants"] = [
+            {"key": "version", "value": "1", "default": "1", "fields": lists[0]},
+            {"key": "version", "value": "2", "fields": lists[1]},
+        ]
+    elif widget_type == "beszel" and len(lists) >= 2:
+        schema["default_allowed_fields"] = lists[0]
+        schema["field_variants"] = [{"key": "systemId", "present": True, "fields": lists[1]}]
+    return widget_type, schema
 
 
 def _parse_registry(source: str) -> dict[str, str]:
@@ -434,7 +460,7 @@ def _parse_registry(source: str) -> dict[str, str]:
 
 
 def fetch_official_widget_schemas(
-    ref: str = "dev",
+    ref: str = "v2.8.0",
     timeout: float = 8.0,
     workers: int = 10,
     progress: Callable[[dict[str, Any]], None] | None = None,
